@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Repo Manifest -->
+<manifest>
+
+  <default sync-j="4" revision="master"/>
+
+  <remote fetch="https://git.yoctoproject.org/git" name="yocto"/>
+  <remote fetch="https://github.com/Freescale" name="freescale"/>
+  <remote fetch="https://github.com/openembedded" name="oe"/>
+  <remote fetch="https://github.com/ScottW514" name="scottw514"/>
+
+  <project remote="yocto" revision="master" name="poky" path="sources/poky"/>
+  <project remote="yocto" revision="master" name="meta-freescale" path="sources/meta-freescale"/>
+  <project remote="freescale" revision="master" name="meta-freescale-distro" path="sources/meta-freescale-distro"/>
+
+  <project remote="oe" revision="master" name="meta-openembedded" path="sources/meta-openembedded"/>
+
+  <project remote="scottw514" revision="master" name="meta-openglow" path="sources/meta-openglow"/>
+
+  <project remote="scottw514" revision="master" name="forgefirm" path="sources/forgefirm">
+    <copyfile dest="base/conf/bblayers.conf" src="base/conf/forgefirm-bblayers.conf"/>
+    <copyfile dest="setup-environment" src="scripts/setup-environment"/>
+  </project>
+
+</manifest>
