@@ -62,7 +62,7 @@ if [ -d "/ogtmp" ]; then
 
   echo -e "${ASTERISK}Downloading latest OpenGlow/ForgeFIRM image:"
   curl -L https://github.com/ScottW514/forgefirm/releases/latest/download/forgefirm-image-glowforge.wic.gz --output /data/forgefirm-image-glowforge.wic.gz
-  curl -L https://raw.githubusercontent.com/ScottW514/meta-openglow/master/scripts/ffboot --output /data/ffboot
+  curl -L https://raw.githubusercontent.com/ScottW514/forgefirm/master/scripts/ffboot --output /data/ffboot
   chmod +x /data/ffboot
   echo
 
