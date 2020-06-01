@@ -3,7 +3,7 @@ This repository contains opensource firmware for Glowforge brand CNC lasers.
 
 * [Latest Release](https://github.com/ScottW514/forgefirm/releases)
 * [Installation Instructions](https://community.openglow.org/t/dual-boot-install-of-openglow-on-factory-flash/697)
-* [Build Instructions](https://github.com/ScottW514/meta-forgefirm/blob/master/BUILD.md)
+* [Build Instructions](https://github.com/ScottW514/forgefirm/blob/master/BUILD.md)
 * [Community Support](https://community.openglow.org)
 
 # Roadmap
