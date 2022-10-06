@@ -6,7 +6,7 @@ The factory flash is a 4GB eMMC.  The factory firmware resides on two partitions
 We can resize the ```/data``` partition down to 2GB, leaving a ~1GB partition for us to install OpenGlow on.
 
 ## Prerequisites
-Before getting started, you will need serial console access to your Glowforge.  If you do not have a unit with the factory installed, you will need to install your own.
+Before getting started, you will need [serial console](https://github.com/ScottW514/forgefirm/blob/master/SERIAL.md)  access to your Glowforge.  If you do not have a unit with the factory installed, you will need to install your own.
 
 You should also have followed the initial Glowforge [setup instructions](https://glowforge.com/support/topic/unboxing-setting-up/unboxing-and-setting-up-your-glowforge), and have your unit connected to your wireless network.
 
