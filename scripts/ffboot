@@ -1,5 +1,5 @@
 #!/bin/sh
-# (C) Copyright 2020
+# (C) Copyright 2020-2026
 # Scott Wiederhold, s.e.wiederhold@gmail.com
 # https://community.openglow.org
 # SPDX-License-Identifier:    MIT
