@@ -14,6 +14,6 @@ S = "${WORKDIR}"
 inherit cmake
 
 DEPENDS += "libconfig ulfius"
-RDEPENDS_${PN} = "libconfig ulfius"
+RDEPENDS:${PN} = "libconfig ulfius"
 
 EXTRA_OECMAKE = ""

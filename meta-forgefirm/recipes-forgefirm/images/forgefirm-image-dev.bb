@@ -6,7 +6,7 @@ IMAGE_INSTALL += " \
   forgectrl \
 "
 
-IMAGE_INSTALL_remove = " \
+IMAGE_INSTALL:remove = " \
   gfui-client \
 "
 
