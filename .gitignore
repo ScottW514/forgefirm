@@ -1,0 +1,10 @@
+# kas-managed upstream layer checkouts (poky, meta-openembedded, meta-freescale...)
+/layers/
+
+# Yocto build output (incl. deploy/images) and caches
+/build/
+/downloads/
+/sstate-cache/
+
+# kas
+*.lock.yml.bak

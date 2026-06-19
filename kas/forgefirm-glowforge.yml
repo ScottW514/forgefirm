@@ -1,0 +1,131 @@
+# ============================================================================
+# ForgeFIRM — kas build configuration  (factory Glowforge control board)
+# ============================================================================
+# The forgefirm repo is the BASE: it controls the build, the output firmware
+# images land here (build/tmp/deploy/images/glowforge/), and the build/install
+# docs live here (BUILD.md, INSTALL.md, SERIAL.md, kas/README.md).
+#
+# Target : Yocto Scarthgap (5.0 LTS) + linux-fslc 6.12 (mainline LTS)
+# Machine: glowforge  (i.MX6 Solo SOM inside Basic/Plus/Pro)
+# Distro : forgefirm
+#
+# Replaces the old Google `repo` + default.xml manifest and the hand-maintained
+# base/conf/forgefirm-bblayers.conf. kas generates bblayers.conf and local.conf.
+#
+# Run from the forgefirm repo root so outputs land inside it:
+#   cd forgefirm
+#   kas build  kas/forgefirm-glowforge.yml      # fetch layers + full build
+#   kas shell  kas/forgefirm-glowforge.yml      # interactive bitbake env
+#   kas dump   kas/forgefirm-glowforge.yml      # show resolved config
+#
+# Reproducible pins (after first checkout):
+#   kas lock   kas/forgefirm-glowforge.yml      # writes kas/forgefirm-glowforge.lock.yml
+# ============================================================================
+
+header:
+  version: 14
+
+machine: glowforge
+distro: forgefirm
+target: forgefirm-image
+
+# kas uses KAS_WORK_DIR (the dir you run kas from = the forgefirm repo root).
+# Upstream layers are cloned into ./layers/, the build runs in ./build/, and
+# caches go in ./downloads + ./sstate-cache — all gitignored, all inside forgefirm.
+repos:
+
+  # --- This repo (forgefirm) — auto-detected, no url/path needed -------------
+  forgefirm:
+    layers:
+      meta-forgefirm:
+
+  # --- Upstream layers (cloned + pinned to the scarthgap branch by kas) ------
+
+  poky:
+    url: https://git.yoctoproject.org/poky.git
+    branch: scarthgap
+    path: layers/poky
+    layers:
+      meta:
+      meta-poky:
+
+  meta-openembedded:
+    url: https://github.com/openembedded/meta-openembedded.git
+    branch: scarthgap
+    path: layers/meta-openembedded
+    layers:
+      meta-oe:
+      meta-python:
+      meta-networking:
+
+  meta-freescale:
+    url: https://github.com/Freescale/meta-freescale.git
+    branch: scarthgap
+    path: layers/meta-freescale
+    layers:
+      .:
+
+  meta-freescale-distro:
+    # Provides conf/distro/include/fslc-base.inc, required by the forgefirm distro.
+    url: https://github.com/Freescale/meta-freescale-distro.git
+    branch: scarthgap
+    path: layers/meta-freescale-distro
+    layers:
+      .:
+
+  # --- meta-openglow — Glowforge BSP layers ---------------------------------
+  # ACTIVE DEVELOPMENT: referenced as a local sibling checkout (no url => kas
+  # performs no git ops, so the scarthgap-migration edits we're making are what
+  # gets built). The kernel-module-glowforge sources are NOT a layer; they are
+  # pulled by the kernel-module-glowforge.bb recipe's SRC_URI, so kas does not
+  # manage them here.
+  meta-openglow:
+    path: ../meta-openglow
+    layers:
+      meta-openglow-core:
+      meta-glowforge-bsp:
+      # meta-openglow-bsp (separate OpenGlow_std board) intentionally excluded.
+  #
+  # FUTURE (once the meta-openglow scarthgap migration is committed/pushed,
+  # making forgefirm fully self-contained — clone forgefirm, run kas, done):
+  #   meta-openglow:
+  #     url: https://github.com/ScottW514/meta-openglow.git
+  #     branch: scarthgap          # or a pinned commit / tag
+  #     path: layers/meta-openglow
+  #     layers:
+  #       meta-openglow-core:
+  #       meta-glowforge-bsp:
+
+# ----------------------------------------------------------------------------
+# local.conf additions
+# ----------------------------------------------------------------------------
+local_conf_header:
+  # Accept the NXP/Freescale firmware EULA — required to unpack firmware-imx
+  # (i.MX SDMA/VPU firmware blobs) pulled in by the i.MX6 BSP. ForgeFIRM targets
+  # the factory i.MX6 Glowforge board, so this firmware is intrinsic to the image.
+  eula: |
+    ACCEPT_FSL_EULA = "1"
+
+  # Kernel is now defaulted to linux-fslc 6.12 in conf/machine/glowforge.conf
+  # (with the factory drivers forward-ported — EPIT/SDMA/OV5648/glowforge.ko —
+  # see kas/README.md backlog #2). This explicit pin is redundant but harmless.
+  kernel: |
+    PREFERRED_PROVIDER_virtual/kernel = "linux-fslc"
+    PREFERRED_VERSION_linux-fslc = "6.12%"
+
+  # Development image features. debug-tweaks gives a passwordless root login for
+  # bench bring-up; kas generates its own local.conf (it does NOT inherit poky's
+  # local.conf.sample), so this must be set explicitly. Drop it (and set a real
+  # root password via extrausers) before any production/field image.
+  image-debug: |
+    EXTRA_IMAGE_FEATURES = "debug-tweaks"
+
+  build-tweaks: |
+    # Parallelism for the 12-core / 16 GB WSL2 VM. (The earlier mid-build deaths
+    # were the mirrored-networking vsock relay, not memory — see .wslconfig — so
+    # this can comfortably use more of the VM.)
+    BB_NUMBER_THREADS = "8"
+    PARALLEL_MAKE     = "-j 8"
+    # Caches kept inside the forgefirm repo (gitignored):
+    DL_DIR     ?= "${TOPDIR}/../downloads"
+    SSTATE_DIR ?= "${TOPDIR}/../sstate-cache"
