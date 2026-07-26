@@ -21,3 +21,8 @@ DEPENDS = "gnutls jansson libmicrohttpd curl orcania yder"
 
 # No systemd journald on the forgefirm image.
 EXTRA_OECMAKE += "-DWITH_JOURNALD=off"
+
+# ulfius builds itself with -Werror -Wconversion; under Yocto's arm32
+# time64 ABI (-D_TIME_BITS=64) a long-long-to-long time conversion in
+# u_websocket.c trips it. Warning stays visible, just not fatal.
+CFLAGS += "-Wno-error=conversion"
