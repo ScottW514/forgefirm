@@ -1,0 +1,12 @@
+header:
+  version: 14
+overrides:
+  repos:
+    poky:
+      commit: 70ed6f677234d32198371a030178d2f272cf2d94
+    meta-openembedded:
+      commit: b0c2c648a1af89e7a8dd4c2ec841f3bc0ed0ccb9
+    meta-freescale:
+      commit: b699d026506a6fc402e03afb432dcabd3d81c7ab
+    meta-freescale-distro:
+      commit: b9d6a5d9931922558046d230c1f5f4ef6ee72345

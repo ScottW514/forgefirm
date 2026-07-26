@@ -85,6 +85,46 @@ kas lock kas/forgefirm-glowforge.yml      # writes kas/forgefirm-glowforge.lock.
 
 kas auto-loads the lockfile on subsequent runs. Commit it; refresh deliberately.
 
+## Push & release order (source-of-truth sequencing)
+
+The build is only reproducible when recipe pins, layer branches, and the kas
+config move in the right order (audit findings M13/N14 — the old `AUTOREV` +
+untracked-overlay setup meant a plain `kas build` fetched the wrong camera
+code). The sequence, with current status:
+
+1. **Source repos pushed & pinned** — **DONE 2026-07-26.**
+   `kernel-module-glowforge` (`029dfb6`) and `python3-gfhardware` (`9bf31fd`)
+   pushed to GitHub master; both recipes in meta-openglow pin those exact
+   SRCREVs (no `AUTOREV` anywhere). Whenever either repo changes: push it,
+   then bump the recipe `SRCREV` in meta-openglow deliberately.
+2. **meta-openglow pushed** — **DONE 2026-07-26.** The Scarthgap port lives on
+   the **`scarthgap` branch** (Yocto layer convention; the Dunfell-era `master`
+   is untouched). Development continues on the local sibling checkout; push /
+   fast-forward `scarthgap` as work lands.
+3. **forgefirm pushed** with the kas config and a `kas lock` lockfile pinning
+   the upstream layers (poky, meta-openembedded, meta-freescale,
+   meta-freescale-distro).
+4. **At release time** — gated on the audit **Phase 1 motion fixes** (do not
+   ship an image while the cnc-probe and SDMA-firmware-collision defects make
+   motion dead on arrival, AUDIT-REPORT B1/M1):
+   - flip `meta-openglow` in `forgefirm-glowforge.yml` from the local-sibling
+     block to the pinned-remote block (commented FUTURE block in the file);
+   - drop meta-openglow's `kernel-module-glowforge.bbappend` (externalsrc to
+     the local sibling — its perl-native DEPENDS is already carried in the
+     base recipe) so a fresh clone is fully self-contained;
+   - refresh `kas lock`, tag all repos, and prove self-containment by building
+     from a **fresh clone**.
+5. **GitHub release**: upload the image asset under the exact name the
+   installer downloads — Scarthgap emits
+   `forgefirm-image-glowforge.rootfs.wic.gz`; align BUILD.md and
+   `install-forgefirm.sh` to one name before the first release (audit N13).
+
+Dev-overlay note: `kas/externalsrc-dev.yml` (an untracked overlay building
+python3-gfhardware from a local checkout via `/mnt/c`) was removed when the
+SRCREV was pinned. For future gfhardware development, either bump the pin per
+iteration or add a tracked externalsrc bbappend mirroring the kernel-module
+pattern.
+
 ## Scarthgap migration backlog
 
 The kas scaffold + `LAYERSERIES_COMPAT` bumps let the layers be *selected* under

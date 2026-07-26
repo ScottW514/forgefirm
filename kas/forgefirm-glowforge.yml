@@ -86,11 +86,15 @@ repos:
       meta-glowforge-bsp:
       # meta-openglow-bsp (separate OpenGlow_std board) intentionally excluded.
   #
-  # FUTURE (once the meta-openglow scarthgap migration is committed/pushed,
-  # making forgefirm fully self-contained — clone forgefirm, run kas, done):
+  # FUTURE — flip to this pinned-remote block at release time (the scarthgap
+  # branch is pushed as of 2026-07-26, so this now works; the flip is gated on
+  # active BSP development settling — see kas/README.md "Push & release order".
+  # When flipping, also drop meta-openglow's kernel-module-glowforge.bbappend
+  # (externalsrc to the local sibling) so a fresh clone is self-contained; its
+  # perl-native DEPENDS is already carried in the base recipe):
   #   meta-openglow:
   #     url: https://github.com/ScottW514/meta-openglow.git
-  #     branch: scarthgap          # or a pinned commit / tag
+  #     branch: scarthgap          # pin via kas lock / a tag at release
   #     path: layers/meta-openglow
   #     layers:
   #       meta-openglow-core:
