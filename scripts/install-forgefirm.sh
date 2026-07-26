@@ -15,6 +15,16 @@ BRIGHT="\033[1;39m"
 RESET="\033[0m"
 ASTERISK="${LIGHTRED}✺${RESET}"
 
+# Abort loudly instead of completing silently broken: several steps below
+# (image download, flash write, uEnv rewrite) used to fail without stopping
+# the install (audit N13/M12/N16).
+die () {
+  echo
+  echo -e "${LIGHTRED}!! INSTALL FAILED:${RESET} $1"
+  echo -e "${LIGHTRED}!! The device was NOT fully installed. Fix the problem and re-run.${RESET}"
+  exit 1
+}
+
 stop_gf_services () {
   echo -n -e "${ASTERISK}Stopping Glowforge services"
   sv stop /sv/glowforge 2>&1 >/dev/null; echo -n "."
@@ -61,19 +71,27 @@ if [ -d "/ogtmp" ]; then
   echo
 
   echo -e "${ASTERISK}Downloading latest OpenGlow/ForgeFIRM image:"
-  curl -L https://github.com/ScottW514/forgefirm/releases/latest/download/forgefirm-image-glowforge.wic.gz --output /data/forgefirm-image-glowforge.wic.gz
-  curl -L https://raw.githubusercontent.com/ScottW514/forgefirm/master/scripts/ffboot --output /data/ffboot
+  # Asset name matches the Scarthgap deploy artifact verbatim (rootfs.wic.gz),
+  # so releases are uploaded without renaming (see kas/README.md release order).
+  curl -fL https://github.com/ScottW514/forgefirm/releases/latest/download/forgefirm-image-glowforge.rootfs.wic.gz --output /data/forgefirm-image-glowforge.rootfs.wic.gz \
+    || die "image download failed"
+  curl -fL https://raw.githubusercontent.com/ScottW514/forgefirm/master/scripts/ffboot --output /data/ffboot \
+    || die "ffboot download failed"
   chmod +x /data/ffboot
   echo
 
   echo -e "${ASTERISK}Writing OpenGlow/ForegFIRM image to flash:"
-  zcat /data/forgefirm-image-glowforge.wic.gz | dd of=/dev/mmcblk2p4 skip=2
-  mkdir /data/mnt
-  mount /dev/mmcblk2p4 /data/mnt
-  sed -i 's/mmcblk1p1/mmcblk2p4/g' /data/mnt/boot/uEnv.txt
-  umount /data/mnt
+  zcat /data/forgefirm-image-glowforge.rootfs.wic.gz | dd of=/dev/mmcblk2p4 skip=2 \
+    || die "flash write to /dev/mmcblk2p4 failed"
+  mkdir -p /data/mnt
+  mount /dev/mmcblk2p4 /data/mnt || die "mounting the new image failed (bad flash write?)"
+  [ -f /data/mnt/boot/uEnv.txt ] \
+    || { umount /data/mnt; die "/boot/uEnv.txt missing from the new image (bad or outdated image)"; }
+  sed -i 's/mmcblk1p1/mmcblk2p4/g' /data/mnt/boot/uEnv.txt \
+    || { umount /data/mnt; die "rewriting uEnv.txt for eMMC boot failed"; }
+  umount /data/mnt || die "unmounting the new image failed"
   rm -rf /data/mnt
-  rm -f /data/forgefirm-image-glowforge.wic.gz
+  rm -f /data/forgefirm-image-glowforge.rootfs.wic.gz
 
   echo 5 > /proc/sys/kernel/printk
 

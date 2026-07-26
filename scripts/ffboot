@@ -70,18 +70,27 @@ case "$1" in
     exit 2
 esac
 
-if [ -d "/factory" ]; then
-  FWCONFIG="/etc/fw_env.config"
-else
+# The env always lives on the eMMC (mmcblk2 0x80000/0x82000). On the factory
+# firmware and on the ForgeFIRM image, /etc/fw_env.config already points
+# there; the mmcblk2-specific override is honored if someone provisioned one,
+# but nothing ships it, so fall back rather than failing on a missing file
+# (audit N16).
+if [ -f "/etc/fw_env_mmcblk2.config" ] && [ ! -d "/factory" ]; then
   FWCONFIG="/etc/fw_env_mmcblk2.config"
+else
+  FWCONFIG="/etc/fw_env.config"
+fi
+if [ ! -f "$FWCONFIG" ]; then
+  echo "ERROR: $FWCONFIG not found; cannot switch boot device" >&2
+  exit 1
 fi
 
 MMCROOT="/dev/mmcblk"$(($MMCDEV + 1))"p"$MMCPART
 
 echo "Setting to boot from $MMCROOT"
-fw_setenv -c $FWCONFIG mmcdev $MMCDEV
-fw_setenv -c $FWCONFIG mmcpart $MMCPART
-fw_setenv -c $FWCONFIG mmcroot $MMCROOT
+fw_setenv -c $FWCONFIG mmcdev $MMCDEV   || { echo "ERROR: fw_setenv mmcdev failed" >&2; exit 1; }
+fw_setenv -c $FWCONFIG mmcpart $MMCPART || { echo "ERROR: fw_setenv mmcpart failed" >&2; exit 1; }
+fw_setenv -c $FWCONFIG mmcroot $MMCROOT || { echo "ERROR: fw_setenv mmcroot failed" >&2; exit 1; }
 
 if [ $REBOOT -gt 0 ]; then
   echo "Rebooting..."

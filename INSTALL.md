@@ -47,7 +47,7 @@ After these steps have completed, you will be prompted to reboot:
 ### Stage 2
 After the device reboots, login as root and run the script again:
 ```bash
-./install-openglow.sh
+./install-forgefirm.sh
 ```
 
 This will complete the installation process by performing the following steps:
@@ -56,7 +56,7 @@ This will complete the installation process by performing the following steps:
 * Restarting the network services.
 * Downloads the [latest OpenGlow image](https://github.com/ScottW514/forgefirm/releases) from GitHub.
 * Writes the OpenGlow image to the flash (this takes a bit, be patient)
-* Installs the ```/data/ogboot``` utility so you can switch between OpenGlow and factory images.
+* Installs the ```/data/ffboot``` utility so you can switch between ForgeFIRM and factory images.
 
 Hit any key to reboot into your fancy new OpenGlow image.
 
@@ -68,7 +68,12 @@ Hit any key to reboot into your fancy new OpenGlow image.
 
 Login is ```root```, no password.  You can also connect via SSH - same user, no password (obviously, you should change this).
 
-The unit will automatically connect to the Glowforge service upon boot, and begin the homing sequence. You can use it from the GFUI like normal (mostly, don't try fancy stuff like setting the focus, snap marks, pass through, or the calibration tool).
+> **Current status: this image is bring-up-only.** No controller or cloud
+> client starts at boot — the machine boots to an idle shell with the kernel
+> driver, hardware libraries (gfhardware/gfutilities), and camera tooling
+> installed. The grblHAL controller (forgectrl) is under development; the
+> legacy cloud client (gfui-client) is deliberately not shipped. Nothing
+> homes, moves, or connects anywhere until you start it yourself.
 
 You can easily switch back and forth between factory and OpenGlow images:
 ```bash

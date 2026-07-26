@@ -53,8 +53,13 @@ kas fetches the upstream layers into `forgefirm/layers/`, builds in
 `forgefirm/build/`, and produces the bootable image at:
 
 ```
-forgefirm/build/tmp/deploy/images/glowforge/forgefirm-image-glowforge.wic.gz
+forgefirm/build/tmp/deploy/images/glowforge/forgefirm-image-glowforge.rootfs.wic.gz
 ```
+
+(The `u-boot-glowforge.imx` also deployed there is **reference-only**: every
+supported install/boot flow keeps the factory bootloader on the eMMC. Its env
+Kconfig now matches the factory layout — 0x80000 primary / 0x82000 redundant —
+but it is not wired into any install path and flashing it is unsupported.)
 
 For exact, reproducible layer versions, generate a lockfile once:
 
@@ -69,7 +74,7 @@ and the Scarthgap migration backlog.
 
 ```console
 cd build/tmp/deploy/images/glowforge
-sudo zcat forgefirm-image-glowforge.wic.gz | dd of=/dev/sdX bs=1M
+sudo zcat forgefirm-image-glowforge.rootfs.wic.gz | dd of=/dev/sdX bs=1M
 ```
 
 To install onto the factory eMMC (dual-boot with the Glowforge firmware), see
