@@ -190,7 +190,19 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
    them.
 4. **Device tree** — revalidate the `glowforge` `.dts` against the linux-fslc
    6.12 DT bindings (paired with the kernel forward-port in #2).
-5. **gfui-client → forgectrl** — the Glowforge **cloud client is now removed**
+5. **Real-time strategy — decided (2026-07-26, audit M9/N15).** The kernel runs
+   `CONFIG_PREEMPT=y` (factory behavior; `imx_v6_v7_defconfig` alone gives only
+   `PREEMPT_VOLUNTARY`). **PREEMPT_RT is not selectable on arm32 6.12** (no
+   `ARCH_SUPPORTS_RT`) and is **not needed for the pulse feeder**: the SDMA
+   ring is 128 MiB draining at 1 byte per EPIT tick — ≤200–400 KB/s even at
+   the 200 kHz ceiling — so a full ring holds **~5–11 minutes** of stream and
+   a modest 1 MiB of queued data already rides out ~3–5 s of scheduling
+   latency, orders of magnitude beyond anything PREEMPT exhibits. Deep
+   buffering + `SCHED_FIFO` for the feeder is the design; revisit RT only if
+   the underrun bench ever contradicts this arithmetic. (The audit Phase 2
+   bench: 5 s of continuous feed at a 1 s buffer depth, zero underruns.)
+
+6. **gfui-client → forgectrl** — the Glowforge **cloud client is now removed**
    from `forgefirm-image` (`IMAGE_INSTALL:remove = "gfui-client"` in
    `meta-forgefirm/recipes-forgefirm/images/forgefirm-image.bb`) — it connected to
    Glowforge's servers, the dependency ForgeFIRM exists to cut. The grblHAL
