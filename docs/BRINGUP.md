@@ -30,6 +30,16 @@ deadman/safety loop; camera error paths).
   counters agree step-for-step. Motion-only: the laser latch is forced
   locked, byte bit 4 is never emitted.
 
+**First real LightBurn job: 2026-08-02, operator-verified.** Device
+setup per `LIGHTBURN.md` (GRBL over TCP:23); a full design job — rapid
+in, M4 dynamic-power cut trace at commanded speed, return rapid — ran
+smoothly end to end on grblHAL-glowforge (laser locked, motion only).
+Two driver fixes came out of the first attempts: the locked laser
+spindle (M4/$32 support without fire capability) and the
+continuation-wakeup cursor alignment (back-to-back cycles previously
+clamped into step bursts — jerky, step-losing rapids; found via the
+per-run `clamped` stat from the operator's own job log).
+
 **Milestone 2 (motion quality): bench-verified 2026-08-02.** The factory
 motion constants were extracted from the `_RESOURCES` pulse files
 (`scripts/bench/puls_profile.py`) and applied end-to-end:
