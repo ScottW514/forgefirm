@@ -141,11 +141,12 @@ hardware I/O — host testing).
 
 ## Next work (in rough order)
 
-1. **Backend milestone 2 — motion quality: DONE 2026-08-02** (see status
-   section above). Remaining human check: listen/watch a jog session for
-   noise and smoothness vs the pre-tuning state (all electrical/protocol
-   checks are green; loudness was likely the 150/150 currents + unset
-   decay mode, both now factory-true).
+1. **Backend milestone 2 — motion quality: DONE and human-verified
+   2026-08-02.** Operator confirmed motion is "butter smooth" (and near
+   silent) on a full observation run — slow/fast/diagonal/zigzag jogs at
+   up to 200 mm/s under grblHAL-glowforge with the factory-true analog
+   config. The pre-tuning loudness was the 150/150 currents + unset
+   decay mode. Milestone closed.
 2. **Laser mapping** (gated on the scope session): spindle → power bytes
    (bit 7) + bit 4 laser-enable, M3/M4/$32 semantics, PWM-reset rule per
    the contract. **No live fire before the standing scope gates**: LASER_PWM
