@@ -183,13 +183,32 @@ hardware I/O — host testing).
      after end-of-data** (PWMSAR retains the last value; the end-of-data
      backstop forces FIRE/step lines low, not the power setpoint) — the
      laser-off guarantee rests entirely on FIRE.
-   - **≤1-tick FIRE drop at underrun/end-of-data: OPEN** — needs a
-     scope on the FIRE net (bit-4 toggling with the latch locked: FIRE
-     is observable while LASER_ON stays gated off by the hardware AND).
-     Signal naming (per the OpenGlow LASER SAFING sheet): FIRE = the
-     CPU's per-tick request (kernel attr `laser_enable`); OK_2_FIRE =
-     chain verdict; LASER_ON = FIRE∧OK_2_FIRE to the tube (active low);
-     HV_EN = HV supply enable, driven by the safing hardware only.
+   - **Laser latch + safety-chain gating: scope-verified 2026-08-02**
+     (`scripts/bench/fire_test.py`, probe on the PSU-connector LASER_ON
+     pin; power byte 0 throughout, zero step bytes, HV unpowered,
+     operator at the power switch; phase B latch-unlock executed by the
+     operator). Phase A (latch LOCKED): 40,000 streamed FIRE bits →
+     pin dead flat AND kernel `laser_enable` stayed 0 — the latch
+     severs the FIRE drive entirely. Phase B (latch unlocked, chain
+     unarmed): kernel `laser_enable=1` mid-window, but the PSU pin
+     stayed flat and `laser_on`/`laser_on_sampled` stayed 0 — the
+     factory board gates LASER_ON behind OK_2_FIRE exactly like the
+     OpenGlow AND design (FIRE ∧ OK_2_FIRE, active high at the PSU
+     pin). **Interlock snapshot semantics pinned by experiment**
+     (13→7 during the unlocked FIRE window): b0 = SoC-side LASER_ON
+     monitor, active LOW (1 = not lasing); b1 = FIRE, active high;
+     b3 = latch, 1 = locked/0 = unlocked.
+   - **≤1-tick FIRE drop at underrun/end-of-data: OPEN (deferred).**
+     The SoC FIRE net is not probe-accessible on the bench, and the
+     chain-gated PSU pin cannot show FIRE without arming the full
+     chain (HV powered + pgood + HV_WDOG retriggered). Close it later
+     either by finding a probe point on the FIRE net (safing-logic
+     input) or as the first measurement of the eventual chain-armed
+     laser-milestone session, with the duty-0 discipline from this one.
+     Signal naming (per the OpenGlow LASER SAFING sheet, now confirmed
+     to match the factory board): FIRE = per-tick request (kernel
+     `laser_enable`); OK_2_FIRE = chain verdict; LASER_ON =
+     FIRE∧OK_2_FIRE to the PSU; HV_EN = HV enable, safing-driven only.
    - **Interlock readback semantics cross-check: OPEN** (see
      factory-laser-safety-readbacks notes).
 3. **Homing**: X/Y home switch GPIOs exist in the cnc pin map (unused so
