@@ -159,8 +159,23 @@ hardware I/O — host testing).
    decay mode. Milestone closed.
 2. **Laser mapping** (gated on the scope session): spindle → power bytes
    (bit 7) + bit 4 laser-enable, M3/M4/$32 semantics, PWM-reset rule per
-   the contract. **No live fire before the standing scope gates**: LASER_PWM
-   waveform vs factory capture + ≤1-tick laser drop at underrun.
+   the contract. **No live fire before the standing scope gates.** Gate
+   status:
+   - **LASER_PWM waveform: PASSED 2026-08-02** (scope on the physical
+     pin). Method: direct PWMSAR duty steps (`scripts/bench/pwm_sweep.py`
+     / `pwm_hold.py`) with the controller stopped, cnc `disabled`
+     (steppers unpowered), laser latch locked, lid closed;
+     `laser_on_sampled` stayed 0 throughout. Measured: 25.0 µs period /
+     40 kHz at every duty; 50/25/75 % confirmed visually; low end
+     cursor-measured **6.4 % vs 6.3 % commanded** (PWMSAR=8) — clean
+     pulse, no runts, carrier stable across the full range. Matches the
+     register-level audit numbers (divider 13 × 127 counts, 39.98 kHz).
+   - **≤1-tick laser drop at underrun/end-of-data: OPEN** — needs a
+     stream-path scope session (power bytes + bit-4 FIRE toggling with
+     the latch locked: FIRE is observable while LASER_ON stays gated
+     off by the hardware AND).
+   - **Interlock readback semantics cross-check: OPEN** (see
+     factory-laser-safety-readbacks notes).
 3. **Homing**: X/Y home switch GPIOs exist in the cnc pin map (unused so
    far); wire as grblHAL limits or keep StallGuard-less factory scheme;
    Z homes against the hall sensor (top).
