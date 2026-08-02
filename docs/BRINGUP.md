@@ -170,10 +170,26 @@ hardware I/O — host testing).
      cursor-measured **6.4 % vs 6.3 % commanded** (PWMSAR=8) — clean
      pulse, no runts, carrier stable across the full range. Matches the
      register-level audit numbers (divider 13 × 127 counts, 39.98 kHz).
-   - **≤1-tick laser drop at underrun/end-of-data: OPEN** — needs a
-     stream-path scope session (power bytes + bit-4 FIRE toggling with
-     the latch locked: FIRE is observable while LASER_ON stays gated
-     off by the hardware AND).
+   - **Stream-path power bytes: PASSED 2026-08-02** (scope on
+     LASER_PWM, `scripts/bench/pwm_stream_test.py`: power-bytes-only
+     program preloaded and played by the pulse engine; steppers
+     energized but motor_lock=15 + zero step bits — position counters
+     pinned at 0). Operator observed the full staircase AND both
+     contract rules on the pin: **run-start duty reset to 100%**
+     (first pulses would fire at full power unless the stream's first
+     power byte precedes its first FIRE bit) and **consecutive power
+     bytes dropped** (saw 25 % where a 75 % byte rode directly behind;
+     75 % applied only after a spacer). Also measured: **duty persists
+     after end-of-data** (PWMSAR retains the last value; the end-of-data
+     backstop forces FIRE/step lines low, not the power setpoint) — the
+     laser-off guarantee rests entirely on FIRE.
+   - **≤1-tick FIRE drop at underrun/end-of-data: OPEN** — needs a
+     scope on the FIRE net (bit-4 toggling with the latch locked: FIRE
+     is observable while LASER_ON stays gated off by the hardware AND).
+     Signal naming (per the OpenGlow LASER SAFING sheet): FIRE = the
+     CPU's per-tick request (kernel attr `laser_enable`); OK_2_FIRE =
+     chain verdict; LASER_ON = FIRE∧OK_2_FIRE to the tube (active low);
+     HV_EN = HV supply enable, driven by the safing hardware only.
    - **Interlock readback semantics cross-check: OPEN** (see
      factory-laser-safety-readbacks notes).
 3. **Homing**: X/Y home switch GPIOs exist in the cnc pin map (unused so
