@@ -239,8 +239,22 @@ hardware I/O — host testing).
      +4.6..5.7 within 20 s; fault = ΔT>4.5 °C for 20 s, live-verified:
      pump stopped → sender warning in 40 s → recovery re-arms).
      Absolute ceiling 33 °C (job-header CMrx; heater adds ~1.5 °C to
-     the loop). TEC control remains for the thermal part of the laser
-     milestone; both warnings become hard fire gates there.
+     the loop). **v2 (same day): heater job-scoped** (M8..M9 only — an
+     always-on heater eats headroom below the 31 °C start gate at
+     idle; flow faulting arms 30 s after heater-on), **two-phase
+     cooldown** (15 s smoke clear at run duty, then half-duty airflow
+     until the upstream temp is under the 31 °C resume gate or
+     `GFCOOL_COOLDOWN_MAX_S`), and **factory-style over-temp pause**
+     using the factory coolant windows (run ceiling 33 °C / resume
+     31 °C, env-adjustable: `GFCOOL_TEMP_MAX`/`GFCOOL_TEMP_RESUME`):
+     a CYCLE over the ceiling gets a feed hold + forced cooling
+     airflow + auto-resume on recovery; a JOG gets a jog-cancel
+     (grblHAL refuses HOLD from the jog state by design). Senders see
+     the Hold state and [MSG:Warning:…] lines. Drilled live with test
+     limits: jog canceled mid-move, cycle held and auto-resumed, fan
+     profiles restored on stand-down. TEC control remains for the
+     laser milestone; these warnings/holds become hard fire gates
+     there.
    - **Interlock readback semantics cross-check: OPEN** (see
      factory-laser-safety-readbacks notes).
 3. **Homing (design decided 2026-08-02)**: the factory machine has NO
