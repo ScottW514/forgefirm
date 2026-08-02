@@ -9,6 +9,8 @@ target board (dev image, python3 present) unless noted.
 | `bench_phase2.py` | End-of-data protocol bench (audit M2–M5): underrun detection/ack, parked no-replay guard, resume(0), continuous-feed stability, 20× run/underrun cycles. Motion-safe (motors locked, laser latched). 16/16 PASS on 2026-07-26. |
 | `check_pwm.py` | Laser PWM register check (audit M8): reads PWM2 PWMCR/PWMPR via /dev/mem, expects divider 13 × ~127 counts ≈ 40 kHz. The scope on LASER_PWM remains the final pre-live-fire gate. |
 | `build-feeder.sh` | Cross-compiles `feeder.c` the same way. |
+| `puls_profile.py` | Decodes factory `.puls` streams (raw or GF1-headered) into velocity/accel profiles: peak speeds, ramp-slope fits, per-move segments, Z cadence. Runs anywhere (stdlib only). Source of the factory-true grblHAL defaults (milestone 2): 700/590 mm/s² accel, 200 mm/s max rate, 28160 Hz travel tick. |
+| `bench_m2.py` | Milestone-2 motion bench, runs against the board over TCP:23: bounded round-trip jogs (sanity, max-rate, diagonal) + feed-hold/resume mid-move, reporting peak feed, state transitions, and position drift. All-green 2026-08-02 at factory-true settings. |
 
 The build scripts borrow the Yocto cross toolchain + sysroot from the ulfius
 2.7.15 work directory in the WSL build tree; if that path ages out after a

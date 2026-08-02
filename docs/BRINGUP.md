@@ -1,6 +1,7 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-07-26** — the day the machine first moved under grblHAL.
+Last updated: **2026-08-02** — milestone 2 (factory-true motion tuning)
+bench-verified.
 Read together with `AUDIT_ACTION_PLAN.md` in the project root (sibling of
 this repo; per-finding status of the 2026-07-03 audit) and
 `kernel-module-glowforge/UAPI.md` (the pulse-stream feeder contract).
@@ -28,9 +29,27 @@ deadman/safety loop; camera error paths).
   counters agree step-for-step. Motion-only: the laser latch is forced
   locked, byte bit 4 is never emitted.
 
+**Milestone 2 (motion quality): bench-verified 2026-08-02.** The factory
+motion constants were extracted from the `_RESOURCES` pulse files
+(`scripts/bench/puls_profile.py`) and applied end-to-end:
+- grblHAL defaults now factory-true: 12000 mm/min max rate (X/Y),
+  700/590 mm/s² accel (X/Y). Machine tick default 28160 Hz (the factory's
+  own travel-move tick; 10 kHz caps an axis at 187.5 mm/s).
+- The sink now applies the whole analog machine config itself at init
+  (modes, decay, motor_lock, PIC currents) and switches PIC currents
+  run↔hold around motion like the factory did (135/22 running, 33/5 idle,
+  drop deferred until the kernel queue has drained).
+- Bench (`scripts/bench/bench_m2.py`, all green): sustained 200 mm/s on a
+  120 mm jog, exact round-trip positioning, feed-hold parks and resumes
+  cleanly, current switching observed live, zero underruns at 28160 Hz.
+- NOTE: stored $-settings beat freshly baked defaults — after changing
+  `GLOWFORGE_DEFAULTS` values, run `$RST=$` once on the board (the sim
+  persists settings in its eeprom file in /data).
+
 ## The bench
 
-- **Board**: SSH `root@172.16.1.130`, empty password
+- **Board**: SSH `root@172.16.1.97` (fixed DHCP lease since 2026-08-02;
+  was .130), empty password
   (`ssh -o PreferredAuthentications=none` logs straight in). Dev image
   (`forgefirm-image-dev`) on SD; BusyBox userland + python3 + gdb/strace.
   Serial console on ttymxc0 available at the bench.
@@ -61,24 +80,21 @@ glowforge pulse-stream sink).
 
 1. Build: cross-compile the backend in the forge-yocto WSL distro (from
    PowerShell). Produces `build-arm/grblHAL_glowforge` in the WSL tree
-   (`-O1 -g`, `GLOWFORGE_DEFAULTS=ON` → machine scaling baked in:
-   53.333 µsteps/mm XY @ ×8, 2.832 half-steps/mm Z, 0.417" Z travel).
+   (`-O1 -g`, `GLOWFORGE_DEFAULTS=ON` → machine constants baked in:
+   53.333 µsteps/mm XY @ ×8, 2.832 half-steps/mm Z, 0.417" Z travel,
+   12000 mm/min max, 700/590 mm/s² accel — factory-derived, see
+   `puls_profile.py`).
 2. Deploy to `/usr/bin/grblHAL_glowforge` on the board.
-3. **Analog machine config — required after every module reload/boot; the
-   kernel does NOT do this** (the cloud stack normally did):
-   ```sh
-   echo 150 > /sys/glowforge/pic/x_step_current   # run current; 33 = weak hold.
-   echo 150 > /sys/glowforge/pic/y_step_current   # Factory-true values TBD
-   echo 8   > /sys/glowforge/cnc/x_mode           # ×8 microstepping to match
-   echo 8   > /sys/glowforge/cnc/y_mode           #   the baked steps/mm
-   echo 8   > /sys/glowforge/cnc/motor_lock       # Z locked; X/Y free
-   echo 1   > /sys/glowforge/cnc/laser_latch      # laser locked out
-   ```
-4. Start: `cd /data && GFSINK=/dev/glowforge grblHAL_glowforge -p 23 -n -t 1.0`
+3. Start: `cd /data && GFSINK=/dev/glowforge grblHAL_glowforge -p 23 -n -t 1.0`
    (`-t 1.0` is REQUIRED: the real-time throttle is what bounds the
-   queue). Env knobs: `GFSINK_RATE` (machine tick, default 10000 Hz),
-   `GFSINK_DEPTH_MS` (queue depth = feed-hold latency, default 200).
-5. Connect LightBurn/UGS to `172.16.1.130:23`, or jog raw:
+   queue). Env knobs: `GFSINK_RATE` (machine tick, default 28160 Hz =
+   factory travel tick), `GFSINK_DEPTH_MS` (queue depth = feed-hold
+   latency, default 200). The sink applies the full analog machine config
+   itself at init (×8 modes, decay 1, motor_lock 8, laser latched, PIC
+   hold currents) and swaps PIC run/hold currents around motion — the old
+   manual sysfs block is no longer needed. If the baked $-defaults
+   changed since the last run, `$RST=$` once (stored settings win).
+4. Connect LightBurn/UGS to `172.16.1.97:23`, or jog raw:
    `$J=G91X40F1200`.
 
 ## Hardware facts bank (measured)
@@ -92,6 +108,17 @@ glowforge pulse-stream sink).
   half-steps ≈ 10.6 mm ≈ 0.417"; 0.3534 mm/half-step. Never blind-drive Z
   — hall-supervised only.
 - XY: 0.15 mm per full step; DIR bit set = −X / +Y (Y1/Y2 complementary).
+- Factory motion profile (measured from `_RESOURCES` pulse streams with
+  `puls_profile.py`): accel ≈ 700 mm/s² X / 590 mm/s² Y on v2.6.0
+  firmware (2018 firmware used ≈1000); header HAxr=132/HAyr=112/HAar=133
+  ⇒ ≈5.3 mm/s² per HA unit. Travel moves peak 202 mm/s vector
+  (≈ 8 in/s) at STfr=28160 Hz; prints/hunts run STfr=10000. Cut feed in
+  the sample print: 145 mm/s. Z cadence ≈ 61–115 ms per half-step
+  (≈ 5.7 mm/s max).
+- Factory analog config (constant across all captured jobs, 2018→2026):
+  PIC currents X 135 run / 33 hold, Y 22 run / 5 hold (axis DAC scales
+  differ by design); x/y_decay=1; ×8 microstepping; run currents applied
+  only while motion plays, hold otherwise.
 - Laser PWM: 39.98 kHz register-verified (divider 13 × 127 counts).
 - Switches: truthy = closed/OK; SW_INTERLOCK reads False on units without
   the rear plug — must NOT gate motion (beam is hardware-gated).
@@ -100,11 +127,11 @@ glowforge pulse-stream sink).
 
 ## Next work (in rough order)
 
-1. **Backend milestone 2 — motion quality**: motion is loud/jerky at the
-   10 kHz tick. Raise `GFSINK_RATE` to 20–50 kHz (finer step-timing
-   quantization), find factory-true run currents (puls-file headers carry
-   them — see gfutilities settings map XSrc/YSrc) and sane accel/max-rate;
-   verify smooth diagonal moves and feed-hold mid-move.
+1. **Backend milestone 2 — motion quality: DONE 2026-08-02** (see status
+   section above). Remaining human check: listen/watch a jog session for
+   noise and smoothness vs the pre-tuning state (all electrical/protocol
+   checks are green; loudness was likely the 150/150 currents + unset
+   decay mode, both now factory-true).
 2. **Laser mapping** (gated on the scope session): spindle → power bytes
    (bit 7) + bit 4 laser-enable, M3/M4/$32 semantics, PWM-reset rule per
    the contract. **No live fire before the standing scope gates**: LASER_PWM
