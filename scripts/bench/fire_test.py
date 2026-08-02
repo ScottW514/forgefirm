@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
-"""FIRE-line drop-timing test - runs ON the board. Usage: fire_test.py A|B
+"""FIRE-line drop-timing test - runs ON the board. Usage: fire_test.py A|B|U
 
 Stream: power(0) first byte (duty forced to ZERO before any FIRE bit -
 the run-start reset would otherwise leave it at 100%), then
 1 s pads / 2.000 s FIRE bits / 1 s pads / 2.000 s FIRE bits ending
 exactly at end-of-data (the backstop edge the gate wants timed).
-No step bytes; motor_lock=15; streaming=0 (normal completion).
+No step bytes; motor_lock=15.
 
-Phase A: laser latch LOCKED - expects nothing on the LASER_ON pin.
-Phase B: latch UNLOCKED for the run (re-locked in finally). Refuses to
-run if laser_pgood reports the HV supply good. Duty is zero throughout.
+Phase A: laser latch LOCKED - expects nothing on the FIRE/LASER_ON nets.
+Phase B: latch UNLOCKED for the run (re-locked in finally), streaming=0
+         (end-of-data = normal completion). Refuses to run if
+         laser_pgood reports the HV supply good. Duty is zero throughout.
+Phase U: like B but with streaming=1 declared, so the terminal
+         end-of-data is a TRUE UNDERRUN: the kernel lands in the
+         `underrun` fault state (expected - the script acks it via
+         stop). Same SDMA backstop, exercised through the fault path;
+         the scope measurement on the FIRE net is identical.
 """
 import fcntl, os, struct, sys, time
 
@@ -41,6 +47,8 @@ def snap(tag):
 
 
 mode = sys.argv[1].upper() if len(sys.argv) > 1 else 'A'
+unlock = mode in ('B', 'U')
+underrun_mode = mode == 'U'
 
 stream = (
     bytes([0x80]) +                # power = 0: duty zero before any FIRE bit
@@ -52,10 +60,10 @@ stream = (
 
 print('phase %s: stream %d bytes = %.3f s' % (mode, len(stream), len(stream) / TICK_HZ))
 
-if mode == 'B':
+if unlock:
     pgood = rd('cnc/laser_pgood')
     if pgood != '0':
-        print('ABORT: laser_pgood=%s (HV supply reports good) - refusing phase B' % pgood)
+        print('ABORT: laser_pgood=%s (HV supply reports good) - refusing latch unlock' % pgood)
         sys.exit(1)
 
 snap('pre ')
@@ -72,9 +80,13 @@ try:
     os.write(fd, stream)
     pos_before = rd_pos()
 
-    if mode == 'B':
+    if underrun_mode:
+        wr('cnc/streaming', 1)     # end-of-data mid-run = true underrun
+        print('streaming=1: terminal end-of-data will be a TRUE UNDERRUN (expected)')
+
+    if unlock:
         wr('cnc/laser_latch', 0)   # UNLOCK for this run only
-        print('latch UNLOCKED for phase B run')
+        print('latch UNLOCKED for phase %s run' % mode)
 
     wr('cnc/run', 1)
     t0 = time.time()
@@ -89,6 +101,14 @@ try:
             break
         time.sleep(0.1)
     print('done: state=%s after %.1f s' % (state, time.time() - t0))
+    if underrun_mode:
+        if state == 'underrun':
+            print('underrun state reached as EXPECTED; acking via stop')
+        else:
+            print('WARNING: expected underrun state, got %s' % state)
+        wr('cnc/stop', 1)          # ack the underrun
+        wr('cnc/streaming', 0)
+        print('acked: state=%s' % rd('cnc/state'))
 finally:
     wr('cnc/laser_latch', 1)       # re-lock unconditionally
     fcntl.flock(fd, fcntl.LOCK_UN)

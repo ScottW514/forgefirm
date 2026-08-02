@@ -198,17 +198,28 @@ hardware I/O — host testing).
      (13→7 during the unlocked FIRE window): b0 = SoC-side LASER_ON
      monitor, active LOW (1 = not lasing); b1 = FIRE, active high;
      b3 = latch, 1 = locked/0 = unlocked.
-   - **≤1-tick FIRE drop at underrun/end-of-data: OPEN (deferred).**
-     The SoC FIRE net is not probe-accessible on the bench, and the
-     chain-gated PSU pin cannot show FIRE without arming the full
-     chain (HV powered + pgood + HV_WDOG retriggered). Close it later
-     either by finding a probe point on the FIRE net (safing-logic
-     input) or as the first measurement of the eventual chain-armed
-     laser-milestone session, with the duty-0 discipline from this one.
-     Signal naming (per the OpenGlow LASER SAFING sheet, now confirmed
-     to match the factory board): FIRE = per-tick request (kernel
-     `laser_enable`); OK_2_FIRE = chain verdict; LASER_ON =
-     FIRE∧OK_2_FIRE to the PSU; HV_EN = HV enable, safing-driven only.
+   - **≤1-tick FIRE drop at underrun/end-of-data: PASSED 2026-08-02**
+     (scope on GPIO2_IO30, the SoC FIRE drive feeding the safing
+     logic; `fire_test.py` B and U, operator-executed, duty 0, chain
+     unarmed). Stream: two 2.000 s FIRE windows, the second ending
+     exactly at end-of-data so its falling edge IS the SDMA backstop.
+     Measured: **both pulses 2.0000 s exactly, clean edges, on BOTH
+     termination paths** — normal completion (streaming=0) and true
+     underrun (streaming=1, kernel `underrun` state reached and
+     acked). The backstop drops FIRE within one tick (≤100 µs at
+     10 kHz) regardless of how the stream dies.
+     Signal naming (per the OpenGlow LASER SAFING sheet, confirmed to
+     match the factory board): FIRE = per-tick request (kernel
+     `laser_enable`, GPIO2_IO30); OK_2_FIRE = chain verdict; LASER_ON
+     = FIRE∧OK_2_FIRE to the PSU; HV_EN = HV enable, safing-driven
+     only.
+   - **ALL STANDING SCOPE GATES ARE NOW PASSED.** Live fire remains
+     gated on the laser-milestone software itself (power-byte + FIRE
+     emission in the stream engine with power-before-fire ordering,
+     HV_WDOG retriggering only while genuinely cutting, M3/M4/$32
+     mapping) plus a chain-armed first-light procedure; the hardware
+     verification prerequisites are complete. Interlock-trip recovery
+     behavior remains to be exercised (non-scope check).
    - **Interlock readback semantics cross-check: OPEN** (see
      factory-laser-safety-readbacks notes).
 3. **Homing**: X/Y home switch GPIOs exist in the cnc pin map (unused so
