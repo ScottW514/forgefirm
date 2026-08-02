@@ -232,14 +232,35 @@ hardware I/O — host testing).
      it to a hard fire gate). Verified via tach readbacks: air tach
      period 4439→699 under M8, exhaust stopped→full, intakes ~3×,
      cooldown hold, clean return to idle; coolant temp visibly
-     dropped during the blast. **Coolant flow verification also DONE**
-     (the factory heater trick: loop heater at 10 % between the two
-     water-temp sensors; measured on this machine — flow ΔT settles
-     +2.5..4.0 °C and never sustains >4.1, pump-stopped ΔT hits
-     +4.6..5.7 within 20 s; fault = ΔT>4.5 °C for 20 s, live-verified:
-     pump stopped → sender warning in 40 s → recovery re-arms).
-     Absolute ceiling 33 °C (job-header CMrx; heater adds ~1.5 °C to
-     the loop). **v2 (same day): heater job-scoped** (M8..M9 only — an
+     dropped during the blast. Absolute ceiling 33 °C (job-header
+     CMrx).
+
+     **Coolant temperature conversion CORRECTED 2026-08-02** — the
+     UAPI "best guess" `raw*-0.09653+94` was wrong (3–5 °C high, wrong
+     slope); the real one is the factory B-equation recovered from the
+     v2.6.0 binary (10 k B3380 NTC, 10 k divider, ×1.3 gain, 10-bit
+     ADC), proven by reproducing this machine's `WT*` cloud settings
+     exactly, and thermometer-checked to ~1 °C. Full derivation now in
+     `kernel-module-glowforge/UAPI.md`. Consequence: the 33 °C ceiling
+     had been firing at a real ~29 °C, and **anything derived from the
+     old formula had to be re-derived** — which is how the flow check
+     below got rebuilt.
+
+     **Coolant flow verification (rebuilt, live-verified both ways).**
+     Continuous 10 % heating was never viable on the corrected curve:
+     flow ΔT ≤3.69 vs no-flow ΔT ≥3.74 — a 0.04 °C gap against ~0.9 °C
+     of sensor noise. At 30 % the ΔT bands separate (≤9.32 / ≥10.99)
+     but a ΔT threshold still **failed a live pump-off drill** (8.8 °C
+     vs a 10.2 °C limit), because a check starting from a cold heater
+     never reaches the steady-state delta. Final design: a **one-shot
+     check at job start (M8)** — heater to 30 % for 50 s — with the
+     discriminator being **downstream temperature RISE** (flow ≈10.3 °C
+     vs no-flow ≈15.1 °C, ~6 °C separation; threshold 12.7 °C,
+     `GFCOOL_FLOW_RISE`). Heater goes off afterwards, so the loop is
+     not warmed for the rest of the job, and absolute over-temp
+     monitoring carries protection from there (a pump failure mid-cut
+     shows as a temperature climb far faster than any heater delta).
+     Verified twice each way from a cooled loop. **v2 (same day): heater job-scoped** (M8..M9 only — an
      always-on heater eats headroom below the 31 °C start gate at
      idle; flow faulting arms 30 s after heater-on), **two-phase
      cooldown** (15 s smoke clear at run duty, then half-duty airflow
