@@ -220,6 +220,18 @@ hardware I/O — host testing).
      mapping) plus a chain-armed first-light procedure; the hardware
      verification prerequisites are complete. Interlock-trip recovery
      behavior remains to be exercised (non-scope check).
+   - **Additional laser-on prerequisite (operator-mandated
+     2026-08-02): fan/thermal control must be implemented first** —
+     air assist + purge (head), exhaust + intake (thermal), and the
+     coolant loop (water pump, TEC, water-temp monitoring). Factory
+     run/idle/cooldown values are in the captured pulse headers
+     (AAid/AArd/AAwd, EFid/EFrd/EFwd, IFid/IFrd/IFwd + CM/CT water
+     thresholds — see `_RESOURCES/*.info` and the gfutilities
+     settings map); kernel interfaces exist under
+     /sys/glowforge/head and /sys/glowforge/thermal. Map into the
+     driver as job-state-driven config (run at cycle start, cooldown
+     after, idle thereafter) like the factory's
+     `_config_from_pulse` scheme.
    - **Interlock readback semantics cross-check: OPEN** (see
      factory-laser-safety-readbacks notes).
 3. **Homing**: X/Y home switch GPIOs exist in the cnc pin map (unused so
