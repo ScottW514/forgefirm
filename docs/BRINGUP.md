@@ -232,8 +232,15 @@ hardware I/O — host testing).
      it to a hard fire gate). Verified via tach readbacks: air tach
      period 4439→699 under M8, exhaust stopped→full, intakes ~3×,
      cooldown hold, clean return to idle; coolant temp visibly
-     dropped during the blast. TEC/heater control remain for the
-     thermal part of the laser milestone.
+     dropped during the blast. **Coolant flow verification also DONE**
+     (the factory heater trick: loop heater at 10 % between the two
+     water-temp sensors; measured on this machine — flow ΔT settles
+     +2.5..4.0 °C and never sustains >4.1, pump-stopped ΔT hits
+     +4.6..5.7 within 20 s; fault = ΔT>4.5 °C for 20 s, live-verified:
+     pump stopped → sender warning in 40 s → recovery re-arms).
+     Absolute ceiling 33 °C (job-header CMrx; heater adds ~1.5 °C to
+     the loop). TEC control remains for the thermal part of the laser
+     milestone; both warnings become hard fire gates there.
    - **Interlock readback semantics cross-check: OPEN** (see
      factory-laser-safety-readbacks notes).
 3. **Homing (design decided 2026-08-02)**: the factory machine has NO
