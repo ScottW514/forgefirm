@@ -75,9 +75,12 @@ class Grbl:
                 state = st[1:].split('|')[0]
                 if not states or states[-1] != state:
                     states.append(state)
-                for f in st.split('|'):
+                for f in st[1:-1].split('|'):
+                    # FS:feed,speed with a spindle registered; F:feed without
                     if f.startswith('FS:'):
                         peak = max(peak, float(f[3:].split(',')[0]))
+                    elif f.startswith('F:'):
+                        peak = max(peak, float(f[2:].split(',')[0]))
                 if state.startswith('Idle'):
                     return peak, states
             time.sleep(poll)

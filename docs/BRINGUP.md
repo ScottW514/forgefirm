@@ -1,7 +1,8 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
 Last updated: **2026-08-02** — milestone 2 (factory-true motion tuning)
-bench-verified.
+bench-verified, and the controller promoted to a canonical grblHAL driver
+repo (**grblHAL-glowforge**) with bench parity re-proven on hardware.
 Read together with `AUDIT_ACTION_PLAN.md` in the project root (sibling of
 this repo; per-finding status of the 2026-07-03 audit) and
 `kernel-module-glowforge/UAPI.md` (the pulse-stream feeder contract).
@@ -63,7 +64,7 @@ motion constants were extracted from the `_RESOURCES` pulse files
   `/sys/class/leds/lid_led*/target`) and resets analog config (below).
 - **Build host**: WSL2 distro `forge-yocto`, tree at
   `~/dev/openglow-forgefirm`. `~/src-sync.sh` rsyncs the Windows repos in
-  (now includes `python3-gfhardware`). Build:
+  (includes `python3-gfhardware` and `grblHAL-glowforge`). Build:
   `cd ~/dev/openglow-forgefirm/forgefirm && kas shell
   kas/forgefirm-glowforge.yml -c 'bitbake forgefirm-image
   forgefirm-image-dev'`. Artifacts:
@@ -73,29 +74,42 @@ motion constants were extracted from the `_RESOURCES` pulse files
   -c '...'` eats `$VAR` expansions (use script files run via PowerShell,
   not Git Bash, which MSYS-mangles `/mnt/c` paths).
 
-## Running the step backend (grblHAL on the board)
+## Running the controller (grblHAL-glowforge on the board)
 
-Source: the ForgeFIRM grblHAL step backend (grblHAL core + the
-glowforge pulse-stream sink).
+Source: `C:\dev\openglow-forgefirm\grblHAL-glowforge` — the **canonical
+grblHAL driver repo** (github.com/ScottW514/grblHAL-glowforge, branch
+`main`): core as a submodule at `src/grbl` (→ ScottW514/core fork, branch
+`forgefirm`, carrying the settings-write crash fix, PR'd upstream as
+grblHAL/core#999), `driver.c` implementing the HAL, machine constants in
+`src/boards/glowforge.h`. Architecture: a wall-paced producer thread runs
+the core stepper ISR against a virtual step clock (1000× machine tick)
+and maps step events to pulse bytes; a SCHED_FIFO shipper feeds
+`/dev/glowforge` with the bounded queue; a recursive core mutex stands in
+for interrupt masking. `GFSINK` unset = null-sink mode (full engine, no
+hardware I/O — host testing).
 
-1. Build: cross-compile the backend in the forge-yocto WSL distro (from
-   PowerShell). Produces `build-arm/grblHAL_glowforge` in the WSL tree
-   (`-O1 -g`, `GLOWFORGE_DEFAULTS=ON` → machine constants baked in:
-   53.333 µsteps/mm XY @ ×8, 2.832 half-steps/mm Z, 0.417" Z travel,
-   12000 mm/min max, 700/590 mm/s² accel — factory-derived, see
-   `puls_profile.py`).
-2. Deploy to `/usr/bin/grblHAL_glowforge` on the board.
-3. Start: `cd /data && GFSINK=/dev/glowforge grblHAL_glowforge -p 23 -n -t 1.0`
-   (`-t 1.0` is REQUIRED: the real-time throttle is what bounds the
-   queue). Env knobs: `GFSINK_RATE` (machine tick, default 28160 Hz =
+1. Build: `wsl -d forge-yocto -- bash <repo>/forgefirm/scripts/bench/build-glowforge.sh`
+   (from PowerShell). Produces `build-arm/grblHAL_glowforge` in the WSL
+   tree (`-O1 -g`; machine constants live in `src/boards/glowforge.h`,
+   force-included into the core: 53.333 µsteps/mm XY @ ×8, 2.832
+   half-steps/mm Z, 0.417" Z travel, 12000 mm/min max, 700/590 mm/s²
+   accel — factory-derived, see `puls_profile.py`).
+2. Deploy to `/usr/bin/grblHAL_glowforge` on the board (kill the running
+   instance first — the binary can't be overwritten while executing).
+3. Start: `cd /data && GFSINK=/dev/glowforge grblHAL_glowforge -p 23 -e
+   /data/EEPROM-glowforge.DAT` (no `-t` — real-time pacing is intrinsic
+   now). Env knobs: `GFSINK_RATE` (machine tick, default 28160 Hz =
    factory travel tick), `GFSINK_DEPTH_MS` (queue depth = feed-hold
-   latency, default 200). The sink applies the full analog machine config
-   itself at init (×8 modes, decay 1, motor_lock 8, laser latched, PIC
-   hold currents) and swaps PIC run/hold currents around motion — the old
-   manual sysfs block is no longer needed. If the baked $-defaults
-   changed since the last run, `$RST=$` once (stored settings win).
+   latency, default 200). The driver applies the full analog machine
+   config itself at init (×8 modes, decay 1, motor_lock 8, laser latched,
+   PIC hold currents) and swaps PIC run/hold currents around motion. If
+   the baked $-defaults changed since the last run, `$RST=$` once (stored
+   settings win). Each motion run logs a producer-stats line to stderr
+   (callbacks, µs/call, max-behind, clamped) — clamped should stay 0.
 4. Connect LightBurn/UGS to `172.16.1.97:23`, or jog raw:
-   `$J=G91X40F1200`.
+   `$J=G91X40F1200`. `^X` mid-motion aborts via kernel `cnc/stop`
+   (controlled decel) and raises an alarm; TCP disconnects never kill the
+   process (the deadman fd stays held).
 
 ## Hardware facts bank (measured)
 
@@ -143,8 +157,12 @@ glowforge pulse-stream sink).
    backend; underrun → grblHAL alarm; interlock-trip recovery check.
 5. **6.6 camera service**: persistent MJPEG (ulfius, forgectrl) — also the
    natural time for the deferred 5.6 emulator smoke (homing images).
-6. **Housekeeping**: upstream the settings-write crash fix (grblHAL
-   crashes on every runtime $-settings write — NULL chained
-   `grbl.on_settings_changed` in gcode.c's gc_init); Phase 7 doc sweep
-   (CLAUDE.md charter refresh, README roadmap); kas flip + first GitHub
-   release per kas/README.md once ready to publish.
+6. **Housekeeping**: ~~pick the controller's remote home~~ **DONE
+   2026-08-02** — the controller is now the canonical driver repo
+   `github.com/ScottW514/grblHAL-glowforge` (+ `ScottW514/core` fork;
+   the settings-write crash fix is upstream PR grblHAL/core#999; repoint
+   the submodule to upstream when it merges). Remaining: a Yocto recipe
+   for grblHAL-glowforge in meta-forgefirm (pin SRCREV; fills the
+   `forgectrl` slot per kas/README.md), Phase 7 doc sweep (CLAUDE.md
+   charter refresh, README roadmap), kas flip + first GitHub release per
+   kas/README.md once ready to publish.
