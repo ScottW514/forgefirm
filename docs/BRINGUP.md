@@ -234,9 +234,24 @@ hardware I/O — host testing).
      `_config_from_pulse` scheme.
    - **Interlock readback semantics cross-check: OPEN** (see
      factory-laser-safety-readbacks notes).
-3. **Homing**: X/Y home switch GPIOs exist in the cnc pin map (unused so
-   far); wire as grblHAL limits or keep StallGuard-less factory scheme;
-   Z homes against the hall sensor (top).
+3. **Homing (design decided 2026-08-02)**: the factory machine has NO
+   X/Y home switches (only an unpopulated IO header — hardware project
+   for another day). Current-spike stall sensing is a dead end (the PIC
+   current attrs are setpoints, not measurements, and chopper-driven
+   steppers don't draw more current when stalled). Plan, simple first:
+   1. **Primary: accelerometer bump-detect** — the head lis2hh12 (in
+      the DT, `head/accel_irq` readback) senses the contact jolt while
+      creeping toward the corner; stop, back off, zero. Needs IIO
+      bring-up on the dev image.
+   2. **Fallback: soft-bump** — PIC current dropped to a weak value,
+      slow constant-velocity stream past full travel, harmless step
+      skipping against the hard stop, back off, zero counters, restore
+      run current. Zero new sensing; ~±1 full step (0.15 mm)
+      repeatability; brief grind during the skip. Y "weak" value needs
+      empirical tuning (factory run is already only 22).
+   Camera homing (the factory's actual method) is a future option once
+   the camera service exists. Z homes against the hall sensor (top),
+   hall-supervised only.
 4. **6.5 safety mapping**: door/estop evdev → feed-hold/halt in the
    backend; underrun → grblHAL alarm; interlock-trip recovery check.
 5. **6.6 camera service**: persistent MJPEG (ulfius, forgectrl) — also the
