@@ -65,6 +65,15 @@ re-parked.)
 - **Console tab**: raw grbl — `?` status, `$$` settings, `$X` unlock,
   `$J=G91X10F1200` jog.
 
+## Air assist / fans
+
+Each cut/engrave layer has an **Air Assist** toggle (in the layer's cut
+settings). Turning it on makes LightBurn emit M8/M9 around that layer,
+which drives the machine's full cut-profile ventilation: air assist to
+full, exhaust and intake fans to factory run speeds, then a ~15 s
+cooldown after the layer before returning to idle. Leave it ON for
+anything that will eventually involve the beam; expect real fan noise.
+
 ## A good first job
 
 1. Draw a rectangle (~100 × 60 mm) with a circle inside.
