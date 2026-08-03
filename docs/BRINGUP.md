@@ -483,6 +483,14 @@ at live snapshots).
    contacts 20-47k vs thresholds 6.5-20k), ending at machine 0,0 with
    both axes flagged homed; jogs return to exact zero.** Z excluded
    ($H never moves Z; hall-supervised Z homing is a later item).
+   **$H from mid-bed measures 97.8 s** at the default rates — almost
+   entirely the F300 seek creep (X 247 mm ≈ 50 s + Y 139 mm ≈ 28 s +
+   ~10 s/axis latch); raise $25 to shorten once higher-speed contact
+   is validated. Note: status polls (`?`) go unanswered for long
+   stretches during homing (senders must tolerate the silence).
+   OPEN (headless robustness): a killed TCP client wedges the
+   single-connection port until the server tries a write — a new
+   connection should displace a dead session (serial.c).
    Spike record (tools `scripts/bench/accel_fast.py`, `bump_seek.py`;
    machine driven via grblHAL TCP jogs + 0x85 cancel):
    - **Sensors**: three lis2hh12 bind via mainline st_accel. The HEAD
