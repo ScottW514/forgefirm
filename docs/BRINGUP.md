@@ -73,6 +73,15 @@ motion constants were extracted from the `_RESOURCES` pulse files
   over `/lib/modules/<kver>/extras/`, then `rmmod glowforge && modprobe
   glowforge`. NOTE: a module reload turns off the lid LED (relight via
   `/sys/class/leds/lid_led*/target`) and resets analog config (below).
+- **Module hot-swap vs kernel re-stamps**: the hot-swap only loads if
+  the module was built against the FLASHED kernel's patch state — any
+  edit under the kernel recipe's overlay (e.g. glowforge.dts)
+  re-stamps CONFIG_LOCALVERSION_AUTO and the module's vermagic stops
+  matching. To build a hot-swappable module after such an edit:
+  `git checkout HEAD~1 -- <the edited file>` in the WSL meta-openglow
+  copy, `bitbake kernel-module-glowforge` (sstate restores the flashed
+  kernel's tree bit-for-bit), restore the file. The DT change itself
+  waits for the next image flash.
 - **Build host**: WSL2 distro `forge-yocto`, tree at
   `~/dev/openglow-forgefirm`. `~/src-sync.sh` rsyncs the Windows repos in
   (includes `python3-gfhardware` and `grblHAL-glowforge`). Build:
@@ -224,9 +233,15 @@ at live snapshots).
 
 ## Hardware facts bank (measured)
 
-- SDMA pulse engine: ring free = 128 MiB − 32 KiB gap; script effective
-  ceiling ~165 kHz; position counters (`sdma_context` sc0/1/2 = X/Y/Z
-  steps, sc3 = bytes) match grblHAL exactly.
+- SDMA pulse engine: ring size = the `ring_mb` module parameter
+  (default 16 MiB; power of two, must fit the `cnc-pulsebuf` DT pool —
+  16 MiB as of 2026-08-03, was 128; the ~112 MB RAM reclaim lands at
+  the next image flash since the pool is a boot-time carve-out). Free
+  = size − 32 KiB gap. The ring caps legacy cloud-mode job length
+  (whole-file preload: ~1 MiB per 100 s of 10 kHz stream); the grblHAL
+  live feed keeps only a few KB in flight. Script effective ceiling
+  ~165 kHz; position counters (`sdma_context` sc0/1/2 = X/Y/Z steps,
+  sc3 = bytes) match grblHAL exactly.
 - Byte layout & rules: see the UAPI.md feeder contract (authoritative).
 - Z: bit 6 SET = lens UP = +Z (hardware-verified; pulsedata.py was the
   inverted party, fixed). Home = hall trigger at TOP; usable travel ≈ 30
@@ -490,6 +505,15 @@ at live snapshots).
    Z homes against the hall sensor (top), hall-supervised only.
 4. **6.5 safety mapping**: door/estop evdev → feed-hold/halt in the
    backend; underrun → grblHAL alarm; interlock-trip recovery check.
+4b. **Cloud-mode complete review** (operator-directed 2026-08-03):
+   `load_motion` preloads a job's ENTIRE pulse file into the ring with
+   no backpressure recovery — with the 16 MiB default ring that caps
+   cloud jobs at ~28 min and a too-big job fails mid-download; the
+   write path needs rework (stream-during-run or graceful
+   too-big rejection). Also: a marked TODO in `load_motion` copies
+   every job's full pulse file into the logging directory (disk
+   filler), and many cloud actions are not currently handled at all —
+   review the action surface end to end (gfutilities service layer).
 5. **6.6 camera service: DONE 2026-08-03, bench- and operator-verified**
    (see "The camera service" section above; LightBurn streams it
    directly). Remaining camera work: lens calibration / bed alignment,
