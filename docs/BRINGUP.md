@@ -227,6 +227,9 @@ at live snapshots).
   half-steps ≈ 10.6 mm ≈ 0.417"; 0.3534 mm/half-step. Never blind-drive Z
   — hall-supervised only.
 - XY: 0.15 mm per full step; DIR bit set = −X / +Y (Y1/Y2 complementary).
+  **+Y physically moves the gantry toward the FRONT** (operator-verified
+  2026-08-03). Homing corner = back-left (X min, Y min); after $H the
+  workspace is all-positive from that corner.
 - Factory motion profile (measured from `_RESOURCES` pulse streams with
   `puls_profile.py`): accel ≈ 700 mm/s² X / 590 mm/s² Y on v2.6.0
   firmware (2018 firmware used ≈1000); header HAxr=132/HAyr=112/HAar=133
@@ -429,11 +432,29 @@ at live snapshots).
      there.
    - **Interlock readback semantics cross-check: OPEN** (see
      factory-laser-safety-readbacks notes).
-3. **Homing — accelerometer bump-detect PROVEN 2026-08-03** (the
-   factory machine has NO X/Y home switches; current-spike stall
-   sensing is a dead end — the PIC current attrs are setpoints, not
-   measurements). Spike results (tools `scripts/bench/accel_fast.py`,
-   `bump_seek.py`; machine driven via grblHAL TCP jogs + 0x85 cancel):
+3. **Homing: DONE 2026-08-03 — $H works** (accelerometer bump-detect;
+   the factory machine has NO X/Y home switches). Driver integration
+   (`glowforge_homing.c` in grblHAL-glowforge): a monitor thread reads
+   the head accel over direct I2C and feeds the core's standard homing
+   cycle as a virtual limit switch on `limits.min`; the core's
+   `on_homing_rate_set` event scopes detection to approach phases —
+   each Seek/Locate runs a fresh ramp-skip (150 ms) + baseline-learn
+   (350 ms) + detect session, pull-offs suspend detection entirely
+   (their reversal/stop jerks read as contact otherwise: the first Y
+   integration attempt failed exactly that way). The cycle mask is
+   tracked live ($H chains cycles under one arm — a stale mask
+   attributed Y's contact to X once, grinding Y to the over-travel
+   alarm; a 5 s contact-not-acted-on watchdog now aborts instead).
+   Pressed-at-start approaches trigger immediately off their grinding
+   baseline. Config: $22=11, $23=3 (home to X min / Y min =
+   back-left), seek 300 latch 60 mm/min, pull-off 4 mm, force-origin
+   → all-positive workspace. **Verified: full $H from mid-bed and
+   again from the home corner, both clean (8/8 approach detections,
+   contacts 20-47k vs thresholds 6.5-20k), ending at machine 0,0 with
+   both axes flagged homed; jogs return to exact zero.** Z excluded
+   ($H never moves Z; hall-supervised Z homing is a later item).
+   Spike record (tools `scripts/bench/accel_fast.py`, `bump_seek.py`;
+   machine driven via grblHAL TCP jogs + 0x85 cancel):
    - **Sensors**: three lis2hh12 bind via mainline st_accel. The HEAD
      accel is **i2c-3 addr 0x1e** (proven by jog discrimination; Z
      reads −1 g). 0x1d on the same bus is a static board part (+1 g);
