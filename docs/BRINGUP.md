@@ -246,7 +246,56 @@ hardware I/O — host testing).
      old formula had to be re-derived** — which is how the flow check
      below got rebuilt.
 
-     **Coolant flow verification (rebuilt, live-verified both ways).**
+     **Coolant flow verification — REBUILT ON A 60-RUN DESIGN MATRIX
+     (2026-08-02 overnight).** Everything below supersedes the earlier
+     ΔT-based designs; the tools are `scripts/bench/flow_matrix.py`
+     (+`flow_sampler.py` on the board), `flow_sustained.py`,
+     `flow_warm_validate.py`, `flow_recheck_char.py`.
+     - **Duty is the decisive parameter.** Below ~40 % the stagnant
+       loop sheds the heater's output by natural convection well enough
+       to **mimic flow**: at 30 %/50 s the five pump-stopped trials read
+       8.15, 8.69, 8.78, 12.25, 13.33 °C while flow never exceeded 9.08
+       — three of five dead-pump cases looked *healthier* than a working
+       pump. At 40 % heat input outruns convection (flow ≤11.46,
+       no-flow ≥16.04, d′ 8.4) and it is also the cheapest viable
+       option (~0.8 °C of loop heating per check vs ~2.0 °C at 50 %).
+     - **Operating point: 40 % duty, 50 s window, threshold 14.4 °C**
+       (balanced midpoint of 17 flow observations peaking at 12.75 and
+       8 no-flow observations bottoming at 16.04).
+     - **Periodic re-checks every 150 s** (`GFCOOL_RECHECK_S`), because
+       a stopped pump is undetectable any other way — absolute
+       temperature only tracks a *circulating* loop, and "coolant
+       should warm while cutting" is ambiguous (a light engrave may add
+       no measurable heat). Sustained 40-minute run: zero false faults,
+       and **no thermal accumulation** — with cut-profile fans the loop
+       *cooled* 2 °C while being interrogated throughout.
+     - **Settle gate (safety-critical).** The check measures a rise
+       from a baseline; capturing that baseline while the loop is still
+       cooling from earlier heat produces garbage and was bench-proven
+       to **miss** (reported flow with the pump stopped). Checks are now
+       requested, and start only once the sensors agree **and** the
+       downstream reading is stationary. Stationarity uses a
+       **split-half mean difference**, not peak-to-peak: measured noise
+       on a settled loop is 0.52 °C p-p (0.70 worst) but only 0.11 °C
+       split-half (0.21 worst), so any p-p threshold tight enough to
+       catch drift sits *below the noise floor* and the gate never
+       opens.
+     - **Record: 25/25 correct classifications at 40 %**, plus all three
+       settle cases (settled/flow, settled/no-flow, and the unsettled
+       no-flow case that previously missed → now defers, then faults).
+     - **NOT YET VALIDATED (first-light commissioning items):** all
+       baselines were 19–23 °C (an overnight-cool room; the loop
+       equilibrates near ambient and the heater cannot reach a
+       cutting-session loop temperature — 100 % duty drives the
+       downstream sensor past 50 °C in 30 s while the bulk barely
+       moves). Behaviour at 27–32 °C baselines, and under real laser
+       heating, must be characterized at first light. Physics argues
+       the dependence is weak — with forced flow ΔT = P/(ṁ·c), which
+       carries no absolute-temperature term — but that is reasoning,
+       not measurement.
+
+     *(Superseded earlier text kept below for context.)*
+     **Coolant flow verification (first attempt, live-verified both ways).**
      Continuous 10 % heating was never viable on the corrected curve:
      flow ΔT ≤3.69 vs no-flow ΔT ≥3.74 — a 0.04 °C gap against ~0.9 °C
      of sensor noise. At 30 % the ΔT bands separate (≤9.32 / ≥10.99)

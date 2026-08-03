@@ -1,0 +1,205 @@
+=== flow matrix started 2026-08-02 20:20:59
+duties=[10, 15, 20, 30, 40, 50] repeats=5 run=75s durations=[15, 20, 25, 30, 40, 50, 60, 75]
+controller stopped for the experiment
+initial settle (180 s with fans)...
+baseline: down=22.62 up=22.46  (target for every run: <= 22.96)
+  [ 1/60] rep1 duty 10% FLOW    start=22.77  down_rise@30s=3.93  
+           elapsed 0.1 h
+  [ 2/60] rep1 duty 10% NO-FLOW start=22.38  down_rise@30s=3.10  
+           elapsed 0.1 h
+  [ 3/60] rep1 duty 15% FLOW    start=22.85  down_rise@30s=4.73  
+           elapsed 0.1 h
+  [ 4/60] rep1 duty 15% NO-FLOW start=22.38  down_rise@30s=3.45  
+           elapsed 0.2 h
+  [ 5/60] rep1 duty 20% FLOW    start=22.77  down_rise@30s=3.64  
+           elapsed 0.2 h
+  [ 6/60] rep1 duty 20% NO-FLOW start=22.46  down_rise@30s=6.82  
+           elapsed 0.2 h
+  [ 7/60] rep1 duty 30% FLOW    start=22.23  down_rise@30s=8.41  
+           elapsed 0.2 h
+  [ 8/60] rep1 duty 30% NO-FLOW start=22.30  down_rise@30s=11.03  
+           elapsed 0.3 h
+  [ 9/60] rep1 duty 40% FLOW    start=22.93  down_rise@30s=11.46  
+           elapsed 0.3 h
+  [10/60] rep1 duty 40% NO-FLOW start=22.46  down_rise@30s=15.27  
+           elapsed 0.3 h
+  [11/60] rep1 duty 50% FLOW    start=22.23  down_rise@30s=14.75  
+           elapsed 0.3 h
+  [12/60] rep1 duty 50% NO-FLOW start=22.54  down_rise@30s=18.74  
+           elapsed 0.4 h
+  [13/60] rep2 duty 10% FLOW    start=21.84  down_rise@30s=3.14  
+           elapsed 0.4 h
+  [14/60] rep2 duty 10% NO-FLOW start=22.30  down_rise@30s=2.29  
+           elapsed 0.4 h
+  [15/60] rep2 duty 15% FLOW    start=22.15  down_rise@30s=3.46  
+           elapsed 0.5 h
+  [16/60] rep2 duty 15% NO-FLOW start=22.77  down_rise@30s=4.08  
+           elapsed 0.5 h
+  [17/60] rep2 duty 20% FLOW    start=22.15  down_rise@30s=4.69  
+           elapsed 0.5 h
+  [18/60] rep2 duty 20% NO-FLOW start=22.77  down_rise@30s=5.51  
+           elapsed 0.5 h
+  [19/60] rep2 duty 30% FLOW    start=21.99  down_rise@30s=7.17  
+           elapsed 0.6 h
+  [20/60] rep2 duty 30% NO-FLOW start=22.93  down_rise@30s=7.10  
+           elapsed 0.6 h
+  [21/60] rep2 duty 40% FLOW    start=22.62  down_rise@30s=8.82  
+           elapsed 0.6 h
+  [22/60] rep2 duty 40% NO-FLOW start=22.62  down_rise@30s=13.46  
+           elapsed 0.6 h
+  [23/60] rep2 duty 50% FLOW    start=22.30  down_rise@30s=12.66  
+           elapsed 0.7 h
+  [24/60] rep2 duty 50% NO-FLOW start=22.54  down_rise@30s=18.18  
+           elapsed 0.7 h
+  [25/60] rep3 duty 10% FLOW    start=22.07  down_rise@30s=2.43  
+           elapsed 0.7 h
+  [26/60] rep3 duty 10% NO-FLOW start=22.07  down_rise@30s=3.40  
+           elapsed 0.7 h
+  [27/60] rep3 duty 15% FLOW    start=22.62  down_rise@30s=4.40  
+           elapsed 0.8 h
+  [28/60] rep3 duty 15% NO-FLOW start=21.76  down_rise@30s=4.62  
+           elapsed 0.8 h
+  [29/60] rep3 duty 20% FLOW    start=22.85  down_rise@30s=4.35  
+           elapsed 0.8 h
+  [30/60] rep3 duty 20% NO-FLOW start=21.68  down_rise@30s=4.79  
+           elapsed 0.8 h
+  [31/60] rep3 duty 30% FLOW    start=22.30  down_rise@30s=9.11  
+           elapsed 0.9 h
+  [32/60] rep3 duty 30% NO-FLOW start=22.15  down_rise@30s=7.28  
+           elapsed 0.9 h
+  [33/60] rep3 duty 40% FLOW    start=21.91  down_rise@30s=10.00  
+           elapsed 0.9 h
+  [34/60] rep3 duty 40% NO-FLOW start=22.85  down_rise@30s=14.55  
+           elapsed 0.9 h
+  [35/60] rep3 duty 50% FLOW    start=22.62  down_rise@30s=12.71  
+           elapsed 1.0 h
+  [36/60] rep3 duty 50% NO-FLOW start=22.62  down_rise@30s=18.19  
+           elapsed 1.0 h
+  [37/60] rep4 duty 10% FLOW    start=22.54  down_rise@30s=2.75  
+           elapsed 1.0 h
+  [38/60] rep4 duty 10% NO-FLOW start=20.75  down_rise@30s=2.92  
+           elapsed 1.1 h
+  [39/60] rep4 duty 15% FLOW    start=22.15  down_rise@30s=4.17  
+           elapsed 1.1 h
+  [40/60] rep4 duty 15% NO-FLOW start=22.62  down_rise@30s=4.71  
+           elapsed 1.1 h
+  [41/60] rep4 duty 20% FLOW    start=21.37  down_rise@30s=5.48  
+           elapsed 1.1 h
+  [42/60] rep4 duty 20% NO-FLOW start=22.23  down_rise@30s=4.77  
+           elapsed 1.2 h
+  [43/60] rep4 duty 30% FLOW    start=22.46  down_rise@30s=6.41  
+           elapsed 1.2 h
+  [44/60] rep4 duty 30% NO-FLOW start=22.62  down_rise@30s=6.84  
+           elapsed 1.2 h
+  [45/60] rep4 duty 40% FLOW    start=22.54  down_rise@30s=10.50  
+           elapsed 1.2 h
+  [46/60] rep4 duty 40% NO-FLOW start=22.69  down_rise@30s=14.56  
+           elapsed 1.3 h
+  [47/60] rep4 duty 50% FLOW    start=22.38  down_rise@30s=13.75  
+           elapsed 1.3 h
+  [48/60] rep4 duty 50% NO-FLOW start=22.23  down_rise@30s=18.61  
+           elapsed 1.3 h
+  [49/60] rep5 duty 10% FLOW    start=22.38  down_rise@30s=2.67  
+           elapsed 1.3 h
+  [50/60] rep5 duty 10% NO-FLOW start=22.07  down_rise@30s=4.10  
+           elapsed 1.4 h
+  [51/60] rep5 duty 15% FLOW    start=21.45  down_rise@30s=3.94  
+           elapsed 1.4 h
+  [52/60] rep5 duty 15% NO-FLOW start=22.15  down_rise@30s=3.19  
+           elapsed 1.4 h
+  [53/60] rep5 duty 20% FLOW    start=21.91  down_rise@30s=4.26  
+           elapsed 1.4 h
+  [54/60] rep5 duty 20% NO-FLOW start=22.46  down_rise@30s=5.25  
+           elapsed 1.5 h
+  [55/60] rep5 duty 30% FLOW    start=22.23  down_rise@30s=7.34  
+           elapsed 1.5 h
+  [56/60] rep5 duty 30% NO-FLOW start=22.77  down_rise@30s=11.06  
+           elapsed 1.5 h
+  [57/60] rep5 duty 40% FLOW    start=22.93  down_rise@30s=9.65  
+           elapsed 1.5 h
+  [58/60] rep5 duty 40% NO-FLOW start=22.38  down_rise@30s=13.48  
+           elapsed 1.6 h
+  [59/60] rep5 duty 50% FLOW    start=22.38  down_rise@30s=12.59  
+           elapsed 1.6 h
+  [60/60] rep5 duty 50% NO-FLOW start=21.68  down_rise@30s=20.05  
+           elapsed 1.6 h
+
+=== COST: bulk (upstream) rise during a check, flow case, degrees C
+    duty      15s     20s     25s     30s     40s     50s     60s     75s
+      10%    0.34    0.62    0.67    0.33    0.30    0.58    0.09    0.34
+      15%    0.03    0.76    0.50    0.67    0.53    0.69    0.39    0.64
+      20%   -0.08   -0.17    0.23    0.09    0.19    0.23    0.02    0.50
+      30%    0.79    0.73    1.39    0.83    1.11    1.17    1.42    1.22
+      40%    0.55    0.36    1.05    1.06    0.95    0.76    1.25    1.53
+      50%    1.26    1.83    1.72    1.59    2.03    2.03    2.19    2.69
+
+=== PRECISION: downstream-rise discrimination (flow vs no-flow)
+    duty  dur   flow mean+-sd    noflow mean+-sd   sep   worst   d-prime
+      10%   15s    2.68+-0.45      2.03+-0.71  -0.65  -2.20    -1.1
+      10%   20s    2.90+-0.69      2.81+-0.37  -0.09  -1.65    -0.2
+      10%   25s    2.76+-0.69      3.10+-0.60   0.33  -1.80     0.5
+      10%   30s    2.98+-0.59      3.16+-0.66   0.18  -1.64     0.3
+      10%   40s    2.90+-0.86      3.30+-0.42   0.40  -1.08     0.6
+      10%   50s    3.05+-0.85      3.88+-0.44   0.83  -1.09     1.2
+      10%   60s    2.37+-0.54      3.61+-0.54   1.24  -0.21     2.3
+      10%   75s    2.60+-0.83      4.12+-0.54   1.52  -0.36     2.2
+      15%   15s    2.93+-0.63      2.93+-0.36  -0.01  -1.21    -0.0
+      15%   20s    3.97+-0.33      3.54+-0.35  -0.42  -1.31    -1.2
+      15%   25s    3.89+-0.86      3.95+-0.45   0.06  -1.46     0.1
+      15%   30s    4.14+-0.48      4.01+-0.68  -0.13  -1.55    -0.2
+      15%   40s    4.11+-0.79      4.43+-0.65   0.32  -1.54     0.4
+      15%   50s    4.17+-0.78      5.01+-0.34   0.83  -0.24     1.4
+      15%   60s    4.17+-0.52      5.09+-0.48   0.92  -0.21     1.8
+      15%   75s    4.21+-0.41      5.75+-0.45   1.54  +0.37     3.6
+      20%   15s    3.84+-0.78      3.57+-0.83  -0.27  -2.08    -0.3
+      20%   20s    4.18+-0.53      4.14+-0.83  -0.03  -1.36    -0.0
+      20%   25s    4.71+-0.92      4.90+-1.03   0.19  -1.91     0.2
+      20%   30s    4.48+-0.67      5.43+-0.84   0.95  -0.71     1.2
+      20%   40s    4.84+-0.58      5.79+-1.16   0.96  -0.61     1.0
+      20%   50s    4.98+-0.39      6.41+-0.79   1.43  +0.22     2.3
+      20%   60s    4.53+-0.66      6.67+-1.39   2.14  -0.44     2.0
+      20%   75s    4.95+-0.65      7.34+-1.02   2.39  +0.64     2.8
+      30%   15s    6.32+-0.81      5.63+-1.72  -0.69  -3.43    -0.5
+      30%   20s    7.13+-1.31      6.86+-2.24  -0.27  -3.67    -0.1
+      30%   25s    7.65+-0.92      7.73+-1.93   0.08  -2.63     0.1
+      30%   30s    7.69+-1.07      8.66+-2.18   0.97  -2.27     0.6
+      30%   40s    7.69+-0.90      9.96+-2.65   2.27  -1.00     1.1
+      30%   50s    8.15+-0.75     10.24+-2.37   2.09  -0.93     1.2
+      30%   60s    8.20+-0.70     10.77+-2.34   2.57  -0.35     1.5
+      30%   75s    8.27+-1.28     10.86+-2.26   2.59  -0.82     1.4
+      40%   15s    8.06+-0.87     10.14+-0.65   2.08  +0.37     2.7
+      40%   20s    8.93+-1.07     12.07+-0.48   3.13  +1.06     3.8
+      40%   25s    9.61+-1.22     13.47+-0.98   3.86  +0.96     3.5
+      40%   30s   10.09+-0.98     14.26+-0.78   4.18  +2.00     4.7
+      40%   40s   10.29+-1.41     16.01+-0.88   5.72  +2.77     4.9
+      40%   50s   10.14+-0.87     16.95+-0.74   6.81  +4.58     8.4
+      40%   60s   10.71+-1.22     17.27+-0.96   6.56  +3.72     6.0
+      40%   75s   10.46+-1.22     17.88+-0.77   7.42  +5.38     7.2
+      50%   15s   10.73+-0.65     13.02+-0.71   2.29  +0.22     3.3
+      50%   20s   12.71+-0.89     15.58+-0.85   2.87  +0.55     3.3
+      50%   25s   12.71+-0.96     17.10+-0.78   4.39  +1.66     5.0
+      50%   30s   13.29+-0.95     18.75+-0.76   5.46  +3.43     6.4
+      50%   40s   14.04+-0.80     20.38+-1.16   6.34  +3.48     6.3
+      50%   50s   14.38+-0.57     21.61+-0.93   7.23  +5.08     9.4
+      50%   60s   14.24+-0.48     22.14+-1.02   7.90  +5.94     9.9
+      50%   75s   14.18+-0.78     23.17+-1.10   8.99  +6.51     9.4
+
+=== RANKED by d-prime (separation in pooled standard deviations)
+    rank  duty  dur   d-prime  worst-margin  bulk-cost  threshold
+       1    50%   60s      9.9        +5.94      2.19     18.19
+       2    50%   75s      9.4        +6.51      2.69     18.68
+       3    50%   50s      9.4        +5.08      2.03     18.00
+       4    40%   50s      8.4        +4.58      0.76     13.54
+       5    40%   75s      7.2        +5.38      1.53     14.17
+       6    50%   30s      6.4        +3.43      1.59     16.02
+       7    50%   40s      6.3        +3.48      2.03     17.21
+       8    40%   60s      6.0        +3.72      1.25     13.99
+       9    50%   25s      5.0        +1.66      1.72     14.91
+      10    40%   40s      4.9        +2.77      0.95     13.15
+      11    40%   30s      4.7        +2.00      1.06     12.18
+      12    40%   20s      3.8        +1.06      0.36     10.50
+
+    (worst-margin = min(no-flow) - max(flow); positive means every
+     observed no-flow run exceeded every observed flow run.
+     bulk-cost = degrees C added to the loop per check.)
+controller restarted; total elapsed 1.63 h
