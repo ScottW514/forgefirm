@@ -429,24 +429,38 @@ at live snapshots).
      there.
    - **Interlock readback semantics cross-check: OPEN** (see
      factory-laser-safety-readbacks notes).
-3. **Homing (design decided 2026-08-02)**: the factory machine has NO
-   X/Y home switches (only an unpopulated IO header — hardware project
-   for another day). Current-spike stall sensing is a dead end (the PIC
-   current attrs are setpoints, not measurements, and chopper-driven
-   steppers don't draw more current when stalled). Plan, simple first:
-   1. **Primary: accelerometer bump-detect** — the head lis2hh12 (in
-      the DT, `head/accel_irq` readback) senses the contact jolt while
-      creeping toward the corner; stop, back off, zero. Needs IIO
-      bring-up on the dev image.
-   2. **Fallback: soft-bump** — PIC current dropped to a weak value,
-      slow constant-velocity stream past full travel, harmless step
-      skipping against the hard stop, back off, zero counters, restore
-      run current. Zero new sensing; ~±1 full step (0.15 mm)
-      repeatability; brief grind during the skip. Y "weak" value needs
-      empirical tuning (factory run is already only 22).
-   Camera homing (the factory's actual method) is a future option once
-   the camera service exists. Z homes against the hall sensor (top),
-   hall-supervised only.
+3. **Homing — accelerometer bump-detect PROVEN 2026-08-03** (the
+   factory machine has NO X/Y home switches; current-spike stall
+   sensing is a dead end — the PIC current attrs are setpoints, not
+   measurements). Spike results (tools `scripts/bench/accel_fast.py`,
+   `bump_seek.py`; machine driven via grblHAL TCP jogs + 0x85 cancel):
+   - **Sensors**: three lis2hh12 bind via mainline st_accel. The HEAD
+     accel is **i2c-3 addr 0x1e** (proven by jog discrimination; Z
+     reads −1 g). 0x1d on the same bus is a static board part (+1 g);
+     i2c-0 0x1e is the lid. **st_accel sysfs one-shot reads are ~6 Hz**
+     (the driver power-cycles per read) and this kernel has no IIO
+     triggers — the working path is **direct I2C via /dev/i2c-3**
+     (unbind st-accel first): CTRL1=0x6F (800 Hz ODR), burst-read
+     OUT_X..Z → **~530 Hz** from Python, faster from C.
+   - **Contact signature is unmistakable**: creep (F120) moving
+     baseline ≈0.5–2 k counts (summed 3-axis |dev| from an EMA
+     gravity tracker); rail contact jumps to **29–42 k within two
+     samples (~4 ms)** — 20–40× over baseline. Detector: per-cycle
+     learned threshold max(mean+8σ, floor), 2-sample confirm.
+   - **Results: 3/3 hits, zero false positives over ~180 mm** of
+     accumulated creep. Detection latency ≈4–6 ms ≈ 0.01 mm at
+     2 mm/s. Post-cancel push-through is dominated by the **200 ms
+     stream queue (~0.4 mm at F120)**, visible as counter drift
+     between repeat hits (skipped steps against the rail).
+   - **Implementation design**: detection lives in the driver as a
+     virtual limit switch feeding grblHAL's homing cycle (direct-I2C
+     read thread during homing only); homing runs with a shallow
+     queue (small GFSINK_DEPTH) to cut push-through; **zero at the
+     pressed position** so counter drift from skipped steps cancels;
+     dual-phase seek/latch like standard Grbl. Fallback soft-bump
+     (weak-current grind) remains available but likely unnecessary.
+   Camera homing (the factory's actual method) is a future option.
+   Z homes against the hall sensor (top), hall-supervised only.
 4. **6.5 safety mapping**: door/estop evdev → feed-hold/halt in the
    backend; underrun → grblHAL alarm; interlock-trip recovery check.
 5. **6.6 camera service: DONE 2026-08-03, bench- and operator-verified**
