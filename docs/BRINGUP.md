@@ -169,12 +169,13 @@ round-trip jogs at F1200 with an active stream — producer stats
 core). Run by hand: `/usr/bin/forgectrl >> /data/forgectrl.log 2>&1 &`
 (kill before scp when redeploying, text-file-busy).
 
-Not yet done: LightBurn-side camera consumption (needs an operator
-session — LightBurn desktop takes USB webcams; the mjpg-streamer alias
-is the standard bridge-style interface, so test whether the overlay can
-use it directly or needs a relay), lens calibration / bed alignment, and
-the deferred 5.6 emulator homing-image smoke (the cloud emulator can now
-be pointed at live snapshots).
+**LightBurn consumes the stream directly — operator-verified
+2026-08-03** ("without issue", via the mjpg-streamer-compatible
+`/?action=stream` alias) while jogging the machine from the same
+LightBurn session. Not yet done: lens calibration / bed alignment (the
+fisheye needs LightBurn's camera calibration pass), and the deferred
+5.6 emulator homing-image smoke (the cloud emulator can now be pointed
+at live snapshots).
 
 ## Hardware facts bank (measured)
 
@@ -409,10 +410,10 @@ be pointed at live snapshots).
    hall-supervised only.
 4. **6.5 safety mapping**: door/estop evdev → feed-hold/halt in the
    backend; underrun → grblHAL alarm; interlock-trip recovery check.
-5. **6.6 camera service: DONE 2026-08-03, bench-verified** (see "The
-   camera service" section above). Remaining camera work: LightBurn
-   consumption test (operator), lens calibration / bed alignment, the
-   deferred 5.6 emulator homing-image smoke.
+5. **6.6 camera service: DONE 2026-08-03, bench- and operator-verified**
+   (see "The camera service" section above; LightBurn streams it
+   directly). Remaining camera work: lens calibration / bed alignment,
+   the deferred 5.6 emulator homing-image smoke.
 6. **Housekeeping**: ~~pick the controller's remote home~~ **DONE
    2026-08-02** — the controller is now the canonical driver repo
    `github.com/ScottW514/grblHAL-glowforge` (+ `ScottW514/core` fork;
