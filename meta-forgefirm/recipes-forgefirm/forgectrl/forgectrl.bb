@@ -2,21 +2,16 @@ DESCRIPTION = "System Control Daemon for ForgeFIRM powered Glowforge"
 HOMEPAGE = "https://github.com/ScottW514/forgectrl"
 
 LICENSE = "MIT"
-LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
+LIC_FILES_CHKSUM = "file://LICENSE;md5=19ed4e3e8c28a4311c16b0b2b91357ec"
 
-SRC_URI = "\
-  file://CMakeLists.txt \
-  file://main.c \
-  file://cam.c \
-  file://cam.h \
-  file://debayer.c \
-  file://debayer.h \
-  file://vpu_jpeg.c \
-  file://vpu_jpeg.h \
-  file://forgectrl.init \
-"
+PE = "1"
+PV = "0.1.0"
 
-S = "${WORKDIR}"
+SRC_URI = "git://github.com/ScottW514/forgectrl.git;protocol=https;branch=main"
+# Pinned; bump deliberately after pushing forgectrl changes.
+SRCREV = "1253328e76703e33241fb183ce89a133ddcb4466"
+
+S = "${WORKDIR}/git"
 
 inherit cmake update-rc.d
 
@@ -29,5 +24,5 @@ INITSCRIPT_PARAMS = "defaults 90"
 
 do_install:append() {
     install -d ${D}${sysconfdir}/init.d
-    install -m 0755 ${WORKDIR}/forgectrl.init ${D}${sysconfdir}/init.d/forgectrl
+    install -m 0755 ${S}/init/forgectrl.init ${D}${sysconfdir}/init.d/forgectrl
 }

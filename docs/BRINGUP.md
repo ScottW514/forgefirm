@@ -124,10 +124,16 @@ hardware I/O — host testing).
 
 ## The camera service (forgectrl, port 8080)
 
-Source: `meta-forgefirm/recipes-forgefirm/forgectrl/` (recipe-local C,
-MIT; built by the `forgectrl` recipe, installed in both images with a
-sysvinit script). One ulfius daemon exposes both OV5648 cameras as MJPEG
-over the mainline imx-media pipeline:
+Source: `C:\dev\openglow-forgefirm\forgectrl` — the **canonical repo**
+(github.com/ScottW514/forgectrl, branch `main`, MIT). forgectrl is the
+ForgeFIRM control daemon: camera service today; realtime hardware
+status/settings, hardware control, and GRBL-vs-cloud mode selection are
+its planned scope. The meta-forgefirm recipe pins its SRCREV (bump
+deliberately after pushing) and installs the sysvinit script from the
+repo's `init/`; bench builds cross-compile with
+`forgefirm/scripts/bench/build-forgectrl.sh` (same toolchain-borrow
+pattern as build-glowforge.sh). One ulfius daemon exposes both OV5648
+cameras as MJPEG over the mainline imx-media pipeline:
 
 - `GET /` — index page with a live view; `/?action=stream|snapshot` are
   the mjpg-streamer-compatible aliases (lid camera).

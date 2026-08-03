@@ -197,8 +197,11 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
 6. **gfui-client → forgectrl** — the Glowforge **cloud client is excluded**
    from `forgefirm-image` (`IMAGE_INSTALL:remove = "gfui-client"` in
    `meta-forgefirm/recipes-forgefirm/images/forgefirm-image.bb`) — it connected to
-   Glowforge's servers, the dependency ForgeFIRM exists to cut. The grblHAL
-   controller + web UI (`forgectrl`, currently a placeholder) will fill its place.
+   Glowforge's servers, the dependency ForgeFIRM exists to cut. Its slot is
+   filled by `forgectrl` (github.com/ScottW514/forgectrl — the ForgeFIRM
+   control daemon; camera MJPEG service today, hardware status/control and
+   GRBL-vs-cloud mode selection planned) plus the grblHAL controller
+   (recipe still pending, backlog item).
 
 ---
 
