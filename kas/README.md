@@ -200,8 +200,8 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
    Glowforge's servers, the dependency ForgeFIRM exists to cut. Its slot is
    filled by `forgectrl` (github.com/ScottW514/forgectrl — the ForgeFIRM
    control daemon; camera MJPEG service today, hardware status/control and
-   GRBL-vs-cloud mode selection planned) plus the grblHAL controller
-   (recipe still pending, backlog item).
+   GRBL-vs-cloud mode selection planned) plus the `grblhal-glowforge`
+   motion controller (both in the images with boot autostart).
 
 ---
 

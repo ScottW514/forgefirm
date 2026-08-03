@@ -1,0 +1,36 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          grblhal
+# Required-Start:    $local_fs
+# Required-Stop:
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: grblHAL motion controller (Grbl over TCP:23)
+### END INIT INFO
+
+DAEMON=/usr/bin/grblHAL_glowforge
+PIDFILE=/var/run/grblhal.pid
+LOG=/data/glowforge.log
+
+case "$1" in
+  start)
+    echo "Starting grblHAL"
+    start-stop-daemon -S -q -p $PIDFILE -m -b -x /bin/sh -- \
+      -c "cd /data && GFSINK=/dev/glowforge exec $DAEMON -p 23 -e /data/EEPROM-glowforge.DAT >> $LOG 2>&1"
+    ;;
+  stop)
+    echo "Stopping grblHAL"
+    start-stop-daemon -K -q -p $PIDFILE
+    rm -f $PIDFILE
+    ;;
+  restart)
+    $0 stop
+    sleep 1
+    $0 start
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+    ;;
+esac
+exit 0

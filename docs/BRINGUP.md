@@ -102,7 +102,12 @@ grblHAL driver repo** (github.com/ScottW514/grblHAL-glowforge, branch
 `main`): core as a submodule at `src/grbl` (→ ScottW514/core fork, branch
 `forgefirm`, carrying the settings-write crash fix, PR'd upstream as
 grblHAL/core#999), `driver.c` implementing the HAL, machine constants in
-`src/boards/glowforge.h`. Architecture: a wall-paced producer thread runs
+`src/boards/glowforge.h`. **The controller autostarts at boot** since
+2026-08-03: the `grblhal-glowforge` recipe (meta-forgefirm; gitsm pin +
+sysvinit script `grblhal`, defaults 92) is installed in both images, and
+the same init script is installed on the current bench rootfs
+(reboot-verified: controller + forgectrl both up unattended, Grbl
+answering on :23). The manual start below remains the bench/debug path. Architecture: a wall-paced producer thread runs
 the core stepper ISR against a virtual step clock (1000× machine tick)
 and maps step events to pulse bytes; a SCHED_FIFO shipper feeds
 `/dev/glowforge` with the bounded queue; a recursive core mutex stands in
@@ -526,8 +531,8 @@ at live snapshots).
    2026-08-02** — the controller is now the canonical driver repo
    `github.com/ScottW514/grblHAL-glowforge` (+ `ScottW514/core` fork;
    the settings-write crash fix is upstream PR grblHAL/core#999; repoint
-   the submodule to upstream when it merges). Remaining: a Yocto recipe
-   for grblHAL-glowforge in meta-forgefirm (pin SRCREV; fills the
-   `forgectrl` slot per kas/README.md), Phase 7 doc sweep (CLAUDE.md
-   charter refresh, README roadmap), kas flip + first GitHub release per
-   kas/README.md once ready to publish.
+   the submodule to upstream when it merges). ~~Yocto recipe for
+   grblHAL-glowforge~~ **DONE 2026-08-03** (`grblhal-glowforge` in
+   meta-forgefirm, boot autostart, reboot-verified). Remaining: Phase 7
+   doc sweep (CLAUDE.md charter refresh, README roadmap), kas flip +
+   first GitHub release per kas/README.md once ready to publish.
