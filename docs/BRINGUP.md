@@ -74,14 +74,13 @@ motion constants were extracted from the `_RESOURCES` pulse files
   glowforge`. NOTE: a module reload turns off the lid LED (relight via
   `/sys/class/leds/lid_led*/target`) and resets analog config (below).
 - **Module hot-swap vs kernel re-stamps**: the hot-swap only loads if
-  the module was built against the FLASHED kernel's patch state — any
+  the module was built against the FLASHED kernel's patch state. Any
   edit under the kernel recipe's overlay (e.g. glowforge.dts)
-  re-stamps CONFIG_LOCALVERSION_AUTO and the module's vermagic stops
-  matching. To build a hot-swappable module after such an edit:
-  `git checkout HEAD~1 -- <the edited file>` in the WSL meta-openglow
-  copy, `bitbake kernel-module-glowforge` (sstate restores the flashed
-  kernel's tree bit-for-bit), restore the file. The DT change itself
-  waits for the next image flash.
+  re-stamps CONFIG_LOCALVERSION_AUTO — and the stamp does NOT
+  reproduce by reverting the edit (the kernel patch tree is a fresh
+  git commit each do_patch, not sstate-restored), so after any
+  overlay edit the module can only ship with a full image flash.
+  Batch kernel-overlay edits accordingly.
 - **Build host**: WSL2 distro `forge-yocto`, tree at
   `~/dev/openglow-forgefirm`. `~/src-sync.sh` rsyncs the Windows repos in
   (includes `python3-gfhardware` and `grblHAL-glowforge`). Build:
