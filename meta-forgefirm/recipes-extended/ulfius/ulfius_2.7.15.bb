@@ -6,9 +6,9 @@ LIC_FILES_CHKSUM = "file://LICENSE;md5=40d2542b8c43a3ec2b7f5da31a697b88"
 
 # Pinned to the v2.7.15 release tag, together with orcania v2.3.3 and
 # yder v1.4.20 (its release-mate dependency versions). AUTOREV against master
-# was unbuildable: master's CMake requires orcania/yder versions that have no
-# release tags, and the git:// fetch never brought in the bundled-subproject
-# fallback (audit M10).
+# is unbuildable: master's CMake requires orcania/yder versions that have no
+# release tags, and the git:// fetch never brings in the bundled-subproject
+# fallback.
 SRC_URI = "git://github.com/babelouest/ulfius;protocol=https;branch=master"
 SRCREV = "a0603447d3ed63c0880db396b9c395fb4bf6b559"
 

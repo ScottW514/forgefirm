@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Phase 3.2 software check: laser PWM carrier frequency from PWM2 registers.
+"""Software check: laser PWM carrier frequency from PWM2 registers.
 
 Expected with the fsl,extra-prescale=<13> fix: PWMCR prescaler divider = 13,
 PWMPR ~125 (127 counts - 2), effective carrier = perclk / (13 * 127) ~= 40 kHz.
-Without the fix: divider 1 -> ~520 kHz (audit M8). Safe: read-only register
+Without the fix: divider 1 -> ~520 kHz. Safe: read-only register
 inspection; the laser PWM output feeds the PSU power input, firing stays gated
 by the hardware chain. The definitive gate remains the scope on LASER_PWM.
 """

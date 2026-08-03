@@ -15,9 +15,8 @@ BRIGHT="\033[1;39m"
 RESET="\033[0m"
 ASTERISK="${LIGHTRED}✺${RESET}"
 
-# Abort loudly instead of completing silently broken: several steps below
-# (image download, flash write, uEnv rewrite) used to fail without stopping
-# the install (audit N13/M12/N16).
+# Abort loudly instead of completing silently broken: a failed step (image
+# download, flash write, uEnv rewrite) must stop the install.
 die () {
   echo
   echo -e "${LIGHTRED}!! INSTALL FAILED:${RESET} $1"

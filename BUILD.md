@@ -1,8 +1,8 @@
 # Build
 
 ForgeFIRM is built with [**kas**](https://kas.readthedocs.io/), which manages
-the Yocto layers and pins their versions. This replaces the old Google `repo`
-+ `default.xml` workflow. The **forgefirm** repo is the base of the build.
+the Yocto layers and pins their versions. The **forgefirm** repo is the base
+of the build.
 
 Builds run on a Linux host, or on **WSL2** (officially supported by Yocto —
 keep the tree on the native ext4 filesystem, not `/mnt/c`).

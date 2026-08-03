@@ -9,8 +9,7 @@
 # Machine: glowforge  (i.MX6 Solo SOM inside Basic/Plus/Pro)
 # Distro : forgefirm
 #
-# Replaces the old Google `repo` + default.xml manifest and the hand-maintained
-# base/conf/forgefirm-bblayers.conf. kas generates bblayers.conf and local.conf.
+# kas generates bblayers.conf and local.conf.
 #
 # Run from the forgefirm repo root so outputs land inside it:
 #   cd forgefirm
@@ -86,8 +85,7 @@ repos:
       meta-glowforge-bsp:
       # meta-openglow-bsp (separate OpenGlow_std board) intentionally excluded.
   #
-  # FUTURE — flip to this pinned-remote block at release time (the scarthgap
-  # branch is pushed as of 2026-07-26, so this now works; the flip is gated on
+  # FUTURE — flip to this pinned-remote block at release time (gated on
   # active BSP development settling — see kas/README.md "Push & release order".
   # When flipping, also drop meta-openglow's kernel-module-glowforge.bbappend
   # (externalsrc to the local sibling) so a fresh clone is self-contained; its
@@ -110,7 +108,7 @@ local_conf_header:
   eula: |
     ACCEPT_FSL_EULA = "1"
 
-  # Kernel is now defaulted to linux-fslc 6.12 in conf/machine/glowforge.conf
+  # The kernel defaults to linux-fslc 6.12 in conf/machine/glowforge.conf
   # (with the factory drivers forward-ported — EPIT/SDMA/OV5648/glowforge.ko —
   # see kas/README.md backlog #2). This explicit pin is redundant but harmless.
   kernel: |

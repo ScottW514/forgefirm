@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Phase 2.8 bench test: the reworked end-of-data protocol (audit M2-M5).
+"""End-of-data protocol bench.
 
 Motion-safe by construction: all four motors are locked via motor_lock (the
 SDMA script masks the STEP bits), the laser latch is locked (LASER_ON pin is
 Hi-Z and the hardware safety chain is open anyway), and only NOP (0x00) and
 laser-bit (0x10) bytes are streamed.
 
-Exercises: normal completion, underrun detection/ack (M5), parked no-replay
-guard (M4), alldone GPIO clear (M2, via GPIO2_DR readback - the data register
-retains the last value the script wrote), resume(0) (M3), continuous-feed
-stability, and 20x run/underrun cycling (M3 wedge check).
+Exercises: normal completion, underrun detection/ack, parked no-replay
+guard, alldone GPIO clear (via GPIO2_DR readback - the data register
+retains the last value the script wrote), resume(0), continuous-feed
+stability, and 20x run/underrun cycling (wedge check).
 """
 import os, re, sys, time, mmap, struct
 

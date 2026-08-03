@@ -3,8 +3,7 @@
 The **forgefirm** repo is the base of the project: it controls the build,
 the resulting firmware images land here, and all build/install docs live here.
 It uses [**kas**](https://kas.readthedocs.io/) to manage Yocto layers and drive
-the build, replacing the old Google `repo` + `default.xml` manifest and the
-hand-maintained `base/conf/forgefirm-bblayers.conf`.
+the build.
 
 ## Baseline
 
@@ -88,25 +87,21 @@ kas auto-loads the lockfile on subsequent runs. Commit it; refresh deliberately.
 ## Push & release order (source-of-truth sequencing)
 
 The build is only reproducible when recipe pins, layer branches, and the kas
-config move in the right order (audit findings M13/N14 — the old `AUTOREV` +
-untracked-overlay setup meant a plain `kas build` fetched the wrong camera
-code). The sequence, with current status:
+config move in the right order. The sequence, with current status:
 
-1. **Source repos pushed & pinned** — **DONE 2026-07-26.**
+1. **Source repos pushed & pinned** — **DONE.**
    `kernel-module-glowforge` (`029dfb6`) and `python3-gfhardware` (`9bf31fd`)
    pushed to GitHub master; both recipes in meta-openglow pin those exact
    SRCREVs (no `AUTOREV` anywhere). Whenever either repo changes: push it,
    then bump the recipe `SRCREV` in meta-openglow deliberately.
-2. **meta-openglow pushed** — **DONE 2026-07-26.** The Scarthgap port lives on
+2. **meta-openglow pushed** — **DONE.** The Scarthgap port lives on
    the **`scarthgap` branch** (Yocto layer convention; the Dunfell-era `master`
    is untouched). Development continues on the local sibling checkout; push /
    fast-forward `scarthgap` as work lands.
 3. **forgefirm pushed** with the kas config and a `kas lock` lockfile pinning
    the upstream layers (poky, meta-openembedded, meta-freescale,
    meta-freescale-distro).
-4. **At release time** — gated on the audit **Phase 1 motion fixes** (do not
-   ship an image while the cnc-probe and SDMA-firmware-collision defects make
-   motion dead on arrival, AUDIT-REPORT B1/M1):
+4. **At release time**:
    - flip `meta-openglow` in `forgefirm-glowforge.yml` from the local-sibling
      block to the pinned-remote block (commented FUTURE block in the file);
    - drop meta-openglow's `kernel-module-glowforge.bbappend` (externalsrc to
@@ -117,13 +112,10 @@ code). The sequence, with current status:
 5. **GitHub release**: upload the image asset under the exact name the
    installer downloads — Scarthgap emits
    `forgefirm-image-glowforge.rootfs.wic.gz`; align BUILD.md and
-   `install-forgefirm.sh` to one name before the first release (audit N13).
+   `install-forgefirm.sh` to one name before the first release.
 
-Dev-overlay note: `kas/externalsrc-dev.yml` (an untracked overlay building
-python3-gfhardware from a local checkout via `/mnt/c`) was removed when the
-SRCREV was pinned. For future gfhardware development, either bump the pin per
-iteration or add a tracked externalsrc bbappend mirroring the kernel-module
-pattern.
+For gfhardware development, either bump the recipe pin per iteration or add a
+tracked externalsrc bbappend mirroring the kernel-module pattern.
 
 ## Scarthgap migration backlog
 
@@ -138,7 +130,7 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
 2. **Kernel forward-port (4.14 → linux-fslc 6.12.20)** — the factory NXP vendor
    kernel (linux-imx 4.14.98) carried 7 out-of-tree changes; these are re-derived
    against mainline 6.12 in `meta-glowforge-bsp/recipes-kernel/linux/linux-fslc_%.bbappend`
-   (the forward-port landing zone), **not** re-applied as the old 4.14 patches.
+   (the forward-port landing zone), **not** re-applied as the 4.14 patches.
    - **Foundation — DONE.** `linux-fslc` 6.12.20 builds for `glowforge` with a
      ported device tree (`glowforge.dts` + `openglow_common.dtsi` overlaid into
      `arch/arm/boot/dts/nxp/imx/`, registered via a Makefile patch) and deploys
@@ -178,9 +170,9 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
      `glowforge.dtb` compiles with the full pipeline. **HW bring-up:** confirm
      the real supply rails, CSI-2 lane count/order and CAM_SEL polarity, then
      validate with `media-ctl` + a v4l2 capture.
-3. **u-boot** — ~~rebuild for Scarthgap~~ **DONE.** The `glowforge` u-boot is now
-   a standalone `u-boot_2020.01.bb` (Scarthgap dropped the Dunfell-era poky base
-   recipe the old `.bbappend` extended). It reuses poky's
+3. **u-boot** — **DONE.** The `glowforge` u-boot is
+   a standalone `u-boot_2020.01.bb` (Scarthgap's poky has no u-boot 2020.01
+   base recipe to extend). It reuses poky's
    `u-boot-common.inc`/`u-boot.inc`, pins `SRCREV` to the upstream **v2020.01**
    tag with the matching `Licenses/README` md5, and overlays the glowforge board
    support + arch-Kconfig patch. **Builds clean under Scarthgap (GCC 13, no
@@ -190,7 +182,7 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
    them.
 4. **Device tree** — revalidate the `glowforge` `.dts` against the linux-fslc
    6.12 DT bindings (paired with the kernel forward-port in #2).
-5. **Real-time strategy — decided (2026-07-26, audit M9/N15).** The kernel runs
+5. **Real-time strategy — decided.** The kernel runs
    `CONFIG_PREEMPT=y` (factory behavior; `imx_v6_v7_defconfig` alone gives only
    `PREEMPT_VOLUNTARY`). **PREEMPT_RT is not selectable on arm32 6.12** (no
    `ARCH_SUPPORTS_RT`) and is **not needed for the pulse feeder**: the SDMA
@@ -199,10 +191,10 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
    a modest 1 MiB of queued data already rides out ~3–5 s of scheduling
    latency, orders of magnitude beyond anything PREEMPT exhibits. Deep
    buffering + `SCHED_FIFO` for the feeder is the design; revisit RT only if
-   the underrun bench ever contradicts this arithmetic. (The audit Phase 2
-   bench: 5 s of continuous feed at a 1 s buffer depth, zero underruns.)
+   the underrun bench ever contradicts this arithmetic. (Bench: 5 s of
+   continuous feed at a 1 s buffer depth, zero underruns.)
 
-6. **gfui-client → forgectrl** — the Glowforge **cloud client is now removed**
+6. **gfui-client → forgectrl** — the Glowforge **cloud client is excluded**
    from `forgefirm-image` (`IMAGE_INSTALL:remove = "gfui-client"` in
    `meta-forgefirm/recipes-forgefirm/images/forgefirm-image.bb`) — it connected to
    Glowforge's servers, the dependency ForgeFIRM exists to cut. The grblHAL

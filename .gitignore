@@ -8,3 +8,6 @@
 
 # kas
 *.lock.yml.bak
+
+# Python bytecode
+__pycache__/

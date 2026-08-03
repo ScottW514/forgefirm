@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Coolant temperature calibration helper (runs on Windows, reads the
+"""Coolant temperature spot-check helper (runs on Windows, reads the
 board over ssh).
 
-The raw->Celsius conversion in UAPI.md (C = raw * -0.09653 + 94) is an
-unverified best guess. This tool collects reference points - a measured
-real temperature paired with the machine's raw ADC readings - and fits
-the actual line for THIS machine.
+The raw->Celsius conversion in UAPI.md is the factory B-equation (10k
+B3380 NTC in a 10k divider behind a 1.3x gain stage, 10-bit ADC). This
+tool collects reference points - a measured real temperature paired with
+the machine's raw ADC readings - and fits a per-machine line to
+cross-check that curve against a thermometer.
 
 Usage:
   temp_calibrate.py watch                 live raw + current-formula C
@@ -18,6 +19,7 @@ machine in the morning, and warm after a fan-off soak with the flow
 heater on).
 """
 import json
+import math
 import os
 import subprocess
 import sys
@@ -26,8 +28,15 @@ import time
 HOST = '172.16.1.97'
 STORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_calibration.json')
 
-# Current unverified guess, for comparison only.
-GUESS_SLOPE, GUESS_OFFSET = -0.09653, 94.0
+
+def uapi_c(raw):
+    """The UAPI.md factory conversion (B-equation NTC behind divider + gain)."""
+    adc_f = 1024.0 * 1.3
+    if raw <= 0 or raw >= adc_f:
+        return float('nan')
+    rinf = 10000.0 * math.exp(-3380.0 / 298.15)
+    r = 10000.0 / (adc_f / raw - 1.0)
+    return 3380.0 / math.log(r / rinf) - 273.15
 
 
 def board(cmd):
@@ -79,12 +88,11 @@ def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else 'watch'
 
     if mode == 'watch':
-        print('raw1(down) raw2(up)   guess-C down/up   (ctrl-C to stop)')
+        print('raw1(down) raw2(up)   uapi-C down/up   (ctrl-C to stop)')
         while True:
             r1, r2 = raws(1, 0)
             print('  %6.1f   %6.1f      %.2f / %.2f'
-                  % (r1, r2, r1 * GUESS_SLOPE + GUESS_OFFSET,
-                     r2 * GUESS_SLOPE + GUESS_OFFSET))
+                  % (r1, r2, uapi_c(r1), uapi_c(r2)))
             time.sleep(2)
 
     elif mode == 'point':
@@ -115,11 +123,10 @@ def main():
             slope, offset = fit(pts, key)
             print('\n%s:' % label)
             print('  fitted:  C = raw * %.6f + %.4f' % (slope, offset))
-            print('  guess:   C = raw * %.6f + %.4f' % (GUESS_SLOPE, GUESS_OFFSET))
             for raw in (600, 650, 700, 750, 800):
-                print('    raw %3d -> fitted %6.2f C   guess %6.2f C   diff %+.2f'
-                      % (raw, raw * slope + offset, raw * GUESS_SLOPE + GUESS_OFFSET,
-                         (raw * slope + offset) - (raw * GUESS_SLOPE + GUESS_OFFSET)))
+                print('    raw %3d -> fitted %6.2f C   uapi %6.2f C   diff %+.2f'
+                      % (raw, raw * slope + offset, uapi_c(raw),
+                         (raw * slope + offset) - uapi_c(raw)))
     else:
         print(__doc__)
         return 1

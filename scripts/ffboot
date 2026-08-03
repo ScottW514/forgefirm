@@ -73,8 +73,7 @@ esac
 # The env always lives on the eMMC (mmcblk2 0x80000/0x82000). On the factory
 # firmware and on the ForgeFIRM image, /etc/fw_env.config already points
 # there; the mmcblk2-specific override is honored if someone provisioned one,
-# but nothing ships it, so fall back rather than failing on a missing file
-# (audit N16).
+# but nothing ships it, so fall back rather than failing on a missing file.
 if [ -f "/etc/fw_env_mmcblk2.config" ] && [ ! -d "/factory" ]; then
   FWCONFIG="/etc/fw_env_mmcblk2.config"
 else

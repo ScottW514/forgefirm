@@ -1,9 +1,9 @@
 /*
- * feeder.c - ForgeFIRM spike step 3: prove no-underrun continuous live
- * feeding of the glowforge.ko SDMA pulse ring under load (audit 6.3).
+ * feeder.c - prove no-underrun continuous live feeding of the glowforge.ko
+ * SDMA pulse ring under load.
  *
  * Streams NOP (0x00) pulse bytes to /dev/glowforge, pacing by wall clock to
- * hold a bounded queue depth (like a real grblHAL backend would - audit M6),
+ * hold a bounded queue depth (like a real grblHAL backend would),
  * with the deadman flock held. Motors must be locked and the laser latch
  * locked by the caller (bench_phase6.sh does this).
  *

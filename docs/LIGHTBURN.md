@@ -1,6 +1,6 @@
 # LightBurn setup & operation (ForgeFIRM, motion-only stage)
 
-Status: written 2026-08-02 for the grblHAL-glowforge controller. At this
+Status: motion-only. At this
 stage **the laser cannot fire** — the driver forces the hardware laser
 latch locked and never emits the laser bit in the pulse stream. A "job"
 runs every motion of the design (cuts at cut speed, travels at travel
