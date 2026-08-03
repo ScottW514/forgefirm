@@ -142,15 +142,26 @@ Engine model: one worker owns the V4L2 node persistently (media-ctl /
 v4l2-ctl configure sequences identical to gfhardware/cam.py, factory
 exposure/gain/WB, software hflip in the demosaic); starts on demand,
 full teardown after 10 s idle so gfhardware one-shot grabs still work.
-The cameras share the hardware video-mux, so stream clients pin the
-selection — requests for the other camera return 409 until they leave.
+The cameras share the hardware video-mux; arbitration:
+- **Stream clients pin the selection.** A STREAM request for the other
+  camera waits up to 3 s for the pin to drain (absorbs page
+  navigations), then returns 409. The index page therefore runs a
+  single toggled stream, never two.
+- **Snapshots never fail busy.** A snapshot of the other camera makes
+  the worker *borrow* the mux: pause the stream, switch, grab one
+  frame, switch back (~1-2 s freeze for stream viewers; "Head peek" on
+  the index page uses this). Arbitration compares against the engine's
+  home camera, so requests racing the borrow window still 409.
 The per-camera lamp (`pic/lid_led` / `head/white_led`) is raised to
 `FORGECTRL_LAMP` (default 132) while capturing and restored on idle.
 
 Bench (2026-08-03, on the board): stream 3.2 fps sustained at 1296×972;
 full-res snapshot 2.4 s warm / 2.7 s cold (cold includes the pipeline
 bring-up); camera switch works both ways; two parallel clients share the
-frame rate; idle teardown observed. **Motion coexistence proven**: X
+frame rate; idle teardown observed. Borrow verified: head snapshot 200
+during a lid stream, the stream rode through the gap (120 frames over a
+40 s window with one borrow), and head-stream requests fired both into
+the borrow window and during normal streaming got 409. **Motion coexistence proven**: X
 round-trip jogs at F1200 with an active stream — producer stats
 `clamped 0`, max behind 4.5 ms (the daemon runs at nice +5, single
 core). Run by hand: `/usr/bin/forgectrl >> /data/forgectrl.log 2>&1 &`

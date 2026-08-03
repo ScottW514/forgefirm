@@ -29,8 +29,10 @@ void cam_engine_shutdown(void);
 
 /* Blocking snapshot from the live engine. full=1 -> 2592x1944 bilinear,
  * full=0 -> 1296x972. quality 1..100. On success *jpeg is malloc'd (caller
- * frees). Returns 0, or -1 with a message in err (engine busy on the other
- * camera, pipeline failure, timeout). */
+ * frees). If the other camera is streaming, the worker borrows the mux for
+ * one frame (the stream freezes for a few seconds) - snapshots do not fail
+ * busy. Returns 0, or -1 with a message in err (pipeline failure,
+ * timeout). */
 int cam_snapshot(cam_id_t cam, int full, int quality,
                  uint8_t **jpeg, size_t *len, char *err, size_t errlen);
 

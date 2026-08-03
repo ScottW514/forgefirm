@@ -49,6 +49,7 @@
 #define IDLE_STOP_S     10  /* no clients/snapshots for this long -> teardown */
 #define SNAP_TIMEOUT_S  15
 #define CLIENT_WAIT_S   5
+#define SWITCH_GRACE_S  3   /* wait this long for clients to drain on switch */
 
 #define CAPTURE_ENTITY "ipu1_csi0 capture"
 #define MBUS_FMT       "SBGGR8_1X8/2592x1944 field:none"
@@ -85,7 +86,10 @@ static struct {
     int             tid_valid;
     int             running;    /* worker alive and capturing */
     int             stop_flag;
-    cam_id_t        cam;
+    cam_id_t        cam;        /* camera the pipeline is configured for
+                                 * RIGHT NOW (a borrow flips it briefly) */
+    cam_id_t        home_cam;   /* camera the engine serves for streaming -
+                                 * what arbitration must compare against */
     int             clients;
     struct timespec last_activity;
 
@@ -96,8 +100,12 @@ static struct {
     uint64_t        seq;
     double          fps;
 
-    /* one pending snapshot request at a time (control mutex serializes) */
+    /* one pending snapshot request at a time (control mutex serializes).
+     * snap_cam may differ from the streaming camera: the worker then
+     * "borrows" the mux - pauses the stream, switches, grabs one frame,
+     * switches back (stream clients see a few-second freeze). */
     int             snap_pending;   /* 1 = requested, 2 = done, 3 = failed */
+    cam_id_t        snap_cam;
     int             snap_full;
     int             snap_quality;
     uint8_t        *snap_jpg;       /* malloc'd result, taken by requester */
@@ -392,7 +400,9 @@ static int start_capture(cam_id_t cam, char *err, size_t errlen)
         return -1;
     }
 
+    pthread_mutex_lock(&eng.lock);
     eng.cam = cam;
+    pthread_mutex_unlock(&eng.lock);
 
     /* Scene lighting for the duration; the previous level is restored at
      * teardown (raw register write - instant, no fade). */
@@ -475,6 +485,87 @@ static int start_capture(cam_id_t cam, char *err, size_t errlen)
 
 /* ---------------------------------------------------------- worker loop */
 
+/* Encode the pending snapshot request from a raw frame and deliver the
+ * result (success or failure) to the waiter. */
+static void deliver_snap(const uint8_t *raw, uint8_t *rgb_half,
+                         uint8_t **prgb_full)
+{
+    uint8_t *jpg = NULL;
+    size_t len = 0;
+    int ok;
+
+    pthread_mutex_lock(&eng.lock);
+    int full = eng.snap_full;
+    int q = eng.snap_quality;
+    pthread_mutex_unlock(&eng.lock);
+
+    if (full) {
+        if (!*prgb_full)
+            *prgb_full = malloc((size_t)CAM_W * CAM_H * 3);
+        ok = *prgb_full != NULL;
+        if (ok) {
+            debayer_bggr_bilinear(raw, *prgb_full, CAM_W, CAM_H, HFLIP);
+            ok = jpeg_encode_rgb(*prgb_full, CAM_W, CAM_H, q, 0,
+                                 &jpg, &len) == 0;
+        }
+    } else {
+        debayer_bggr_half(raw, rgb_half, CAM_W, CAM_H, HFLIP);
+        ok = jpeg_encode_rgb(rgb_half, HALF_W, HALF_H, q, 0,
+                             &jpg, &len) == 0;
+    }
+
+    pthread_mutex_lock(&eng.lock);
+    free(eng.snap_jpg);
+    eng.snap_jpg = ok ? jpg : NULL;
+    eng.snap_len = ok ? len : 0;
+    eng.snap_pending = ok ? 2 : 3;
+    now_ts(&eng.last_activity);
+    pthread_cond_broadcast(&eng.snap_cv);
+    pthread_mutex_unlock(&eng.lock);
+}
+
+/* Mark a pending snapshot failed (only if not already delivered). */
+static void fail_snap(void)
+{
+    pthread_mutex_lock(&eng.lock);
+    if (eng.snap_pending == 1) {
+        eng.snap_pending = 3;
+        pthread_cond_broadcast(&eng.snap_cv);
+    }
+    pthread_mutex_unlock(&eng.lock);
+}
+
+/* Capture one frame from the currently-started pipeline and feed it to
+ * deliver_snap. Used by the borrow path. */
+static int grab_one_snap(uint8_t *rgb_half, uint8_t **prgb_full)
+{
+    for (int tries = 0; tries < MAX_DQ_TIMEOUTS; tries++) {
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(eng.fd, &fds);
+        struct timeval tv = { .tv_sec = DQ_TIMEOUT_S };
+        int r = select(eng.fd + 1, &fds, NULL, NULL, &tv);
+        if (r == -1 && errno == EINTR) {
+            tries--;
+            continue;
+        }
+        if (r <= 0)
+            continue;
+        struct v4l2_buffer buf = {0};
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory = V4L2_MEMORY_MMAP;
+        if (xioctl(eng.fd, VIDIOC_DQBUF, &buf) < 0) {
+            if (errno == EAGAIN || errno == EIO)
+                continue;
+            return -1;
+        }
+        deliver_snap(eng.bufs[buf.index].start, rgb_half, prgb_full);
+        xioctl(eng.fd, VIDIOC_QBUF, &buf);
+        return 0;
+    }
+    return -1;
+}
+
 static void *worker(void *arg)
 {
     (void)arg;
@@ -496,13 +587,38 @@ static void *worker(void *arg)
         pthread_mutex_lock(&eng.lock);
         int stop = eng.stop_flag;
         int clients = eng.clients;
-        int snap = eng.snap_pending == 1;
-        int idle = clients == 0 && !snap &&
+        int snap = eng.snap_pending == 1 && eng.snap_cam == eng.home_cam;
+        int borrow = eng.snap_pending == 1 && eng.snap_cam != eng.home_cam;
+        cam_id_t borrow_cam = eng.snap_cam;
+        cam_id_t orig_cam = eng.home_cam;
+        int idle = clients == 0 && !snap && !borrow &&
                    ts_diff(&now, &eng.last_activity) > IDLE_STOP_S;
         pthread_mutex_unlock(&eng.lock);
 
         if (stop || idle)
             break;
+
+        /* Cross-camera snapshot: borrow the mux - pause the stream,
+         * switch, grab one frame, switch back. Stream clients just see
+         * the frame gap (a few seconds). */
+        if (borrow) {
+            char berr[128];
+            release_capture();
+            if (start_capture(borrow_cam, berr, sizeof(berr)) == 0) {
+                if (grab_one_snap(rgb_half, &rgb_full))
+                    fail_snap();
+                release_capture();
+            } else {
+                fprintf(stderr, "cam: borrow start failed: %s\n", berr);
+                fail_snap();
+            }
+            if (start_capture(orig_cam, berr, sizeof(berr))) {
+                fprintf(stderr, "cam: restore after borrow failed: %s\n",
+                        berr);
+                break;  /* engine dies; streams end; reconnect heals */
+            }
+            continue;
+        }
 
         /* Wait for a frame */
         fd_set fds;
@@ -538,37 +654,8 @@ static void *worker(void *arg)
         const uint8_t *raw = eng.bufs[buf.index].start;
 
         /* Snapshot request rides on the same raw frame */
-        if (snap) {
-            uint8_t *jpg = NULL;
-            size_t len = 0;
-            int ok;
-            pthread_mutex_lock(&eng.lock);
-            int full = eng.snap_full;
-            int q = eng.snap_quality;
-            pthread_mutex_unlock(&eng.lock);
-            if (full) {
-                if (!rgb_full)
-                    rgb_full = malloc((size_t)CAM_W * CAM_H * 3);
-                ok = rgb_full != NULL;
-                if (ok) {
-                    debayer_bggr_bilinear(raw, rgb_full, CAM_W, CAM_H, HFLIP);
-                    ok = jpeg_encode_rgb(rgb_full, CAM_W, CAM_H, q, 0,
-                                         &jpg, &len) == 0;
-                }
-            } else {
-                debayer_bggr_half(raw, rgb_half, CAM_W, CAM_H, HFLIP);
-                ok = jpeg_encode_rgb(rgb_half, HALF_W, HALF_H, q, 0,
-                                     &jpg, &len) == 0;
-            }
-            pthread_mutex_lock(&eng.lock);
-            free(eng.snap_jpg);
-            eng.snap_jpg = ok ? jpg : NULL;
-            eng.snap_len = ok ? len : 0;
-            eng.snap_pending = ok ? 2 : 3;
-            now_ts(&eng.last_activity);
-            pthread_cond_broadcast(&eng.snap_cv);
-            pthread_mutex_unlock(&eng.lock);
-        }
+        if (snap)
+            deliver_snap(raw, rgb_half, &rgb_full);
 
         /* Stream frame */
         if (clients > 0) {
@@ -627,7 +714,10 @@ static int ensure_engine(cam_id_t cam, char *err, size_t errlen)
     for (;;) {
         pthread_mutex_lock(&eng.lock);
         int running = eng.running;
-        cam_id_t cur = eng.cam;
+        /* Compare against the HOME camera: during a snapshot borrow the
+         * pipeline (eng.cam) is briefly on the other sensor, and a stream
+         * request racing that window must not attach to it. */
+        cam_id_t cur = eng.home_cam;
         int clients = eng.clients;
         int tid_valid = eng.tid_valid;
         pthread_mutex_unlock(&eng.lock);
@@ -637,10 +727,24 @@ static int ensure_engine(cam_id_t cam, char *err, size_t errlen)
 
         if (running && cur != cam) {
             if (clients > 0) {
-                snprintf(err, errlen,
-                         "camera busy: %d client(s) streaming %s",
-                         clients, camdefs[cur].name);
-                return -1;
+                /* Grace: a client that just disconnected releases its pin
+                 * only when the MHD send fails on the next frame - absorb
+                 * that (page navigations) instead of failing instantly. */
+                struct timespec t0, t;
+                now_ts(&t0);
+                do {
+                    usleep(100 * 1000);
+                    pthread_mutex_lock(&eng.lock);
+                    clients = eng.clients;
+                    pthread_mutex_unlock(&eng.lock);
+                    now_ts(&t);
+                } while (clients > 0 && ts_diff(&t, &t0) < SWITCH_GRACE_S);
+                if (clients > 0) {
+                    snprintf(err, errlen,
+                             "camera busy: %d client(s) streaming %s",
+                             clients, camdefs[cur].name);
+                    return -1;
+                }
             }
             pthread_mutex_lock(&eng.lock);
             eng.stop_flag = 1;
@@ -658,6 +762,9 @@ static int ensure_engine(cam_id_t cam, char *err, size_t errlen)
         }
 
         /* cold start */
+        pthread_mutex_lock(&eng.lock);
+        eng.home_cam = cam;
+        pthread_mutex_unlock(&eng.lock);
         if (start_capture(cam, err, errlen))
             return -1;
         pthread_mutex_lock(&eng.lock);
@@ -716,13 +823,23 @@ int cam_snapshot(cam_id_t cam, int full, int quality,
                  uint8_t **jpeg, size_t *len, char *err, size_t errlen)
 {
     pthread_mutex_lock(&eng.ctl);
-    if (ensure_engine(cam, err, errlen)) {
+
+    /* If the engine is streaming the OTHER camera for active clients,
+     * don't switch it - post the request and let the worker borrow the
+     * mux for one frame. Otherwise make the engine run on `cam`. */
+    pthread_mutex_lock(&eng.lock);
+    int streaming_other = eng.running && eng.home_cam != cam &&
+                          eng.clients > 0;
+    pthread_mutex_unlock(&eng.lock);
+
+    if (!streaming_other && ensure_engine(cam, err, errlen)) {
         pthread_mutex_unlock(&eng.ctl);
         return -1;
     }
 
     pthread_mutex_lock(&eng.lock);
     eng.snap_pending = 1;
+    eng.snap_cam = cam;
     eng.snap_full = full;
     eng.snap_quality = quality;
     now_ts(&eng.last_activity);
@@ -839,7 +956,7 @@ void cam_get_status(struct cam_status *st)
 {
     pthread_mutex_lock(&eng.lock);
     st->running = eng.running;
-    st->cam = eng.cam;
+    st->cam = eng.home_cam;
     st->clients = eng.clients;
     st->seq = eng.seq;
     st->fps = eng.fps;

@@ -13,7 +13,10 @@
  *   GET /cam/status                         JSON engine status
  *
  * The two cameras share the hardware mux, so streaming clients pin the
- * selection; requests for the other camera return 409 until they leave.
+ * selection: a STREAM request for the other camera waits a short grace
+ * for the pin to drain, then returns 409. A SNAPSHOT of the other camera
+ * never fails busy - the engine borrows the mux for one frame and the
+ * stream freezes for a few seconds instead.
  * Environment: FORGECTRL_PORT (8080), FORGECTRL_STREAM_Q (75),
  * FORGECTRL_LAMP (132).
  *
@@ -217,19 +220,43 @@ static int cb_status(const struct _u_request *req, struct _u_response *res,
     return U_CALLBACK_CONTINUE;
 }
 
+/* One stream at a time: the camera toggle swaps the single <img> source
+ * (closing the old stream connection) and retries through the server's
+ * switch grace. "Head peek" uses the snapshot borrow path, so it works
+ * while the lid stream is up. */
 static const char index_html[] =
     "<!DOCTYPE html><html><head><title>ForgeFIRM camera</title>"
     "<style>body{font-family:sans-serif;background:#111;color:#ddd;"
-    "text-align:center}img{max-width:95%;border:1px solid #444}"
-    "a{color:#8cf}</style></head><body>"
+    "text-align:center}img{max-width:95%;border:1px solid #444;"
+    "margin-top:8px}a{color:#8cf}button{margin:0 4px}"
+    "#msg{color:#fc6;min-height:1.2em}</style></head><body>"
     "<h2>ForgeFIRM camera</h2>"
-    "<p><a href=\"/cam/stream?cam=lid\">lid stream</a> | "
-    "<a href=\"/cam/snapshot?cam=lid\">lid snapshot</a> | "
-    "<a href=\"/cam/stream?cam=head\">head stream</a> | "
-    "<a href=\"/cam/snapshot?cam=head\">head snapshot</a> | "
+    "<p><button onclick=\"setCam('lid')\">Lid stream</button>"
+    "<button onclick=\"setCam('head')\">Head stream</button>"
+    "<button onclick=\"peek()\">Head peek</button> &nbsp; "
+    "<a href=\"/cam/snapshot?cam=lid\">lid full</a> | "
+    "<a href=\"/cam/snapshot?cam=head\">head full</a> | "
     "<a href=\"/cam/status\">status</a></p>"
-    "<img src=\"/cam/stream?cam=lid\" alt=\"lid camera stream\">"
-    "</body></html>";
+    "<div id=\"msg\"></div>"
+    "<img id=\"v\" alt=\"camera stream\">"
+    "<img id=\"p\" alt=\"\" style=\"display:none\">"
+    "<script>"
+    "var cam='lid',retries=0;"
+    "var v=document.getElementById('v'),p=document.getElementById('p'),"
+    "msg=document.getElementById('msg');"
+    "function setCam(c){cam=c;retries=0;msg.textContent='';"
+    "v.src='/cam/stream?cam='+c+'&t='+Date.now();}"
+    "v.onerror=function(){if(retries++<5){"
+    "msg.textContent='stream retrying...';"
+    "setTimeout(function(){v.src='/cam/stream?cam='+cam+'&t='+Date.now();},"
+    "700);}else{msg.textContent="
+    "'stream unavailable (camera busy from another viewer?)';}};"
+    "function peek(){"
+    "msg.textContent='head peek (stream pauses a few seconds)...';"
+    "p.style.display='inline';p.onload=function(){msg.textContent='';};"
+    "p.src='/cam/snapshot?cam=head&res=half&t='+Date.now();}"
+    "setCam('lid');"
+    "</script></body></html>";
 
 /* "/" serves the index, plus the mjpg-streamer-compatible
  * ?action=stream / ?action=snapshot aliases many clients expect. */
