@@ -156,8 +156,9 @@ The cameras share the hardware video-mux; the NEWEST request wins it
 The per-camera lamp (`pic/lid_led` / `head/white_led`) is raised to
 `FORGECTRL_LAMP` (default 132) while capturing and restored on idle.
 
-Bench (2026-08-03, on the board): stream **7.9 fps** sustained at
-1296×972 (VPU encode; 3.2 fps on the software fallback);
+Bench (2026-08-03, on the board): stream **15.0 fps** sustained at
+1296×972 (NEON demosaic + VPU encode; 3.2 fps on the full software
+fallback);
 full-res snapshot 2.4 s warm / 2.7 s cold (cold includes the pipeline
 bring-up); two parallel same-camera clients share the frame rate; idle
 teardown observed. Borrow verified: head snapshot 200 during a lid
@@ -190,9 +191,18 @@ encode 7 ms**. Two hard-won facts:
   needed) with quality via V4L2_CID_JPEG_COMPRESSION_QUALITY.
 libjpeg remains the automatic fallback (`FORGECTRL_NO_VPU=1` forces
 it) and the snapshot path; `/cam/status` reports `"encoder"`.
-Remaining headroom: the scalar convert dominates — NEON would push
-toward the sensor/CSI limit. If motion contention ever shows clamps
-during streaming, a stream-fps cap knob is the easy relief valve.
+
+**NEON demosaic: DONE 2026-08-03 — 15.0 fps, sensor-limited.** The
+YUV420 superpixel convert has a NEON kernel (vld2q deinterleave,
+vrhaddq greens, vmlal/vrshrn luma, vpaddlq block sums for chroma;
+`FORGECTRL_NO_NEON=1` forces scalar): convert 75 → 18 ms, per-frame
+copy 34 + convert 18 + encode 7 ≈ 59 ms against the sensor's 66 ms
+frame period. The NEON and scalar paths are bit-identical — proven on
+a live frame via `FORGECTRL_NEON_CHECK=1` (one-shot memcmp, logs
+IDENTICAL). Motion coexistence re-proven at 15 fps: jogs with an
+active stream show clamped 0, max behind 7.2 ms (~4 % of the 200 ms
+queue) — the worst-case contention signature so far; if real jobs
+ever clamp, a stream-fps cap knob is the relief valve.
 The IPU cannot help with demosaic (its IC is CSC/scale only — the
 `imx-csc-scaler` at /dev/video8 matters only for a future full-res
 stream). Not yet done: lens calibration / bed alignment (the

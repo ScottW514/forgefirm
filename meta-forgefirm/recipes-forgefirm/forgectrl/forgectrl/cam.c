@@ -704,6 +704,33 @@ static void *worker(void *arg)
                 vpu_jpeg_planes(vpu, &yp, &up, &vp, &ys, &uvs);
                 debayer_bggr_half_yuv420(raw, CAM_W, CAM_H, HFLIP,
                                          yp, ys, up, vp, uvs);
+#ifdef __ARM_NEON
+                /* One-shot NEON-vs-scalar equivalence check on a live
+                 * frame (the paths are constructed to be bit-identical;
+                 * this proves it on real data). Stride == width here. */
+                static int neon_checked;
+                if (!neon_checked && getenv("FORGECTRL_NEON_CHECK")) {
+                    neon_checked = 1;
+                    size_t ysz = (size_t)ys * HALF_H;
+                    size_t usz = (size_t)uvs * (HALF_H / 2);
+                    uint8_t *ry = malloc(ysz);
+                    uint8_t *ru = malloc(usz);
+                    uint8_t *rv = malloc(usz);
+                    if (ry && ru && rv) {
+                        debayer_bggr_half_yuv420_scalar(raw, CAM_W, CAM_H,
+                                                        HFLIP, ry, ys,
+                                                        ru, rv, uvs);
+                        fprintf(stderr, "cam: NEON/scalar compare: %s\n",
+                                (!memcmp(ry, yp, ysz) &&
+                                 !memcmp(ru, up, usz) &&
+                                 !memcmp(rv, vp, usz))
+                                ? "IDENTICAL" : "MISMATCH");
+                    }
+                    free(ry);
+                    free(ru);
+                    free(rv);
+                }
+#endif
                 now_ts(&e1);
                 if (vpu_jpeg_encode(vpu, &jpg, &len) == 0) {
                     via_vpu = 1;
