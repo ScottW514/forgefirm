@@ -57,6 +57,7 @@ struct cam_status {
     int      clients;
     uint64_t seq;
     double   fps;
+    int      vpu;       /* stream frames are VPU-encoded */
 };
 void cam_get_status(struct cam_status *st);
 

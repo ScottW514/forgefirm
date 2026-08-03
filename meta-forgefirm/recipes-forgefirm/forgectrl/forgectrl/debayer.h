@@ -21,4 +21,12 @@ void debayer_bggr_bilinear(const uint8_t *raw, uint8_t *rgb,
 void debayer_bggr_half(const uint8_t *raw, uint8_t *rgb,
                        int w, int h, int hflip);
 
+/* Half-resolution demosaic straight to planar YUV420 (JFIF full-range,
+ * ITU-R 601) for the VPU JPEG encoder: luma per 2x2 BGGR quad at
+ * (w/2)x(h/2), chroma averaged per 2x2 luma block at (w/4)x(h/4).
+ * w/2 and h/2 must be even. Strides are in bytes. */
+void debayer_bggr_half_yuv420(const uint8_t *raw, int w, int h, int hflip,
+                              uint8_t *yp, int y_stride,
+                              uint8_t *up, uint8_t *vp, int uv_stride);
+
 #endif

@@ -210,11 +210,12 @@ static int cb_status(const struct _u_request *req, struct _u_response *res,
     char body[256];
     snprintf(body, sizeof(body),
              "{\"running\":%s,\"cam\":\"%s\",\"clients\":%d,"
-             "\"frames\":%llu,\"fps\":%.1f,"
+             "\"frames\":%llu,\"fps\":%.1f,\"encoder\":\"%s\","
              "\"stream\":{\"width\":1296,\"height\":972},"
              "\"snapshot\":{\"width\":2592,\"height\":1944}}",
              st.running ? "true" : "false", cam_name(st.cam), st.clients,
-             (unsigned long long)st.seq, st.fps);
+             (unsigned long long)st.seq, st.fps,
+             st.vpu ? "vpu" : "software");
     ulfius_set_string_body_response(res, 200, body);
     ulfius_add_header_to_response(res, "Content-Type", "application/json");
     return U_CALLBACK_CONTINUE;

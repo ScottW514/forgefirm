@@ -19,6 +19,7 @@
 #define _GNU_SOURCE
 #include "cam.h"
 #include "debayer.h"
+#include "vpu_jpeg.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -123,6 +124,7 @@ static struct {
     /* config */
     int             stream_quality;
     int             lamp_level;
+    int             vpu_active;     /* last stream frame went through the VPU */
 } eng = {
     .ctl = PTHREAD_MUTEX_INITIALIZER,
     .lock = PTHREAD_MUTEX_INITIALIZER,
@@ -138,6 +140,11 @@ const char *cam_name(cam_id_t cam)
 {
     return camdefs[cam].name;
 }
+
+/* CODA960 hardware JPEG encoder for the stream path; libjpeg remains the
+ * fallback (and the snapshot path). Worker-thread use only. */
+static vpu_jpeg_t *vpu;
+static int vpu_disabled;
 
 /* ------------------------------------------------------------------ util */
 
@@ -539,7 +546,8 @@ static void fail_snap(void)
 
 /* Capture one frame from the currently-started pipeline and feed it to
  * deliver_snap. Used by the borrow path. */
-static int grab_one_snap(uint8_t *rgb_half, uint8_t **prgb_full)
+static int grab_one_snap(uint8_t *raw_cached, uint8_t *rgb_half,
+                         uint8_t **prgb_full)
 {
     for (int tries = 0; tries < MAX_DQ_TIMEOUTS; tries++) {
         fd_set fds;
@@ -561,7 +569,9 @@ static int grab_one_snap(uint8_t *rgb_half, uint8_t **prgb_full)
                 continue;
             return -1;
         }
-        deliver_snap(eng.bufs[buf.index].start, rgb_half, prgb_full);
+        memcpy(raw_cached, eng.bufs[buf.index].start,
+               (size_t)CAM_W * CAM_H);
+        deliver_snap(raw_cached, rgb_half, prgb_full);
         xioctl(eng.fd, VIDIOC_QBUF, &buf);
         return 0;
     }
@@ -573,12 +583,20 @@ static void *worker(void *arg)
     (void)arg;
     uint8_t *rgb_half = malloc((size_t)HALF_W * HALF_H * 3);
     uint8_t *rgb_full = NULL;   /* allocated on first full-res snapshot */
+    /* The V4L2 MMAP capture buffers are DMA-coherent = UNCACHED: byte
+     * reads from them cost a bus transaction each and demosaicing
+     * straight out of one measures ~340 ms/frame. One bulk memcpy into
+     * this cached bounce buffer first makes the demosaic run at cached
+     * speed. */
+    uint8_t *raw_cached = malloc((size_t)CAM_W * CAM_H);
+    double stat_copy_ms = 0, stat_conv_ms = 0, stat_enc_ms = 0;
+    unsigned stat_n = 0;
     int dq_timeouts = 0;
     struct timespec fps_t0;
     now_ts(&fps_t0);
     uint64_t fps_frames = 0;
 
-    if (!rgb_half) {
+    if (!rgb_half || !raw_cached) {
         fprintf(stderr, "cam: worker OOM\n");
         goto out;
     }
@@ -607,7 +625,7 @@ static void *worker(void *arg)
             char berr[128];
             release_capture();
             if (start_capture(borrow_cam, berr, sizeof(berr)) == 0) {
-                if (grab_one_snap(rgb_half, &rgb_full))
+                if (grab_one_snap(raw_cached, rgb_half, &rgb_full))
                     fail_snap();
                 release_capture();
             } else {
@@ -653,23 +671,77 @@ static void *worker(void *arg)
             break;
         }
         dq_timeouts = 0;
-        const uint8_t *raw = eng.bufs[buf.index].start;
+        struct timespec c0, c1;
+        now_ts(&c0);
+        memcpy(raw_cached, eng.bufs[buf.index].start,
+               (size_t)CAM_W * CAM_H);
+        now_ts(&c1);
+        const uint8_t *raw = raw_cached;
 
         /* Snapshot request rides on the same raw frame */
         if (snap)
             deliver_snap(raw, rgb_half, &rgb_full);
 
-        /* Stream frame */
+        /* Stream frame: demosaic + encode, VPU first, libjpeg fallback */
         if (clients > 0) {
             uint8_t *jpg = NULL;
             size_t len = 0;
-            debayer_bggr_half(raw, rgb_half, CAM_W, CAM_H, HFLIP);
-            if (jpeg_encode_rgb(rgb_half, HALF_W, HALF_H, eng.stream_quality,
-                                1, &jpg, &len) == 0) {
+            int via_vpu = 0;
+            struct timespec e0, e1, e2;
+            now_ts(&e0);
+
+            if (!vpu_disabled && !vpu) {
+                vpu = vpu_jpeg_open(HALF_W, HALF_H, eng.stream_quality);
+                if (!vpu) {
+                    vpu_disabled = 1;
+                    fprintf(stderr, "cam: no VPU JPEG encoder, "
+                            "using software encode\n");
+                }
+            }
+            if (vpu) {
+                uint8_t *yp, *up, *vp;
+                int ys, uvs;
+                vpu_jpeg_planes(vpu, &yp, &up, &vp, &ys, &uvs);
+                debayer_bggr_half_yuv420(raw, CAM_W, CAM_H, HFLIP,
+                                         yp, ys, up, vp, uvs);
+                now_ts(&e1);
+                if (vpu_jpeg_encode(vpu, &jpg, &len) == 0) {
+                    via_vpu = 1;
+                } else {
+                    fprintf(stderr, "cam: VPU encode failed, "
+                            "falling back to software\n");
+                    vpu_jpeg_close(vpu);
+                    vpu = NULL;
+                    vpu_disabled = 1;
+                }
+            }
+            if (!via_vpu) {
+                debayer_bggr_half(raw, rgb_half, CAM_W, CAM_H, HFLIP);
+                now_ts(&e1);
+                if (jpeg_encode_rgb(rgb_half, HALF_W, HALF_H,
+                                    eng.stream_quality, 1, &jpg, &len))
+                    jpg = NULL;
+            }
+            now_ts(&e2);
+
+            if (jpg) {
+                stat_copy_ms += ts_diff(&c1, &c0) * 1e3;
+                stat_conv_ms += ts_diff(&e1, &e0) * 1e3;
+                stat_enc_ms += ts_diff(&e2, &e1) * 1e3;
+                if (++stat_n >= 100) {
+                    fprintf(stderr, "cam: stream stats: copy %.0f ms, "
+                            "convert %.0f ms, encode %.0f ms avg (%s)\n",
+                            stat_copy_ms / stat_n, stat_conv_ms / stat_n,
+                            stat_enc_ms / stat_n,
+                            via_vpu ? "vpu" : "software");
+                    stat_copy_ms = stat_conv_ms = stat_enc_ms = 0;
+                    stat_n = 0;
+                }
                 pthread_mutex_lock(&eng.lock);
                 free(eng.stream_jpg);
                 eng.stream_jpg = jpg;
                 eng.stream_len = len;
+                eng.vpu_active = via_vpu;
                 eng.seq++;
                 fps_frames++;
                 struct timespec t;
@@ -695,6 +767,7 @@ out:
     release_capture();
     free(rgb_half);
     free(rgb_full);
+    free(raw_cached);
     pthread_mutex_lock(&eng.lock);
     eng.running = 0;
     /* fail any waiter: stream clients see running==0, a pending snapshot
@@ -807,6 +880,8 @@ void cam_engine_init(void)
         if (l >= 0 && l <= 1023)
             eng.lamp_level = l;
     }
+    if (getenv("FORGECTRL_NO_VPU"))
+        vpu_disabled = 1;
 }
 
 void cam_engine_shutdown(void)
@@ -821,6 +896,10 @@ void cam_engine_shutdown(void)
         pthread_mutex_lock(&eng.lock);
         eng.tid_valid = 0;
         pthread_mutex_unlock(&eng.lock);
+    }
+    if (vpu) {
+        vpu_jpeg_close(vpu);
+        vpu = NULL;
     }
     pthread_mutex_unlock(&eng.ctl);
 }
@@ -970,5 +1049,6 @@ void cam_get_status(struct cam_status *st)
     st->clients = eng.clients;
     st->seq = eng.seq;
     st->fps = eng.fps;
+    st->vpu = eng.vpu_active;
     pthread_mutex_unlock(&eng.lock);
 }

@@ -156,7 +156,8 @@ The cameras share the hardware video-mux; the NEWEST request wins it
 The per-camera lamp (`pic/lid_led` / `head/white_led`) is raised to
 `FORGECTRL_LAMP` (default 132) while capturing and restored on idle.
 
-Bench (2026-08-03, on the board): stream 3.2 fps sustained at 1296×972;
+Bench (2026-08-03, on the board): stream **7.9 fps** sustained at
+1296×972 (VPU encode; 3.2 fps on the software fallback);
 full-res snapshot 2.4 s warm / 2.7 s cold (cold includes the pipeline
 bring-up); two parallel same-camera clients share the frame rate; idle
 teardown observed. Borrow verified: head snapshot 200 during a lid
@@ -174,16 +175,27 @@ core). Run by hand: `/usr/bin/forgectrl >> /data/forgectrl.log 2>&1 &`
 `/?action=stream` alias) while jogging the machine from the same
 LightBurn session.
 
-Frame-rate ceiling and the offload path: 3.2 fps is CPU-bound in the
-JPEG encode (single A9, libjpeg-turbo NEON). The hardware answer is the
-**CODA960 VPU JPEG encoder — already probed with firmware on the image,
-registered at /dev/video0** (V4L2 mem2mem, YUV input): demosaic the 2×2
-superpixels straight to YUV420 on the CPU (cheap) and let the VPU
-encode → est. 8–15 fps, likely CSI/memory-bound. The IPU cannot help
-with demosaic (its IC is CSC/scale only, YUV/RGB in — that is the
-`imx-csc-scaler` at /dev/video8, useful only for a future full-res
-stream). Contained follow-up in forgectrl cam.c; keep the libjpeg path
-as fallback. Not yet done: lens calibration / bed alignment (the
+**VPU JPEG offload: DONE 2026-08-03, bench-verified — 7.9 fps** (2.5×
+the software rate). The stream path demosaics the 2×2 superpixels
+straight to planar YUV420 (JFIF full-range 601) and the **CODA960 VPU
+JPEG encoder** (mainline coda, V4L2 mem2mem; found by personality, not
+node number) does the encode: per-frame **copy 43 ms + convert 75 ms +
+encode 7 ms**. Two hard-won facts:
+- **V4L2 MMAP capture buffers are uncached** — demosaicing in-place out
+  of one costs ~340 ms/frame at this resolution; one bulk memcpy into a
+  cached bounce buffer first (43 ms) makes the same demosaic run in
+  75 ms. All camera paths (stream, snapshot, borrow) read from the
+  bounce copy.
+- The VPU encoder accepts 1296×972 exactly (no MCU-alignment padding
+  needed) with quality via V4L2_CID_JPEG_COMPRESSION_QUALITY.
+libjpeg remains the automatic fallback (`FORGECTRL_NO_VPU=1` forces
+it) and the snapshot path; `/cam/status` reports `"encoder"`.
+Remaining headroom: the scalar convert dominates — NEON would push
+toward the sensor/CSI limit. If motion contention ever shows clamps
+during streaming, a stream-fps cap knob is the easy relief valve.
+The IPU cannot help with demosaic (its IC is CSC/scale only — the
+`imx-csc-scaler` at /dev/video8 matters only for a future full-res
+stream). Not yet done: lens calibration / bed alignment (the
 fisheye needs LightBurn's camera calibration pass), and the deferred
 5.6 emulator homing-image smoke (the cloud emulator can now be pointed
 at live snapshots).

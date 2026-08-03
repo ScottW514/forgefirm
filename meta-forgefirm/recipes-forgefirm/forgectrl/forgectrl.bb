@@ -11,6 +11,8 @@ SRC_URI = "\
   file://cam.h \
   file://debayer.c \
   file://debayer.h \
+  file://vpu_jpeg.c \
+  file://vpu_jpeg.h \
   file://forgectrl.init \
 "
 
