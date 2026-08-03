@@ -483,9 +483,35 @@ at live snapshots).
    contacts 20-47k vs thresholds 6.5-20k), ending at machine 0,0 with
    both axes flagged homed; jogs return to exact zero.** Z excluded
    ($H never moves Z; hall-supervised Z homing is a later item).
-   **$H measures 23.0 s from mid-bed and 23.0 s from pressed-at-rail**
-   at the tuned rates (2026-08-03): seek F1500, latch F300, pull-off
-   15 mm. The pull-off must exceed the detector's ~0.5 s arming
+   **STATUS 2026-08-03 end-of-day: homing rework bench-solid but the
+   acceptance soak is INCOMPLETE — pick up here.** Detection was
+   rebuilt after single-sample amplitude thresholds failed both ways
+   at speed (false triggers from travel bursts AND missed weak
+   strikes): it is now a 16-sample sliding ENERGY window with
+   median+MAD learned thresholds (ceiling 150k against ring-down
+   pollution), a **64 ms duration confirm** (bursts and strikes
+   overlap in amplitude, never in duration — real contact grinds
+   200+ ms as the queue drains), and a grinding-median guard for
+   pressed starts. **The locate pass runs at seek rate (both F1500,
+   $27=15): slow approaches are UNDETECTABLE on this machine — belt
+   compliance makes slow-speed skipping near-silent (measured under
+   every threshold tried) — and the rail is the reference, so
+   approach speed costs no accuracy.** Serial hardening landed with
+   it: TX-ring pressure drops a zero-progress client after 100 ms
+   instead of blocking (a wifi stall froze the homing loop mid-status
+   while the seek streamed into the rail for 20 s), new TCP
+   connections displace the session, hard read errors drop clients.
+   Verified: reference + 6/6 shakedown from varied positions, contact
+   margins 4-9x, 25.1 s from mid-bed (worst case far-corner 37.9 s).
+   OPEN: (1) the 32-run soak was interrupted at day end — rerun
+   `scratchpad`-style: reference $H then 32 varied-position cycles,
+   stop on failure; (2) ONE UNEXPLAINED controller death at idle
+   (clean log end, no crash output, not reproduced by RST/reconnect/
+   dump-abort attacks) — core dumps are armed on the board
+   (core_pattern /data/core.%e.%p, controller started with ulimit -c
+   unlimited); check /data/core.* first thing next session.
+   Historical timing of the superseded creep-rate design: 97.8 s from
+   mid-bed (seek F300 / latch F60 / pull-off 4). The pull-off must exceed the detector's ~0.5 s arming
    distance AT SEEK RATE (12.5 mm at F1500) — with the old 4 mm
    pull-off, a re-home from the parked position contacted during the
    learn window, poisoned the threshold (grinding inflates sd to
