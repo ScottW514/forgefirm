@@ -80,7 +80,9 @@ motion constants were extracted from the `_RESOURCES` pulse files
   reproduce by reverting the edit (the kernel patch tree is a fresh
   git commit each do_patch, not sstate-restored), so after any
   overlay edit the module can only ship with a full image flash.
-  Batch kernel-overlay edits accordingly.
+  Batch kernel-overlay edits accordingly. Queued for the next batch:
+  `vs-supply = <&reg_3p3v>` on the lm75 node (the last cosmetic
+  "dummy regulator" probe line besides the two SoC USB PHYs).
 - **Build host**: WSL2 distro `forge-yocto`, tree at
   `~/dev/openglow-forgefirm`. `~/src-sync.sh` rsyncs the Windows repos in
   (includes `python3-gfhardware` and `grblHAL-glowforge`). Build:
@@ -233,14 +235,17 @@ at live snapshots).
 ## Hardware facts bank (measured)
 
 - SDMA pulse engine: ring size = the `ring_mb` module parameter
-  (default 16 MiB; power of two, must fit the `cnc-pulsebuf` DT pool —
-  16 MiB as of 2026-08-03, was 128; the ~112 MB RAM reclaim lands at
-  the next image flash since the pool is a boot-time carve-out). Free
-  = size − 32 KiB gap. The ring caps legacy cloud-mode job length
-  (whole-file preload: ~1 MiB per 100 s of 10 kHz stream); the grblHAL
-  live feed keeps only a few KB in flight. Script effective ceiling
-  ~165 kHz; position counters (`sdma_context` sc0/1/2 = X/Y/Z steps,
-  sc3 = bytes) match grblHAL exactly.
+  (default 16 MiB; power of two, must fit the 16 MiB `cnc-pulsebuf` DT
+  pool; both were 128 MiB before 2026-08-03 — shrinking returned
+  ~112 MB, board now shows 469 MB to Linux). Free = size − 32 KiB gap.
+  **Bench-verified at 16 MiB on the flashed image**: 20 MB streamed at
+  100 kHz through the wrapping ring, 0 ENOMEM, 0.4 ms max write
+  latency, starve → `underrun` per protocol; $H and jogs clamped 0.
+  The ring caps legacy cloud-mode job length (whole-file preload:
+  ~1 MiB per 100 s of 10 kHz stream); the grblHAL live feed keeps only
+  a few KB in flight. Script effective ceiling ~165 kHz; position
+  counters (`sdma_context` sc0/1/2 = X/Y/Z steps, sc3 = bytes) match
+  grblHAL exactly.
 - Byte layout & rules: see the UAPI.md feeder contract (authoritative).
 - Z: bit 6 SET = lens UP = +Z (hardware-verified; pulsedata.py was the
   inverted party, fixed). Home = hall trigger at TOP; usable travel ≈ 30
