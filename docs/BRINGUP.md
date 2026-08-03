@@ -195,6 +195,12 @@ encode 7 ms**. Two hard-won facts:
   bounce copy.
 - The VPU encoder accepts 1296×972 exactly (no MCU-alignment padding
   needed) with quality via V4L2_CID_JPEG_COMPRESSION_QUALITY.
+- **A CSI noise/glitch frame can out-size the coda driver's default
+  ~2 B/px JPEG capture buffer** (kernel logs "JPEG too large for
+  capture buffer" + a vb2 WARN; observed once under streaming+motion
+  load). forgectrl requests 3 B/px and drops error-flagged dequeues as
+  single bad frames — hardware encode stays active; software fallback
+  engages only on repeated consecutive hard failures.
 libjpeg remains the automatic fallback (`FORGECTRL_NO_VPU=1` forces
 it) and the snapshot path; `/cam/status` reports `"encoder"`.
 
