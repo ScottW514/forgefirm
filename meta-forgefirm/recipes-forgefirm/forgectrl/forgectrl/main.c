@@ -12,11 +12,11 @@
  *   GET /cam/snapshot?cam=&res=full|half&q= single JPEG (default full res)
  *   GET /cam/status                         JSON engine status
  *
- * The two cameras share the hardware mux, so streaming clients pin the
- * selection: a STREAM request for the other camera waits a short grace
- * for the pin to drain, then returns 409. A SNAPSHOT of the other camera
- * never fails busy - the engine borrows the mux for one frame and the
- * stream freezes for a few seconds instead.
+ * The two cameras share the hardware mux; the newest request wins it. A
+ * STREAM request for the other camera preempts the current stream
+ * clients (their streams end cleanly - viewers freeze on the last frame)
+ * and switches. A SNAPSHOT of the other camera does not switch: the
+ * engine borrows the mux for one frame and the stream freezes briefly.
  * Environment: FORGECTRL_PORT (8080), FORGECTRL_STREAM_Q (75),
  * FORGECTRL_LAMP (132).
  *
@@ -246,11 +246,17 @@ static const char index_html[] =
     "msg=document.getElementById('msg');"
     "function setCam(c){cam=c;retries=0;msg.textContent='';"
     "v.src='/cam/stream?cam='+c+'&t='+Date.now();}"
-    "v.onerror=function(){if(retries++<5){"
-    "msg.textContent='stream retrying...';"
-    "setTimeout(function(){v.src='/cam/stream?cam='+cam+'&t='+Date.now();},"
-    "700);}else{msg.textContent="
-    "'stream unavailable (camera busy from another viewer?)';}};"
+    "function reload(){v.src='/cam/stream?cam='+cam+'&t='+Date.now();}"
+    /* Retry only when the engine still serves our camera - if another
+     * viewer preempted it, retrying would steal it right back. */
+    "v.onerror=function(){fetch('/cam/status').then(function(r){"
+    "return r.json();}).then(function(s){"
+    "if(s.cam===cam&&retries++<5){msg.textContent='stream retrying...';"
+    "setTimeout(reload,700);}else if(s.cam!==cam){msg.textContent="
+    "'stream taken by another viewer ('+s.cam+') - press a button to resume';}"
+    "else{msg.textContent='stream error - press a stream button to retry';}"
+    "}).catch(function(){msg.textContent="
+    "'service unreachable';});};"
     "function peek(){"
     "msg.textContent='head peek (stream pauses a few seconds)...';"
     "p.style.display='inline';p.onload=function(){msg.textContent='';};"

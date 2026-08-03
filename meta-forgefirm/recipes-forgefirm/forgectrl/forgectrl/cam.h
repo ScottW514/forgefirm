@@ -36,9 +36,11 @@ void cam_engine_shutdown(void);
 int cam_snapshot(cam_id_t cam, int full, int quality,
                  uint8_t **jpeg, size_t *len, char *err, size_t errlen);
 
-/* Stream client: open pins the engine to a camera (starting or switching it
- * if needed), next blocks for a frame newer than the last one returned and
- * copies it into a client-owned buffer, close releases the pin. */
+/* Stream client: open makes the engine serve `cam` (starting it, or
+ * preempting the current clients and switching - last request wins; the
+ * preempted clients' next() returns -1 so their streams end cleanly).
+ * next blocks for a frame newer than the last one returned and copies it
+ * into a client-owned buffer, close releases the pin. */
 typedef struct cam_client cam_client_t;
 
 cam_client_t *cam_client_open(cam_id_t cam, char *err, size_t errlen);

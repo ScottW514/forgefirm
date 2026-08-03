@@ -91,6 +91,8 @@ static struct {
     cam_id_t        home_cam;   /* camera the engine serves for streaming -
                                  * what arbitration must compare against */
     int             clients;
+    uint64_t        kick_gen;   /* bumped to preempt all current stream
+                                 * clients (their streams end cleanly) */
     struct timespec last_activity;
 
     /* published stream frame (half-res JPEG) */
@@ -727,9 +729,15 @@ static int ensure_engine(cam_id_t cam, char *err, size_t errlen)
 
         if (running && cur != cam) {
             if (clients > 0) {
-                /* Grace: a client that just disconnected releases its pin
-                 * only when the MHD send fails on the next frame - absorb
-                 * that (page navigations) instead of failing instantly. */
+                /* Last request wins: preempt the current stream clients
+                 * (single-operator machine - the newest ask is the
+                 * operator). Kicked clients wake, end their streams
+                 * cleanly (viewers freeze on their last frame), and
+                 * release their pins; wait for that to drain. */
+                pthread_mutex_lock(&eng.lock);
+                eng.kick_gen++;
+                pthread_cond_broadcast(&eng.frame_cv);
+                pthread_mutex_unlock(&eng.lock);
                 struct timespec t0, t;
                 now_ts(&t0);
                 do {
@@ -741,8 +749,8 @@ static int ensure_engine(cam_id_t cam, char *err, size_t errlen)
                 } while (clients > 0 && ts_diff(&t, &t0) < SWITCH_GRACE_S);
                 if (clients > 0) {
                     snprintf(err, errlen,
-                             "camera busy: %d client(s) streaming %s",
-                             clients, camdefs[cur].name);
+                             "camera switch timed out: %d client(s) still "
+                             "attached to %s", clients, camdefs[cur].name);
                     return -1;
                 }
             }
@@ -878,6 +886,7 @@ int cam_snapshot(cam_id_t cam, int full, int quality,
 
 struct cam_client {
     uint64_t last_seq;
+    uint64_t gen;       /* kick generation at open; a bump ends the stream */
     uint8_t *buf;
     size_t   cap;
 };
@@ -897,6 +906,7 @@ cam_client_t *cam_client_open(cam_id_t cam, char *err, size_t errlen)
     }
     pthread_mutex_lock(&eng.lock);
     eng.clients++;
+    c->gen = eng.kick_gen;
     now_ts(&eng.last_activity);
     pthread_mutex_unlock(&eng.lock);
     pthread_mutex_unlock(&eng.ctl);
@@ -907,7 +917,7 @@ long cam_client_next(cam_client_t *c, const uint8_t **jpeg)
 {
     pthread_mutex_lock(&eng.lock);
     int timeouts = 0;
-    while (eng.running && eng.seq <= c->last_seq) {
+    while (eng.running && c->gen == eng.kick_gen && eng.seq <= c->last_seq) {
         struct timespec deadline;
         clock_gettime(CLOCK_REALTIME, &deadline);
         deadline.tv_sec += CLIENT_WAIT_S;
@@ -915,7 +925,7 @@ long cam_client_next(cam_client_t *c, const uint8_t **jpeg)
             == ETIMEDOUT && ++timeouts >= 2)
             break;
     }
-    if (!eng.running || eng.seq <= c->last_seq) {
+    if (!eng.running || c->gen != eng.kick_gen || eng.seq <= c->last_seq) {
         pthread_mutex_unlock(&eng.lock);
         return -1;
     }
