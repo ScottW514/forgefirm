@@ -1,0 +1,36 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          forgectrl
+# Required-Start:    $network
+# Required-Stop:
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: ForgeFIRM control daemon (camera MJPEG service)
+### END INIT INFO
+
+DAEMON=/usr/bin/forgectrl
+PIDFILE=/var/run/forgectrl.pid
+LOG=/data/forgectrl.log
+
+case "$1" in
+  start)
+    echo "Starting forgectrl"
+    start-stop-daemon -S -q -p $PIDFILE -m -b -x /bin/sh -- \
+      -c "exec $DAEMON >> $LOG 2>&1"
+    ;;
+  stop)
+    echo "Stopping forgectrl"
+    start-stop-daemon -K -q -p $PIDFILE
+    rm -f $PIDFILE
+    ;;
+  restart)
+    $0 stop
+    sleep 1
+    $0 start
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+    ;;
+esac
+exit 0

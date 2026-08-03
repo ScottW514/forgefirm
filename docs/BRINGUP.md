@@ -1,8 +1,9 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-08-02** — milestone 2 (factory-true motion tuning)
-bench-verified, and the controller promoted to a canonical grblHAL driver
-repo (**grblHAL-glowforge**) with bench parity re-proven on hardware.
+Last updated: **2026-08-03** — camera service (forgectrl MJPEG on :8080)
+implemented and bench-verified, including motion-coexistence (clamped 0
+while streaming). Previous milestone: factory-true motion tuning +
+promotion to the canonical grblHAL driver repo (**grblHAL-glowforge**).
 Read together with `AUDIT_ACTION_PLAN.md` in the project root (sibling of
 this repo; per-finding status of the 2026-07-03 audit) and
 `kernel-module-glowforge/UAPI.md` (the pulse-stream feeder contract).
@@ -120,6 +121,47 @@ hardware I/O — host testing).
    `$J=G91X40F1200`. `^X` mid-motion aborts via kernel `cnc/stop`
    (controlled decel) and raises an alarm; TCP disconnects never kill the
    process (the deadman fd stays held).
+
+## The camera service (forgectrl, port 8080)
+
+Source: `meta-forgefirm/recipes-forgefirm/forgectrl/` (recipe-local C,
+MIT; built by the `forgectrl` recipe, installed in both images with a
+sysvinit script). One ulfius daemon exposes both OV5648 cameras as MJPEG
+over the mainline imx-media pipeline:
+
+- `GET /` — index page with a live view; `/?action=stream|snapshot` are
+  the mjpg-streamer-compatible aliases (lid camera).
+- `GET /cam/stream?cam=lid|head` — multipart MJPEG at 1296×972 (2×2
+  Bayer-superpixel demosaic, JPEG q75; `FORGECTRL_STREAM_Q` overrides).
+- `GET /cam/snapshot?cam=lid|head&res=full|half&q=1..100` — single JPEG,
+  default full 2592×1944 (own MIT bilinear demosaic, output verified
+  against the gfhardware reference grab).
+- `GET /cam/status` — JSON (running/cam/clients/frames/fps).
+
+Engine model: one worker owns the V4L2 node persistently (media-ctl /
+v4l2-ctl configure sequences identical to gfhardware/cam.py, factory
+exposure/gain/WB, software hflip in the demosaic); starts on demand,
+full teardown after 10 s idle so gfhardware one-shot grabs still work.
+The cameras share the hardware video-mux, so stream clients pin the
+selection — requests for the other camera return 409 until they leave.
+The per-camera lamp (`pic/lid_led` / `head/white_led`) is raised to
+`FORGECTRL_LAMP` (default 132) while capturing and restored on idle.
+
+Bench (2026-08-03, on the board): stream 3.2 fps sustained at 1296×972;
+full-res snapshot 2.4 s warm / 2.7 s cold (cold includes the pipeline
+bring-up); camera switch works both ways; two parallel clients share the
+frame rate; idle teardown observed. **Motion coexistence proven**: X
+round-trip jogs at F1200 with an active stream — producer stats
+`clamped 0`, max behind 4.5 ms (the daemon runs at nice +5, single
+core). Run by hand: `/usr/bin/forgectrl >> /data/forgectrl.log 2>&1 &`
+(kill before scp when redeploying, text-file-busy).
+
+Not yet done: LightBurn-side camera consumption (needs an operator
+session — LightBurn desktop takes USB webcams; the mjpg-streamer alias
+is the standard bridge-style interface, so test whether the overlay can
+use it directly or needs a relay), lens calibration / bed alignment, and
+the deferred 5.6 emulator homing-image smoke (the cloud emulator can now
+be pointed at live snapshots).
 
 ## Hardware facts bank (measured)
 
@@ -293,6 +335,13 @@ hardware I/O — host testing).
        the dependence is weak — with forced flow ΔT = P/(ṁ·c), which
        carries no absolute-temperature term — but that is reasoning,
        not measurement.
+     - **OBSERVED 2026-08-03 (needs triage):** `/data/glowforge.log`
+       carries, from a prior controller run, a passing check (rise
+       11.4 °C) followed by TWO `COOLANT FLOW FAULT` lines (rise
+       16.5 / 15.9 °C vs the 14.4 limit, dT 11.6). Undated (raw
+       stderr log). Either the pump genuinely faltered or this is the
+       warm-baseline false-positive mode above — check the pump and
+       re-run a supervised verification before trusting the loop.
 
      *(Superseded earlier text kept below for context.)*
      **Coolant flow verification (first attempt, live-verified both ways).**
@@ -347,8 +396,10 @@ hardware I/O — host testing).
    hall-supervised only.
 4. **6.5 safety mapping**: door/estop evdev → feed-hold/halt in the
    backend; underrun → grblHAL alarm; interlock-trip recovery check.
-5. **6.6 camera service**: persistent MJPEG (ulfius, forgectrl) — also the
-   natural time for the deferred 5.6 emulator smoke (homing images).
+5. **6.6 camera service: DONE 2026-08-03, bench-verified** (see "The
+   camera service" section above). Remaining camera work: LightBurn
+   consumption test (operator), lens calibration / bed alignment, the
+   deferred 5.6 emulator homing-image smoke.
 6. **Housekeeping**: ~~pick the controller's remote home~~ **DONE
    2026-08-02** — the controller is now the canonical driver repo
    `github.com/ScottW514/grblHAL-glowforge` (+ `ScottW514/core` fork;

@@ -6,14 +6,26 @@ LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda
 
 SRC_URI = "\
   file://CMakeLists.txt \
-  file://hello.c \
+  file://main.c \
+  file://cam.c \
+  file://cam.h \
+  file://debayer.c \
+  file://debayer.h \
+  file://forgectrl.init \
 "
 
 S = "${WORKDIR}"
 
-inherit cmake
+inherit cmake update-rc.d
 
-DEPENDS += "libconfig ulfius"
-RDEPENDS:${PN} = "libconfig ulfius"
+DEPENDS += "ulfius jpeg"
+# media-ctl / v4l2-ctl configure the imx-media pipeline at runtime
+RDEPENDS:${PN} = "v4l-utils"
 
-EXTRA_OECMAKE = ""
+INITSCRIPT_NAME = "forgectrl"
+INITSCRIPT_PARAMS = "defaults 90"
+
+do_install:append() {
+    install -d ${D}${sysconfdir}/init.d
+    install -m 0755 ${WORKDIR}/forgectrl.init ${D}${sysconfdir}/init.d/forgectrl
+}
