@@ -172,7 +172,18 @@ core). Run by hand: `/usr/bin/forgectrl >> /data/forgectrl.log 2>&1 &`
 **LightBurn consumes the stream directly — operator-verified
 2026-08-03** ("without issue", via the mjpg-streamer-compatible
 `/?action=stream` alias) while jogging the machine from the same
-LightBurn session. Not yet done: lens calibration / bed alignment (the
+LightBurn session.
+
+Frame-rate ceiling and the offload path: 3.2 fps is CPU-bound in the
+JPEG encode (single A9, libjpeg-turbo NEON). The hardware answer is the
+**CODA960 VPU JPEG encoder — already probed with firmware on the image,
+registered at /dev/video0** (V4L2 mem2mem, YUV input): demosaic the 2×2
+superpixels straight to YUV420 on the CPU (cheap) and let the VPU
+encode → est. 8–15 fps, likely CSI/memory-bound. The IPU cannot help
+with demosaic (its IC is CSC/scale only, YUV/RGB in — that is the
+`imx-csc-scaler` at /dev/video8, useful only for a future full-res
+stream). Contained follow-up in forgectrl cam.c; keep the libjpeg path
+as fallback. Not yet done: lens calibration / bed alignment (the
 fisheye needs LightBurn's camera calibration pass), and the deferred
 5.6 emulator homing-image smoke (the cloud emulator can now be pointed
 at live snapshots).
