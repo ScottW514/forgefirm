@@ -483,11 +483,23 @@ at live snapshots).
    contacts 20-47k vs thresholds 6.5-20k), ending at machine 0,0 with
    both axes flagged homed; jogs return to exact zero.** Z excluded
    ($H never moves Z; hall-supervised Z homing is a later item).
-   **$H from mid-bed measures 97.8 s** at the default rates — almost
-   entirely the F300 seek creep (X 247 mm ≈ 50 s + Y 139 mm ≈ 28 s +
-   ~10 s/axis latch); raise $25 to shorten once higher-speed contact
-   is validated. Note: status polls (`?`) go unanswered for long
-   stretches during homing (senders must tolerate the silence).
+   **$H measures 23.0 s from mid-bed and 23.0 s from pressed-at-rail**
+   at the tuned rates (2026-08-03): seek F1500, latch F300, pull-off
+   15 mm. The pull-off must exceed the detector's ~0.5 s arming
+   distance AT SEEK RATE (12.5 mm at F1500) — with the old 4 mm
+   pull-off, a re-home from the parked position contacted during the
+   learn window, poisoned the threshold (grinding inflates sd to
+   ~15-16k vs ≤2k clean), and ground X to the over-travel alarm. The
+   grinding-baseline guard therefore triggers on EITHER mean >10k OR
+   sd >8k (at seek speed the grinding mean can sit below 10k; the sd
+   explosion is the reliable signal — verified live: pressed-at-rail
+   start triggers at arm time and homes normally). Watch items: one Y
+   latch contact measured only 1.3× its threshold (10191 vs 7681 —
+   others run 3-5×), and the F1500 X seek run showed clamped 11
+   (homing accuracy is unaffected — the reference is physical
+   contact — but it marks the fast-seek pacing margin). Note: status
+   polls (`?`) go unanswered for long stretches during homing
+   (senders must tolerate the silence).
    OPEN (headless robustness): a killed TCP client wedges the
    single-connection port until the server tries a write — a new
    connection should displace a dead session (serial.c).
