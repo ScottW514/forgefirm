@@ -205,11 +205,13 @@ straight to planar YUV420 (JFIF full-range 601) and the **CODA960 VPU
 JPEG encoder** (mainline coda, V4L2 mem2mem; found by personality, not
 node number) does the encode: per-frame **copy 43 ms + convert 75 ms +
 encode 7 ms**. Two hard-won facts:
-- **V4L2 MMAP capture buffers are uncached** — demosaicing in-place out
-  of one costs ~340 ms/frame at this resolution; one bulk memcpy into a
-  cached bounce buffer first (43 ms) makes the same demosaic run in
-  75 ms. All camera paths (stream, snapshot, borrow) read from the
-  bounce copy.
+- **Coherent V4L2 MMAP capture buffers are uncached** — demosaicing
+  in-place out of one costs ~340 ms/frame at this resolution; one bulk
+  memcpy into a cached bounce buffer first (43 ms) makes the same
+  demosaic run in 75 ms. The bounce copy is now the fallback path only —
+  non-coherent (cached) capture buffers (below) are the default on the
+  patched kernel, and all camera paths read the capture buffer directly
+  through them.
 - The VPU encoder accepts 1296×972 exactly (no MCU-alignment padding
   needed) with quality via V4L2_CID_JPEG_COMPRESSION_QUALITY.
 - **A CSI noise/glitch frame can out-size the coda driver's default
@@ -239,29 +241,34 @@ fisheye needs LightBurn's camera calibration pass), and the deferred
 5.6 emulator homing-image smoke (the cloud emulator can now be pointed
 at live snapshots).
 
-**Non-coherent (cached) capture buffers + stream FPS cap: code-complete
-2026-08-07; cached path awaits the next image flash.** The remaining
-per-frame CPU cost was the ~34 ms bulk copy out of the uncached V4L2
-MMAP buffer. forgectrl now REQBUFS with `V4L2_MEMORY_FLAG_NON_COHERENT`;
-kernel patch 0010 (meta-glowforge-bsp linux-fslc, `allow_cache_hints`
-on the imx capture queue) makes vb2 honor it — CPU-cached mmaps with the
-cache invalidate done inside DQBUF — so the demosaic reads the capture
-buffer in place and the bounce copy (and most of that 34 ms) disappears.
-Detection is by the `MMAP_CACHE_HINTS` capability bit: on a kernel
-without patch 0010 the daemon falls back to the bounce-copy path
-unchanged — **fallback bench-verified 2026-08-07 on the unpatched
-kernel** (copy 35 ms / convert 18 / encode 7, 15.0 fps, vpu — identical
-to before). `/cam/status` reports `"buffers":"cached|uncached"`;
-`FORGECTRL_NO_CACHED_BUFS` forces the bounce path for A/B; the stats
-log line now includes the DQBUF time (≈ the invalidate cost when
-cached). `FORGECTRL_STREAM_FPS` caps the stream rate — capped frames
-are requeued without demosaic/encode (snapshots still ride on them)
-and don't count toward fps — **bench-verified 2026-08-07**: cap 5 →
-5.0 fps exact, daemon 23% CPU vs ~66% uncapped; default stays sensor
-max. After flashing the patch-0010 image: re-deploy the current
-forgectrl binary if the recipe SRCREV lags, stream, and confirm the
-log says `capture buffers cached (non-coherent)` + record the new
-dqbuf/copy/convert stats and daemon CPU.
+**Non-coherent (cached) capture buffers + stream FPS cap: DONE
+2026-08-07, bench-verified on the flashed patch-0010 image.** The
+remaining per-frame CPU cost was the ~34 ms bulk copy out of the
+uncached V4L2 MMAP buffer. forgectrl REQBUFS with
+`V4L2_MEMORY_FLAG_NON_COHERENT`; kernel patch 0010 (meta-glowforge-bsp
+linux-fslc, `allow_cache_hints` on the imx capture queue) makes vb2
+honor it — CPU-cached mmaps with the cache invalidate done inside
+DQBUF — so the demosaic reads the capture buffer in place and the
+bounce copy disappears. **Bench (2026-08-07, flashed image): stream
+stats `dqbuf 0 ms, copy 0 ms, convert 19-20 ms, encode 7 ms` (the
+invalidate is sub-ms in practice), 15.0 fps sustained, daemon 41.5%
+CPU with one viewer vs ~66% on the bounce path** — per-frame CPU
+roughly halved (~27 ms vs ~60 ms busy). Full-res snapshot through the
+cached path visually verified (clean fisheye bed image, live frames
+differ). Detection is by the `MMAP_CACHE_HINTS` capability bit: on a
+kernel without patch 0010 the daemon falls back to the bounce-copy
+path unchanged — **fallback bench-verified 2026-08-07 on the
+unpatched kernel** (copy 35 ms / convert 18 / encode 7, 15.0 fps, vpu
+— identical to before). `/cam/status` reports
+`"buffers":"cached|uncached"`; `FORGECTRL_NO_CACHED_BUFS` forces the
+bounce path for A/B; the stats log line includes the DQBUF time.
+`FORGECTRL_STREAM_FPS` caps the stream rate — capped frames are
+requeued without demosaic/encode (snapshots still ride on them) and
+don't count toward fps — **bench-verified 2026-08-07**: cap 5 →
+5.0 fps exact, daemon 23% CPU vs ~66% uncapped (bounce path; the
+relief valve if future CPU work needs headroom). Default stays sensor
+max. Images from 20260807204056 carry forgectrl at the bumped SRCREV
+(73283b6), so a fresh burn ships the right daemon.
 
 ## Hardware facts bank (measured)
 
