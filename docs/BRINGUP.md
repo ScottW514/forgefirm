@@ -137,6 +137,32 @@ hardware I/O — host testing).
    (controlled decel) and raises an alarm; TCP disconnects never kill the
    process (the deadman fd stays held).
 
+**Protocol-loop pacing is fd-blocking (2026-08-07).** `serial_wait()`
+drains TX then `ppoll()`s the listen/client fds with the
+state-dependent timeout (idle/alarm 10 ms — 1 ms while a delay
+callback is pending — motion 200 µs), so traffic wakes the loop
+instantly while idle ticks stay coarse. **Bench-verified: idle CPU
+7–12% → ~2%** (1.95% with the camera streaming beside it), status
+RTT ~1.0 ms median, jogs exact, `clamped 0` with an active stream.
+Client RX is armed only while the ring has a full read's worth of
+room, so a flow-control-violating sender is paced, not spun on.
+
+**Fortify overflow fixed in the core (2026-08-07): images before this
+fix boot with a DEAD controller.** The Yocto-built binary (compiled
+with `-D_FORTIFY_SOURCE`) aborted at `settings_init` — "buffer
+overflow detected" in /data/glowforge.log — before serving: the core's
+`step_us_min[4]` holds `ftoa(hal.step_us_min, 1)` and our 28160 Hz
+stream tick renders "35.5" (5 bytes). Bench builds (no fortify)
+silently truncated the adjacent unit string instead, which is why it
+never showed on the bench. Fixed by sizing the buffer (core fork
+commit e7ef419, `forgefirm` branch); `$ES` now reports
+`[SETTING:0|…|35.5|…]` intact. Repro/diagnosis path if ever needed
+again: `scripts/bench/build-glowforge.sh` variant with
+`-D_FORTIFY_SOURCE=2`, gdb `set breakpoint pending on` + `break
+__chk_fail`, run on the board. The image is whole only once
+grblhal-glowforge's recipe pin advances past both this and the
+serial_wait commit (f09d678).
+
 ## The camera service (forgectrl, port 8080)
 
 Source: `C:\dev\openglow-forgefirm\forgectrl` — the **canonical repo**
