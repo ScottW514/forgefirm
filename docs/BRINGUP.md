@@ -160,9 +160,11 @@ local commit the core fork's `forgefirm` branch carries atop upstream
 master); `$ES` now reports `[SETTING:0|…|35.5|…]` intact. Repro/diagnosis path if ever needed
 again: `scripts/bench/build-glowforge.sh` variant with
 `-D_FORTIFY_SOURCE=2`, gdb `set breakpoint pending on` + `break
-__chk_fail`, run on the board. The image is whole only once
-grblhal-glowforge's recipe pin advances past both this and the
-serial_wait commit (f09d678).
+__chk_fail`, run on the board. **Whole-image boot verified 2026-08-07
+on the flashed 20260807214320 SD**: both services autostart from the
+image binaries — grblHAL (fortified) serves at 1.0 ms RTT with exact
+jogs, $0 min 35.5 intact, $H rejected ($22=0); forgectrl streams
+15.0 fps, `"buffers":"cached"`, vpu, 41% CPU; grblHAL idle 2.1%.
 
 ## The camera service (forgectrl, port 8080)
 
