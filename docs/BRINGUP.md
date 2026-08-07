@@ -155,9 +155,9 @@ overflow detected" in /data/glowforge.log — before serving: the core's
 `step_us_min[4]` holds `ftoa(hal.step_us_min, 1)` and our 28160 Hz
 stream tick renders "35.5" (5 bytes). Bench builds (no fortify)
 silently truncated the adjacent unit string instead, which is why it
-never showed on the bench. Fixed by sizing the buffer (core fork
-commit e7ef419, `forgefirm` branch); `$ES` now reports
-`[SETTING:0|…|35.5|…]` intact. Repro/diagnosis path if ever needed
+never showed on the bench. Fixed by sizing the buffer (the single
+local commit the core fork's `forgefirm` branch carries atop upstream
+master); `$ES` now reports `[SETTING:0|…|35.5|…]` intact. Repro/diagnosis path if ever needed
 again: `scripts/bench/build-glowforge.sh` variant with
 `-D_FORTIFY_SOURCE=2`, gdb `set breakpoint pending on` + `break
 __chk_fail`, run on the board. The image is whole only once
