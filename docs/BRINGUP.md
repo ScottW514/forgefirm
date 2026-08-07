@@ -595,10 +595,13 @@ max. Images from 20260807204056 carry forgectrl at the bumped SRCREV
      raised ValueError on it). Commits: gfhardware 8aa4a49 (+02e66c6
      `_hunt` offset), forgectrl 0b05e48, forgefirm cc838f1,
      kernel-module 5fa558c — board runs all of it (module hot-swapped;
-     gfhardware hot-patched over the pinned package: push + SRCREV
-     bumps needed for images). Remaining homing polish: calibrate
-     `gfcloud_home_x/y` against a jog to a known reference if the
-     factory corner offset matters.
+     gfhardware hot-patched over the pinned package). All repos are
+     pushed and every recipe pin is bumped to these revisions
+     (forgefirm 2dce136, meta-openglow 9e2aa34; recipes
+     bitbake-verified from the new pins), so a fresh image build
+     carries the whole homing release. Remaining homing polish:
+     calibrate `gfcloud_home_x/y` against a jog to a known reference
+     if the factory corner offset matters.
    - Limit-switch homing remains the planned second method; the
      accelerometer approach stays retired (implementation and bench
      record in grblHAL-glowforge history before commit 26298a3;
