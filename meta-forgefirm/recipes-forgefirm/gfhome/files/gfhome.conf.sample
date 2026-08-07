@@ -1,0 +1,28 @@
+# gfhome - Glowforge web-service homing configuration.
+# Copied to /data/etc/gfhome.conf on first run; edit the copy.
+# Machine identity (serial/password) is read from the OCOTP fuses.
+
+[SERVICE]
+server_url: https://app.glowforge.com
+status_service_url: wss://status.glowforge.com
+
+[FACTORY_FIRMWARE]
+# Homing sessions never fetch factory firmware.
+check: False
+
+[LOGGING]
+file: /data/log/gfhome/gfhome.log
+level: INFO
+save_sent_images: False
+
+[THERMAL]
+# The heater stays off during homing; thermal policy belongs to the
+# motion controller.
+water_heater_percent: 0
+max_start_temp: 30
+
+[MOTION]
+# Extra lens half-steps applied after the hunt (0 = hall reference).
+z_home_offset: 0
+warm_up_delay: 0
+cool_down_delay: 0
