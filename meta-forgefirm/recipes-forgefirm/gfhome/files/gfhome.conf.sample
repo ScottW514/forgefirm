@@ -26,3 +26,12 @@ max_start_temp: 30
 z_home_offset: 0
 warm_up_delay: 0
 cool_down_delay: 0
+# The factory board's estop sense line reads low during any motion, so
+# it must not gate motion there; enable only on hardware with a real
+# e-stop circuit.
+estop_halts_motion: False
+
+[FORGECTRL]
+# Camera captures fetch from the forgectrl daemon (it owns the camera
+# pipeline); direct V4L2 capture is the fallback.
+url: http://127.0.0.1:8080

@@ -70,6 +70,71 @@ def load_config(path: str) -> bool:
     return True
 
 
+def make_machine():
+    """Build the hardware Machine with captures routed through forgectrl.
+
+    forgectrl owns the imx-media pipeline whenever it serves a stream
+    (LightBurn typically keeps one open), so direct V4L2 grabs fail
+    busy. Its snapshot endpoint delivers the same factory-configured
+    full-resolution JPEG, works during an active stream (mux borrow),
+    and takes a per-shot lamp override - head captures request lamp=0
+    because added white light washes out the measure-laser dot the
+    cloud's focus analysis needs. Direct capture remains the fallback
+    when the daemon is unreachable.
+    """
+    import requests
+    from gfhardware import Machine
+    from gfhardware.leds import head_all_led_off, set_head_led_from_pulse
+    from gfutilities.service.websocket import img_upload
+
+    class ForgectrlMachine(Machine):
+
+        @staticmethod
+        def _snapshot(cam: str, lamp: int = None) -> bytes:
+            url = '%s/cam/snapshot?cam=%s&res=full' % (
+                get_cfg('FORGECTRL.URL') or 'http://127.0.0.1:8080', cam)
+            if lamp is not None:
+                url += '&lamp=%d' % lamp
+            rsp = requests.get(url, timeout=45)
+            rsp.raise_for_status()
+            if not rsp.content.startswith(b'\xff\xd8'):
+                raise ValueError('forgectrl returned a non-JPEG body')
+            return rsp.content
+
+        def _save_sent(self, img: bytes, msg: dict) -> None:
+            if get_cfg('LOGGING.SAVE_SENT_IMAGES'):
+                with open('%s/%s.jpeg' % (get_cfg('LOGGING.DIR'), msg['id']),
+                          'wb') as f:
+                    f.write(img)
+
+        def _lid_image(self, msg: dict) -> None:
+            logger.info('capturing Lid Image via forgectrl')
+            try:
+                img = self._snapshot('lid')
+            except Exception:
+                logger.exception('forgectrl snapshot failed; direct capture')
+                return super()._lid_image(msg)
+            logger.info('uploading Lid Image')
+            img_upload(self._session, img, msg)
+            self._save_sent(img, msg)
+
+        def _head_image(self, msg: dict, settings: dict = None) -> None:
+            logger.info('capturing Head Image via forgectrl')
+            if settings and settings.get('HCil') is not None:
+                set_head_led_from_pulse(settings['HCil'])
+            try:
+                img = self._snapshot('head', lamp=0)
+            except Exception:
+                logger.exception('forgectrl snapshot failed; direct capture')
+                return super()._head_image(msg, settings)
+            head_all_led_off()
+            logger.info('uploading Head Image')
+            img_upload(self._session, img, msg)
+            self._save_sent(img, msg)
+
+    return ForgectrlMachine()
+
+
 def dispatch(machine, msg: dict) -> str:
     """Route one service action to the machine (the GFUIService dispatch
     table, minus print - a print must never run inside a homing session).
@@ -205,8 +270,7 @@ def main() -> int:
     # Machine() reads the OCOTP identity and head info; it fails cleanly
     # when the controller still owns /dev/glowforge.
     try:
-        from gfhardware import Machine
-        machine = Machine()
+        machine = make_machine()
     except Exception:
         logger.exception('machine init failed (is the motion controller '
                          'still holding /dev/glowforge?)')
