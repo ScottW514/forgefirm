@@ -1,9 +1,12 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-08-03** — camera service (forgectrl MJPEG on :8080)
-implemented and bench-verified, including motion-coexistence (clamped 0
-while streaming). Previous milestone: factory-true motion tuning +
-promotion to the canonical grblHAL driver repo (**grblHAL-glowforge**).
+Last updated: **2026-08-07** — homing is runtime-selectable
+(forgectrl web UI): Glowforge web-service (gfcloud) homing implemented
+end-to-end and bench-verified with a stub session (real-device
+handover + clean post-resume jogs); first LIVE cloud run awaits the
+operator (Next work #3). Same day: fd-blocking protocol pacing (idle
+CPU ~2%) and the fortify step_us_min fix. Previous milestone: camera
+service (forgectrl MJPEG on :8080), motion-coexistence verified.
 Read together with `AUDIT_ACTION_PLAN.md` in the project root (sibling of
 this repo; per-finding status of the 2026-07-03 audit) and
 `kernel-module-glowforge/UAPI.md` (the pulse-stream feeder contract).
@@ -525,19 +528,55 @@ max. Images from 20260807204056 carry forgectrl at the bumped SRCREV
      there.
    - **Interlock readback semantics cross-check: OPEN** (see
      factory-laser-safety-readbacks notes).
-3. **Homing: accelerometer approach RETIRED 2026-08-07 — homing will
-   be by physical limit switches (near-term hardware addition).** The
-   accelerometer bump-detect implementation is removed from the
-   driver (grblHAL-glowforge commit 26298a3 deletes
-   `glowforge_homing.c`; the full implementation and its bench record
-   live in the history before that commit). Until the switches exist,
-   homing is disabled in the shipped defaults ($22=0), `$H` rejects
-   with error 5 without motion, and the limit-signal backends are
-   stubs. Conventions that carry forward to the switch-based
-   implementation: home corner = BACK-LEFT (X min / Y min; +Y
-   physically = FRONT), force-origin → all-positive workspace; Z
-   homes against the hall sensor at top, hall-supervised only, never
-   blind-driven.
+3. **Homing: runtime-selectable, Glowforge web-service mode
+   IMPLEMENTED and bench-verified (stub session) 2026-08-07; LIVE
+   cloud run still pending operator.** The operator picks the method
+   in the forgectrl web UI (`homing_mode` in `/data/forgefirm.conf`,
+   REST `GET/POST /settings`): `gfcloud` = factory camera homing via
+   the Glowforge web service, `switches` = the future limit-switch
+   cycle (falls through to the core, still disabled $22=0), `none` =
+   `$H` rejects error 5. The driver re-reads the file on every `$H`.
+   - Architecture: `glowforge_homing.c` registers a driver `$H` that
+     shadows the core's; for gfcloud it suspends the stream engine
+     (only from a fully idle kernel — closing the flock'd fd
+     mid-program is an e-stop), spawns `/usr/sbin/gfhome.py` (new
+     `gfhome` recipe; config `/data/etc/gfhome.conf`, first-run copy
+     from `/etc/gfhome.conf.sample`), pumps the protocol so senders
+     keep getting status, then reacquires the device and re-applies
+     the analog config + step_freq. `^X` aborts the session (SIGTERM
+     → SIGKILL); failure/timeout queues ALARM:18 like a failed core
+     cycle (`gfcloud_home_timeout_s`, default 300).
+   - The runner drives the GFUIService dispatch itself (the stock
+     run() loop can neither stop nor close the socket) and treats
+     hunt + ≥1 motion + quiet (10 s) as complete — the modern v2.6.0
+     sequence per `_RESOURCES/emulator.log` is settings → hunt →
+     lid_image → single corner move → lid_image → silence. It then
+     re-homes the lens against the hall for a deterministic Z.
+   - Position semantics: factory home = machine origin (back-left
+     corner, +Y = FRONT, workspace all-positive 0..495 × 0..279); Z
+     top-of-travel = 10.6. `gfcloud_home_x/y/z` in
+     `/data/forgefirm.conf` calibrate the post-home coordinates once
+     measured (defaults 0 / 0 / Z max).
+   - Bench record 2026-08-07: forgectrl `/settings` verified on the
+     board; `$H` mode dispatch verified (none → error 5); a stub
+     gfcloud session (`gfcloud_home_cmd = /bin/true`) completed the
+     full real-device handover — `H:1`, MPos set — and post-resume X
+     jogs ran the gantry clean (clamped 0). Host tests covered
+     success, calibrated coords, runner-failure and timeout-kill.
+   - **REMAINING (operator): first LIVE gfcloud homing.** Lid closed,
+     bed clear, watch the machine: either `$H` from LightBurn with
+     `homing_mode = gfcloud`, or `/usr/sbin/gfhome.py` by hand over
+     ssh (logs to `/data/log/gfhome/gfhome.log`; driver side logs
+     `gfhome:` lines in `/data/glowforge.log`). Afterward jog to a
+     known reference and calibrate `gfcloud_home_x/y` if the corner
+     offset matters. NOTE: the board's pinned python3-gfhardware
+     carries the `_hunt` Z-offset fix as a bench hot-patch
+     (machine.py scp'd 2026-08-07; commit 02e66c6 in the local repo —
+     push + SRCREV bump to make it durable in images).
+   - Limit-switch homing remains the planned second method; the
+     accelerometer approach stays retired (implementation and bench
+     record in grblHAL-glowforge history before commit 26298a3;
+     durable accel/rail-contact measurements below).
    Durable measurements from the accelerometer spike (relevant to any
    future contact/vibration sensing; tools `accel_fast.py`,
    `bump_seek.py` remain in scripts/bench):
@@ -551,8 +590,6 @@ max. Images from 20260807204056 carry forgectrl at the bumped SRCREV
      approaches are near-silent** — belt compliance turns slow-speed
      skipping into sub-threshold grinding — so any contact-sensing
      scheme must strike fast.
-   Camera homing (the factory's actual method) remains a future
-   option.
 4. **6.5 safety mapping**: door/estop evdev → feed-hold/halt in the
    backend; underrun → grblHAL alarm; interlock-trip recovery check.
 4b. **Cloud-mode complete review** (operator-directed 2026-08-03):
