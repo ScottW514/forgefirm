@@ -1,12 +1,13 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
 Last updated: **2026-08-07** — homing is runtime-selectable
-(forgectrl web UI): Glowforge web-service (gfcloud) homing implemented
-end-to-end and bench-verified with a stub session (real-device
-handover + clean post-resume jogs); first LIVE cloud run awaits the
-operator (Next work #3). Same day: fd-blocking protocol pacing (idle
-CPU ~2%) and the fortify step_us_min fix. Previous milestone: camera
-service (forgectrl MJPEG on :8080), motion-coexistence verified.
+(forgectrl web UI) and **Glowforge web-service (gfcloud) homing is
+LIVE-VERIFIED end-to-end** ($H → cloud homing sequence → homed at the
+factory corner in 65 s). The first live run surfaced and fixed four
+platform bugs — see Next work #3, incl. the new hardware fact that
+the estop sense reads low during any motion. Same day: fd-blocking
+protocol pacing (idle CPU ~2%) and the fortify step_us_min fix.
+Previous milestone: camera service (forgectrl MJPEG on :8080).
 Read together with `AUDIT_ACTION_PLAN.md` in the project root (sibling of
 this repo; per-finding status of the 2026-07-03 audit) and
 `kernel-module-glowforge/UAPI.md` (the pulse-stream feeder contract).
@@ -340,6 +341,11 @@ max. Images from 20260807204056 carry forgectrl at the bumped SRCREV
 - Laser PWM: 39.98 kHz register-verified (divider 13 × 127 counts).
 - Switches: truthy = closed/OK; SW_INTERLOCK reads False on units without
   the rear plug — must NOT gate motion (beam is hardware-gated).
+  **SW_ESTOP reads LOW during ANY motion** (measured 2026-08-07:
+  polled at 20 ms through X and Z jogs — low for the whole run, ~70/75
+  samples, recovers instantly at idle; True at idle) — must NOT gate
+  motion on the factory board either (it false-tripped every legacy
+  cloud motion ~0.1 s in). Doors/door1/door2 stay stable during motion.
 - Machine identity from OCOTP nvmem: serial 00000000 → hostname XXX-XXX
   (matches the factory label).
 
@@ -563,16 +569,36 @@ max. Images from 20260807204056 carry forgectrl at the bumped SRCREV
      full real-device handover — `H:1`, MPos set — and post-resume X
      jogs ran the gantry clean (clamped 0). Host tests covered
      success, calibrated coords, runner-failure and timeout-kill.
-   - **REMAINING (operator): first LIVE gfcloud homing.** Lid closed,
-     bed clear, watch the machine: either `$H` from LightBurn with
-     `homing_mode = gfcloud`, or `/usr/sbin/gfhome.py` by hand over
-     ssh (logs to `/data/log/gfhome/gfhome.log`; driver side logs
-     `gfhome:` lines in `/data/glowforge.log`). Afterward jog to a
-     known reference and calibrate `gfcloud_home_x/y` if the corner
-     offset matters. NOTE: the board's pinned python3-gfhardware
-     carries the `_hunt` Z-offset fix as a bench hot-patch
-     (machine.py scp'd 2026-08-07; commit 02e66c6 in the local repo —
-     push + SRCREV bump to make it durable in images).
+   - **LIVE gfcloud homing VERIFIED 2026-08-07 (bench, via `$H`):**
+     full sequence in 65 s — hunt (Z hall + hunt puls), lid image,
+     corner move (head physically to back-left), confirmation lid
+     image, quiet detect, final Z re-reference — `ok` +
+     `<Idle|MPos:0,0,10.593|H:1>`, stream resumed clean. The FIRST
+     live attempt failed and exposed four real bugs, all fixed the
+     same day:
+     1. gfhardware `_run_loop` halted every motion ~0.1 s in on a
+        false SW_ESTOP trip — the estop sense reads low during any
+        motion (facts bank above). Gate is now opt-in
+        (`MOTION.ESTOP_HALTS_MOTION`, off in gfhome.conf).
+     2. `cnc.halt()` didn't exist → the halt path crashed →
+        deadman fd closed mid-run → real kernel e-stop (40V off,
+        every later hunt skipped as 'Disabled').
+     3. Camera conflict: gfhardware's direct V4L2 grab fails while
+        forgectrl serves a stream (LightBurn holds one); the runner
+        now captures via forgectrl `/cam/snapshot` (full-res, mux
+        borrow, per-shot `lamp=` override — head images torch-off).
+     4. Kernel: the deadman e-stop path ran sync SPI (PIC safing)
+        inside the ATOMIC dms notifier chain → RCU splat. Chain is
+        now blocking (trip point = pulsedev release, process ctx);
+        the panic handler keeps only the atomic motion stop.
+     Also mapped kernel state 'underrun' in gfhardware (state polls
+     raised ValueError on it). Commits: gfhardware 8aa4a49 (+02e66c6
+     `_hunt` offset), forgectrl 0b05e48, forgefirm cc838f1,
+     kernel-module 5fa558c — board runs all of it (module hot-swapped;
+     gfhardware hot-patched over the pinned package: push + SRCREV
+     bumps needed for images). Remaining homing polish: calibrate
+     `gfcloud_home_x/y` against a jog to a known reference if the
+     factory corner offset matters.
    - Limit-switch homing remains the planned second method; the
      accelerometer approach stays retired (implementation and bench
      record in grblHAL-glowforge history before commit 26298a3;
