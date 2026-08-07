@@ -7,11 +7,11 @@ LIC_FILES_CHKSUM = "file://COPYING;md5=3237e48bcef3455c7bea5c0ce16206f6"
 PV = "0.1.0"
 
 # gitsm: the grblHAL core rides as a submodule (ScottW514/core, branch
-# forgefirm, carrying the settings-write crash and step_us_min buffer
-# fixes destined upstream).
+# forgefirm = upstream master + the step_us_min buffer fix pending
+# upstream).
 SRC_URI = "gitsm://github.com/ScottW514/grblHAL-glowforge.git;protocol=https;branch=main"
 # Pinned; bump deliberately after pushing grblHAL-glowforge changes.
-SRCREV = "26298a34498874c1225acaf0273b725032e459f6"
+SRCREV = "bdab31c812dbb7a1da88553fe493054036543774"
 
 SRC_URI += "file://grblhal.init"
 

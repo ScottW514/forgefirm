@@ -100,9 +100,10 @@ motion constants were extracted from the `_RESOURCES` pulse files
 Source: `C:\dev\openglow-forgefirm\grblHAL-glowforge` — the **canonical
 grblHAL driver repo** (github.com/ScottW514/grblHAL-glowforge, branch
 `main`): core as a submodule at `src/grbl` (→ ScottW514/core fork, branch
-`forgefirm`, carrying the settings-write crash fix, PR'd upstream as
-grblHAL/core#999), `driver.c` implementing the HAL, machine constants in
-`src/boards/glowforge.h`. **The controller autostarts at boot** since
+`forgefirm` = **upstream master + the step_us_min buffer fix pending
+upstream**; the settings-write crash fix merged upstream 2026-08-04 as
+grblHAL/core PR #999), `driver.c` implementing the HAL, machine
+constants in `src/boards/glowforge.h`. **The controller autostarts at boot** since
 2026-08-03: the `grblhal-glowforge` recipe (meta-forgefirm; gitsm pin +
 sysvinit script `grblhal`, defaults 92) is installed in both images, and
 the same init script is installed on the current bench rootfs
