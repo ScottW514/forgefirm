@@ -317,8 +317,9 @@ max. Images from 20260807204056 carry forgectrl at the bumped SRCREV
   — hall-supervised only.
 - XY: 0.15 mm per full step; DIR bit set = −X / +Y (Y1/Y2 complementary).
   **+Y physically moves the gantry toward the FRONT** (operator-verified
-  2026-08-03). Homing corner = back-left (X min, Y min); after $H the
-  workspace is all-positive from that corner.
+  2026-08-03). Home corner (convention, for the planned limit-switch
+  homing) = back-left (X min, Y min), workspace all-positive from that
+  corner.
 - Factory motion profile (measured from `_RESOURCES` pulse streams with
   `puls_profile.py`): accel ≈ 700 mm/s² X / 590 mm/s² Y on v2.6.0
   firmware (2018 firmware used ≈1000); header HAxr=132/HAyr=112/HAar=133
@@ -521,102 +522,34 @@ max. Images from 20260807204056 carry forgectrl at the bumped SRCREV
      there.
    - **Interlock readback semantics cross-check: OPEN** (see
      factory-laser-safety-readbacks notes).
-3. **Homing: DONE 2026-08-03 — $H works** (accelerometer bump-detect;
-   the factory machine has NO X/Y home switches). Driver integration
-   (`glowforge_homing.c` in grblHAL-glowforge): a monitor thread reads
-   the head accel over direct I2C and feeds the core's standard homing
-   cycle as a virtual limit switch on `limits.min`; the core's
-   `on_homing_rate_set` event scopes detection to approach phases —
-   each Seek/Locate runs a fresh ramp-skip (150 ms) + baseline-learn
-   (350 ms) + detect session, pull-offs suspend detection entirely
-   (their reversal/stop jerks read as contact otherwise: the first Y
-   integration attempt failed exactly that way). The cycle mask is
-   tracked live ($H chains cycles under one arm — a stale mask
-   attributed Y's contact to X once, grinding Y to the over-travel
-   alarm; a 5 s contact-not-acted-on watchdog now aborts instead).
-   Pressed-at-start approaches trigger immediately off their grinding
-   baseline. Config: $22=11, $23=3 (home to X min / Y min =
-   back-left), seek 300 latch 60 mm/min, pull-off 4 mm, force-origin
-   → all-positive workspace. **Verified: full $H from mid-bed and
-   again from the home corner, both clean (8/8 approach detections,
-   contacts 20-47k vs thresholds 6.5-20k), ending at machine 0,0 with
-   both axes flagged homed; jogs return to exact zero.** Z excluded
-   ($H never moves Z; hall-supervised Z homing is a later item).
-   **STATUS 2026-08-03 end-of-day: homing rework bench-solid but the
-   acceptance soak is INCOMPLETE — pick up here.** Detection was
-   rebuilt after single-sample amplitude thresholds failed both ways
-   at speed (false triggers from travel bursts AND missed weak
-   strikes): it is now a 16-sample sliding ENERGY window with
-   median+MAD learned thresholds (ceiling 150k against ring-down
-   pollution), a **64 ms duration confirm** (bursts and strikes
-   overlap in amplitude, never in duration — real contact grinds
-   200+ ms as the queue drains), and a grinding-median guard for
-   pressed starts. **The locate pass runs at seek rate (both F1500,
-   $27=15): slow approaches are UNDETECTABLE on this machine — belt
-   compliance makes slow-speed skipping near-silent (measured under
-   every threshold tried) — and the rail is the reference, so
-   approach speed costs no accuracy.** Serial hardening landed with
-   it: TX-ring pressure drops a zero-progress client after 100 ms
-   instead of blocking (a wifi stall froze the homing loop mid-status
-   while the seek streamed into the rail for 20 s), new TCP
-   connections displace the session, hard read errors drop clients.
-   Verified: reference + 6/6 shakedown from varied positions, contact
-   margins 4-9x, 25.1 s from mid-bed (worst case far-corner 37.9 s).
-   OPEN: (1) the 32-run soak was interrupted at day end — rerun
-   `scratchpad`-style: reference $H then 32 varied-position cycles,
-   stop on failure; (2) ONE UNEXPLAINED controller death at idle
-   (clean log end, no crash output, not reproduced by RST/reconnect/
-   dump-abort attacks) — core dumps are armed on the board
-   (core_pattern /data/core.%e.%p, controller started with ulimit -c
-   unlimited); check /data/core.* first thing next session.
-   Historical timing of the superseded creep-rate design: 97.8 s from
-   mid-bed (seek F300 / latch F60 / pull-off 4). The pull-off must exceed the detector's ~0.5 s arming
-   distance AT SEEK RATE (12.5 mm at F1500) — with the old 4 mm
-   pull-off, a re-home from the parked position contacted during the
-   learn window, poisoned the threshold (grinding inflates sd to
-   ~15-16k vs ≤2k clean), and ground X to the over-travel alarm. The
-   grinding-baseline guard therefore triggers on EITHER mean >10k OR
-   sd >8k (at seek speed the grinding mean can sit below 10k; the sd
-   explosion is the reliable signal — verified live: pressed-at-rail
-   start triggers at arm time and homes normally). Watch items: one Y
-   latch contact measured only 1.3× its threshold (10191 vs 7681 —
-   others run 3-5×), and the F1500 X seek run showed clamped 11
-   (homing accuracy is unaffected — the reference is physical
-   contact — but it marks the fast-seek pacing margin). Note: status
-   polls (`?`) go unanswered for long stretches during homing
-   (senders must tolerate the silence).
-   OPEN (headless robustness): a killed TCP client wedges the
-   single-connection port until the server tries a write — a new
-   connection should displace a dead session (serial.c).
-   Spike record (tools `scripts/bench/accel_fast.py`, `bump_seek.py`;
-   machine driven via grblHAL TCP jogs + 0x85 cancel):
-   - **Sensors**: three lis2hh12 bind via mainline st_accel. The HEAD
-     accel is **i2c-3 addr 0x1e** (proven by jog discrimination; Z
-     reads −1 g). 0x1d on the same bus is a static board part (+1 g);
-     i2c-0 0x1e is the lid. **st_accel sysfs one-shot reads are ~6 Hz**
-     (the driver power-cycles per read) and this kernel has no IIO
-     triggers — the working path is **direct I2C via /dev/i2c-3**
-     (unbind st-accel first): CTRL1=0x6F (800 Hz ODR), burst-read
-     OUT_X..Z → **~530 Hz** from Python, faster from C.
-   - **Contact signature is unmistakable**: creep (F120) moving
-     baseline ≈0.5–2 k counts (summed 3-axis |dev| from an EMA
-     gravity tracker); rail contact jumps to **29–42 k within two
-     samples (~4 ms)** — 20–40× over baseline. Detector: per-cycle
-     learned threshold max(mean+8σ, floor), 2-sample confirm.
-   - **Results: 3/3 hits, zero false positives over ~180 mm** of
-     accumulated creep. Detection latency ≈4–6 ms ≈ 0.01 mm at
-     2 mm/s. Post-cancel push-through is dominated by the **200 ms
-     stream queue (~0.4 mm at F120)**, visible as counter drift
-     between repeat hits (skipped steps against the rail).
-   - **Implementation design**: detection lives in the driver as a
-     virtual limit switch feeding grblHAL's homing cycle (direct-I2C
-     read thread during homing only); homing runs with a shallow
-     queue (small GFSINK_DEPTH) to cut push-through; **zero at the
-     pressed position** so counter drift from skipped steps cancels;
-     dual-phase seek/latch like standard Grbl. Fallback soft-bump
-     (weak-current grind) remains available but likely unnecessary.
-   Camera homing (the factory's actual method) is a future option.
-   Z homes against the hall sensor (top), hall-supervised only.
+3. **Homing: accelerometer approach RETIRED 2026-08-07 — homing will
+   be by physical limit switches (near-term hardware addition).** The
+   accelerometer bump-detect implementation is removed from the
+   driver (grblHAL-glowforge commit 26298a3 deletes
+   `glowforge_homing.c`; the full implementation and its bench record
+   live in the history before that commit). Until the switches exist,
+   homing is disabled in the shipped defaults ($22=0), `$H` rejects
+   with error 5 without motion, and the limit-signal backends are
+   stubs. Conventions that carry forward to the switch-based
+   implementation: home corner = BACK-LEFT (X min / Y min; +Y
+   physically = FRONT), force-origin → all-positive workspace; Z
+   homes against the hall sensor at top, hall-supervised only, never
+   blind-driven.
+   Durable measurements from the accelerometer spike (relevant to any
+   future contact/vibration sensing; tools `accel_fast.py`,
+   `bump_seek.py` remain in scripts/bench):
+   - **Sensors**: the HEAD accel (lis2hh12) is **i2c-3 addr 0x1e**
+     (0x1d on the same bus is a static board part; i2c-0 0x1e is the
+     lid). st_accel sysfs one-shots are ~6 Hz and the kernel has no
+     IIO triggers; direct I2C (unbind st-accel, CTRL1=0x6F = 800 Hz
+     ODR) reads ~530 Hz from Python.
+   - **Rail-contact signature**: creep baseline ≈0.5–2 k counts;
+     contact jumps to 29–42 k within ~4 ms (20–40×). But **slow
+     approaches are near-silent** — belt compliance turns slow-speed
+     skipping into sub-threshold grinding — so any contact-sensing
+     scheme must strike fast.
+   Camera homing (the factory's actual method) remains a future
+   option.
 4. **6.5 safety mapping**: door/estop evdev → feed-hold/halt in the
    backend; underrun → grblHAL alarm; interlock-trip recovery check.
 4b. **Cloud-mode complete review** (operator-directed 2026-08-03):
