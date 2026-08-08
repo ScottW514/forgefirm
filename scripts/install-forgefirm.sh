@@ -70,12 +70,15 @@ archive_dev () {
   [ "$GZRC" = "0" ] && [ "$DDRC" = "0" ]
 }
 
-# slot_probe <1|2>: sets S_TYPE (factory|forgefirm|unknown) and S_VER.
-# The active slot is read from the running rootfs; others are mounted
-# read-only under /tmp (newer factory firmware has no /factory/imgN
-# mounts, and the rootfs is read-only).
+# slot_probe <1|2>: sets S_TYPE (factory|forgefirm|empty|unknown),
+# S_VER (the build datetime, used for archive naming), and S_FWVER (the
+# semantic FIRMWARE_VERSION, for display; factory only). The active slot
+# is read from the running rootfs; others are mounted read-only under
+# /tmp (newer factory firmware has no /factory/imgN mounts, and the
+# rootfs is read-only). Sets S_TYPE=empty for a mountable-but-unknown
+# filesystem and S_TYPE=unknown when the slot will not even mount.
 slot_probe () {
-  S_TYPE=unknown; S_VER=""; S_MOUNTED=""
+  S_TYPE=unknown; S_VER=""; S_FWVER=""; S_MOUNTED=""
   if [ "$1" = "$ACTIVE" ]; then
     RD=""
   else
@@ -85,18 +88,33 @@ slot_probe () {
       S_MOUNTED=yes
       mkdir -p "$RD" || return 1
       mount -o ro -t ext4 "/dev/mmcblk2p$1" "$RD" 2>/dev/null \
-        || { rmdir "$RD" 2>/dev/null; return 1; }
+        || { rmdir "$RD" 2>/dev/null; S_TYPE=unknown; return 0; }
     fi
   fi
   if [ -f "$RD/etc/forgefirm-version" ]; then
     S_TYPE=forgefirm; S_VER=$(cat "$RD/etc/forgefirm-version")
   elif [ -f "$RD/etc/version" ]; then
     S_TYPE=factory; S_VER=$(cat "$RD/etc/version")
+    S_FWVER=$(sed -n 's/^FIRMWARE_VERSION[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' \
+              "$RD/etc/build" 2>/dev/null)
+  else
+    S_TYPE=empty
   fi
   if [ -n "$S_MOUNTED" ]; then
     umount "$RD" 2>/dev/null
     rmdir "$RD" 2>/dev/null
   fi
+}
+
+# Human label for the last slot_probe result.
+slot_desc () {
+  case "$S_TYPE" in
+    factory)   [ -n "$S_FWVER" ] && echo "factory firmware v$S_FWVER" \
+                                 || echo "factory firmware $S_VER" ;;
+    forgefirm) echo "ForgeFIRM $S_VER" ;;
+    empty)     echo "an unrecognized filesystem" ;;
+    *)         echo "unknown/unreadable content" ;;
+  esac
 }
 
 # Verified atomic env flip (all four variables, classic u-boot-tools script
@@ -174,6 +192,27 @@ echo
 echo -e "Booted slot: $ACTIVE - ForgeFIRM will be installed to slot $TARGET."
 echo -e "The factory firmware in slot $ACTIVE stays installed and bootable."
 echo
+
+# What is in the target slot, and will it be archived first? The archive
+# step below backs up factory images; anything else in the target slot
+# is overwritten without a backup, so make that explicit.
+slot_probe "$TARGET"
+TARGET_DESC=$(slot_desc)
+echo -e "Slot $TARGET currently holds: ${BRIGHT}$TARGET_DESC${RESET}"
+if [ "$S_TYPE" = "factory" ]; then
+  echo -e "It will be archived to /data before being overwritten."
+else
+  echo -e "${YELLOW}!! This is NOT factory firmware and will NOT be archived.${RESET}"
+  echo -e "${YELLOW}!! Its contents will be permanently destroyed.${RESET}"
+  echo
+  read -p "Type ERASE to overwrite slot $TARGET, or anything else to abort: " erase
+  echo
+  if [ "$erase" != "ERASE" ]; then
+    echo "Aborting without changes."
+    exit 0
+  fi
+fi
+echo
 read -p "Are you sure you want to continue [N/y]? " continue
 echo
 if [ "$continue" != "y" ]; then
@@ -193,10 +232,10 @@ for N in 1 2; do
     echo -e "${ASTERISK}Slot $N (factory $S_VER) already archived."
     continue
   fi
-  echo -e "${ASTERISK}Archiving slot $N (factory $S_VER) - takes a few minutes:"
+  echo -e "${ASTERISK}Archiving slot $N ($(slot_desc)) - takes a few minutes:"
   archive_dev /dev/mmcblk2p$N "$ARC" \
     || { rm -f "$ARC"; die "archiving slot $N failed"; }
-  echo "$(date '+%Y-%m-%d %H:%M:%S') slot$N factory $S_VER $(basename $ARC) md5=$(md5sum "$ARC" | cut -d' ' -f1)" >> "$ARCHIVE_DIR/manifest"
+  echo "$(date '+%Y-%m-%d %H:%M:%S') slot$N factory $S_VER ver=${S_FWVER:-unknown} $(basename $ARC) md5=$(md5sum "$ARC" | cut -d' ' -f1)" >> "$ARCHIVE_DIR/manifest"
 done
 for B in 0 1; do
   ARC="$ARCHIVE_DIR/recovery-boot$B.img.gz"
