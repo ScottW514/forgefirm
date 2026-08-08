@@ -442,7 +442,12 @@ value spans), imperial placeholders 14.4→25.9 (delta) / 33→91.4
 one changed key converted back (27 °F→15 °C), diag bands ×1.8 with
 Apply still posting metric, and a units round-trip leaving nothing
 dirty. The C serial→hostname derivation matches gfhardware id.py on
-200k random 32-bit serials (host-side cross-check). Pending on
+200k random 32-bit serials (host-side cross-check). Also
+offline-verified the same way: the **fuse-identity viewer** (GF
+Cloud tab, `GET /fuse-identity` fetched on demand only — serial,
+derived hostname, and the 64-hex SRK password with a
+keep-these-secret warning; modal outside the settings lock, both
+dismiss paths clear the values from the DOM). Pending on
 go-ahead: deploy both binaries, live re-check, then SRCREV bumps.
 
 ## Hardware facts bank (measured)
