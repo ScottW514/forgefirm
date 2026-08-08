@@ -48,16 +48,25 @@ BOOTED_ROOT=$(sed -n 's/.*root=\([^ ]*\).*/\1/p' /proc/cmdline)
 #       P_VERSION P_KERNEL(yes|no)
 probe_part () {
   P_PRESENT=no; P_STATE=unreadable; P_TYPE=unknown; P_VERSION=""; P_KERNEL=no
+  P_MOUNTED=""
   [ -b "$1" ] || return 1
   P_PRESENT=yes
   if [ "$1" = "$BOOTED_ROOT" ]; then
     ROOT_DIR=""
   else
-    ROOT_DIR="/tmp/ffboot.probe.$$"
-    mkdir -p "$ROOT_DIR"
-    if ! mount -o ro "$1" "$ROOT_DIR" 2>/dev/null; then
-      rmdir "$ROOT_DIR" 2>/dev/null
-      return 1
+    # Reuse an existing mount (the image keeps the factory slots mounted
+    # under /factory); a fresh mount is explicit -t ext4 - letting mount
+    # iterate types provokes a cosmetic kernel "Can't open blockdev" for
+    # each foreign-type claim against an already-mounted device.
+    ROOT_DIR=$(sed -n "s|^$1 \([^ ]*\).*|\1|p" /proc/mounts | head -n 1)
+    if [ -z "$ROOT_DIR" ]; then
+      ROOT_DIR="/tmp/ffboot.probe.$$"
+      P_MOUNTED=yes
+      mkdir -p "$ROOT_DIR"
+      if ! mount -o ro -t ext4 "$1" "$ROOT_DIR" 2>/dev/null; then
+        rmdir "$ROOT_DIR" 2>/dev/null
+        return 1
+      fi
     fi
   fi
   if [ -f "$ROOT_DIR/etc/forgefirm-version" ]; then
@@ -70,7 +79,7 @@ probe_part () {
     P_STATE=empty
   fi
   [ -f "$ROOT_DIR/boot/zImage" ] && P_KERNEL=yes
-  if [ -n "$ROOT_DIR" ]; then
+  if [ -n "$P_MOUNTED" ]; then
     umount "$ROOT_DIR" 2>/dev/null
     rmdir "$ROOT_DIR" 2>/dev/null
   fi

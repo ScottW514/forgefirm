@@ -76,21 +76,25 @@ archive_dev () {
 # read-only under /tmp (newer factory firmware has no /factory/imgN
 # mounts, and the rootfs is read-only).
 slot_probe () {
-  S_TYPE=unknown; S_VER=""
+  S_TYPE=unknown; S_VER=""; S_MOUNTED=""
   if [ "$1" = "$ACTIVE" ]; then
     RD=""
   else
-    RD="/tmp/ffinstall.probe.$$"
-    mkdir -p "$RD" || return 1
-    mount -o ro "/dev/mmcblk2p$1" "$RD" 2>/dev/null \
-      || { rmdir "$RD" 2>/dev/null; return 1; }
+    RD=$(sed -n "s|^/dev/mmcblk2p$1 \([^ ]*\).*|\1|p" /proc/mounts | head -n 1)
+    if [ -z "$RD" ]; then
+      RD="/tmp/ffinstall.probe.$$"
+      S_MOUNTED=yes
+      mkdir -p "$RD" || return 1
+      mount -o ro -t ext4 "/dev/mmcblk2p$1" "$RD" 2>/dev/null \
+        || { rmdir "$RD" 2>/dev/null; return 1; }
+    fi
   fi
   if [ -f "$RD/etc/forgefirm-version" ]; then
     S_TYPE=forgefirm; S_VER=$(cat "$RD/etc/forgefirm-version")
   elif [ -f "$RD/etc/version" ]; then
     S_TYPE=factory; S_VER=$(cat "$RD/etc/version")
   fi
-  if [ -n "$RD" ]; then
+  if [ -n "$S_MOUNTED" ]; then
     umount "$RD" 2>/dev/null
     rmdir "$RD" 2>/dev/null
   fi
@@ -235,7 +239,7 @@ rm -f "$KEYFILE"
 # --- post-write verify --------------------------------------------------------
 MP="/tmp/ffinstall.verify.$$"
 mkdir -p "$MP"
-mount -o ro "/dev/mmcblk2p$TARGET" "$MP" || die "new rootfs does not mount"
+mount -o ro -t ext4 "/dev/mmcblk2p$TARGET" "$MP" || die "new rootfs does not mount"
 NEWVER=$(cat "$MP/etc/forgefirm-version" 2>/dev/null)
 [ -n "$NEWVER" ] || { umount "$MP"; die "new rootfs has no ForgeFIRM version stamp"; }
 [ -f "$MP/boot/zImage" ] || { umount "$MP"; die "new rootfs has no kernel"; }
