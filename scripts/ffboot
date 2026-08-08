@@ -45,9 +45,10 @@ BOOTED_ROOT=$(sed -n 's/.*root=\([^ ]*\).*/\1/p' /proc/cmdline)
 # --- partition probe ---------------------------------------------------------
 # probe_part <device>
 # Sets: P_PRESENT P_STATE(ok|empty|unreadable) P_TYPE(forgefirm|factory|unknown)
-#       P_VERSION P_KERNEL(yes|no)
+#       P_VERSION (display) P_DATE (build datetime, for ordering) P_KERNEL(yes|no)
 probe_part () {
-  P_PRESENT=no; P_STATE=unreadable; P_TYPE=unknown; P_VERSION=""; P_KERNEL=no
+  P_PRESENT=no; P_STATE=unreadable; P_TYPE=unknown
+  P_VERSION=""; P_DATE=""; P_KERNEL=no
   P_MOUNTED=""
   [ -b "$1" ] || return 1
   P_PRESENT=yes
@@ -74,7 +75,17 @@ probe_part () {
     P_VERSION=$(cat "$ROOT_DIR/etc/forgefirm-version")
   elif [ -f "$ROOT_DIR/etc/version" ]; then
     P_TYPE=factory; P_STATE=ok
-    P_VERSION=$(cat "$ROOT_DIR/etc/version")
+    # The build datetime orders releases reliably (used by -e); the
+    # semantic FIRMWARE_VERSION in /etc/build is what the factory calls
+    # the release and what we display (fall back to the datetime).
+    P_DATE=$(cat "$ROOT_DIR/etc/version")
+    FV=$(sed -n 's/^FIRMWARE_VERSION[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' \
+         "$ROOT_DIR/etc/build" 2>/dev/null)
+    if [ -n "$FV" ]; then
+      P_VERSION="v$FV"
+    else
+      P_VERSION="$P_DATE"
+    fi
   else
     P_STATE=empty
   fi
@@ -179,7 +190,9 @@ case "$MODE" in
     for CAND in 1 2; do
       probe_part "/dev/mmcblk2p$CAND" || continue
       [ "$P_TYPE" = "factory" ] || continue
-      V=$(echo "$P_VERSION" | tr -cd '0-9')
+      # Order by the build datetime (monotonic), not the semantic
+      # version string.
+      V=$(echo "$P_DATE" | tr -cd '0-9')
       [ -n "$V" ] || V=0
       if [ -z "$MMCPART" ] || [ "$V" -gt "$BEST" ]; then
         MMCPART=$CAND; BEST=$V
