@@ -152,6 +152,15 @@ demonstrably untouched.*
 - One version source: `FORGEFIRM_RELEASE` = git tag =
   `/etc/forgefirm-version` = `.fw` meta-version; the script enforces
   agreement.
+- `tested_against_gf`: pinned release metadata naming the Glowforge
+  service/firmware version this release validated optional cloud mode
+  against. `release.sh` sets it beside `FORGEFIRM_RELEASE` and writes
+  it into the `/etc/forgefirm-version` companion and the `.fw` fwup
+  meta. It is deliberately distinct from the version cloud mode
+  advertises to the service; forgectrl reads it to warn when the live
+  Glowforge service has advanced past the tested version (cloud mode
+  may break), and falls back to the advertised version on images that
+  predate the field.
 - `release.sh --dev` packs a **dev-key-signed** `forgefirm-dev.fw`
   from the release rootfs for the GUI upload path (decides open
   question 4: dev archives are signed with the dev key, never
