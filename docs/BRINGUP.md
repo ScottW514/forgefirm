@@ -119,8 +119,12 @@ motion constants were extracted from the `_RESOURCES` pulse files
   what fwup 0.14.2 expects; 1.x reads both). Cross-version compat is
   proven both ways (modern-packed signed archives apply with 0.14.2;
   modern fwup verifies+applies the factory .fw — signer key
-  2017-05-001.pub). The production release key does not exist yet —
-  generation/custody is an operator ceremony (UPDATE-SYSTEM.md gate 8).
+  2017-05-001.pub). The production signing-key ceremony
+  (UPDATE-SYSTEM.md gate 8) was executed 2026-08-08.
+  **The production release key lives at
+  `~/forgefirm-release-key/fwup-key.priv`** (0600; `fwup-key.pub` +
+  `fwup-key-raw.pub` beside it; offline backups held by the operator) —
+  the installer embeds its pubkey, so releases sign with THIS key only.
   Pack releases with `scripts/mkfw.sh`; the full pipeline is
   `scripts/release.sh`, invoked on this host as:
   `FWUP=~/fwup-lab/bin/fwup-v1.16.0 FWUP_COMPAT=~/fwup-lab/bin/fwup-0.14.2

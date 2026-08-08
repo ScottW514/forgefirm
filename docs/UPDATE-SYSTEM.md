@@ -234,17 +234,16 @@ selector, factory restore and return — without touching a shell.*
    ≥ 195 MiB.
 4. **RESOLVED** (Phase 3): dev archives are always signed with the
    dedicated dev key (`release.sh --dev`), never unsigned.
-8. Production signing-key ceremony — **procedure defined, execution
-   pending**: generate with fwup on the build host (never in the
-   repo, CI, or cloud-synced plaintext; the build-host copy is the
-   only online copy), keep ≥ 2 verified offline backups (USB /
-   paper — the private key is 128 hex chars — / passphrase-encrypted
-   file), embed the public key in the installer (release.sh's
-   key-match gate enforces the swap), and verify a signed test
-   archive with both fwup generations before first use. Custody
-   optimizes against compromise over loss: loss means users re-run a
-   fresh installer; compromise means attacker-signed firmware on
-   fielded machines.
+8. **RESOLVED** — production signing-key ceremony executed: key
+   generated on the build host (never in the repo, CI, or
+   cloud-synced plaintext; the build-host copy is the only online
+   copy, offline backups held by the operator), public key embedded
+   in the installer, and the chain verified: production-signed
+   archives verify with fwup 1.16 and the factory's 0.14.2 (raw
+   pubkey form); dev-signed archives are rejected. Custody optimizes
+   against compromise over loss: loss means users re-run a fresh
+   installer; compromise means attacker-signed firmware on fielded
+   machines.
 5. Periodic GUI update check default-on vs opt-in (it pings the GitHub
    API; proposal: on by default, apply always manual, config switch to
    disable).
