@@ -1,13 +1,19 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-08-07** — homing is runtime-selectable
-(forgectrl web UI) and **Glowforge web-service (gfcloud) homing is
-LIVE-VERIFIED end-to-end** ($H → cloud homing sequence → homed at the
-factory corner in 65 s). The first live run surfaced and fixed four
-platform bugs — see Next work #3, incl. the new hardware fact that
-the estop sense reads low during any motion. Same day: fd-blocking
-protocol pacing (idle CPU ~2%) and the fortify step_us_min fix.
-Previous milestone: camera service (forgectrl MJPEG on :8080).
+Last updated: **2026-08-07 (late)** — forgectrl is now the machine
+CONTROL PANEL: tabbed web UI (Status / Machine / GF Cloud / GRBL) with
+a status-first landing page (scaled lid snapshot + on-demand live
+stream), homing-position calibration (`gfcloud_home_x/y/z`),
+cloud-identity overrides (`gf_serial`/`gf_password`/`gf_hostname`,
+fuses = fallback, applied by the runner via set_cfg before Machine()),
+and a validated multi-key `/settings` API (empty value = clear; clears
+must ride the query string — empty form-body values are dropped by the
+HTTP stack). Bench + browser-verified (save/clear roundtrips from the
+real UI, live toggle, no JS errors). Earlier same day: **gfcloud
+homing LIVE-VERIFIED end-to-end** ($H → homed at the factory corner in
+65 s; four platform bugs fixed — see Next work #3, incl. the
+estop-sense-reads-low-during-motion hardware fact); fd-blocking
+protocol pacing; the fortify step_us_min fix.
 Read together with `AUDIT_ACTION_PLAN.md` in the project root (sibling of
 this repo; per-finding status of the 2026-07-03 audit) and
 `kernel-module-glowforge/UAPI.md` (the pulse-stream feeder contract).
@@ -183,8 +189,15 @@ repo's `init/`; bench builds cross-compile with
 pattern as build-glowforge.sh). One ulfius daemon exposes both OV5648
 cameras as MJPEG over the mainline imx-media pipeline:
 
-- `GET /` — index page with a live view; `/?action=stream|snapshot` are
-  the mjpg-streamer-compatible aliases (lid camera).
+- `GET /` — the tabbed machine control panel (Status / Machine /
+  GF Cloud / GRBL; ui.c): status page with a scaled lid snapshot +
+  on-demand live stream, and the settings forms for homing method,
+  home-position calibration, identity overrides, and the session
+  timeout. `/?action=stream|snapshot` remain the mjpg-streamer-
+  compatible aliases (lid camera; LightBurn uses the stream one).
+- `GET/POST /settings` — the shared machine settings store
+  (/data/forgefirm.conf, validated keys, empty-value-clears via query
+  params; gf_password write-only).
 - `GET /cam/stream?cam=lid|head` — multipart MJPEG at 1296×972 (2×2
   Bayer-superpixel demosaic, JPEG q75; `FORGECTRL_STREAM_Q` overrides;
   `FORGECTRL_STREAM_FPS` caps the frame rate, unset/0 = sensor max).

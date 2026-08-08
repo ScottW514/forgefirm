@@ -12,7 +12,10 @@ back-left home corner, Z at the top-of-travel hall trigger.
 The grblHAL-glowforge controller invokes this for $H when
 homing_mode = gfcloud is set in /data/forgefirm.conf, releasing
 /dev/glowforge for the duration of the run. It can also be run by hand
-(with the controller stopped or its homing session active).
+(with the controller stopped or its homing session active). The same
+shared config supplies optional identity overrides (gf_serial /
+gf_password / gf_hostname; the fuse identity is the fallback), managed
+from the forgectrl UI.
 
 The service ends the sequence silently - there is no completion
 message - so the run is considered homed once a hunt and at least one
@@ -29,6 +32,7 @@ SPDX-License-Identifier: MIT
 import argparse
 import json
 import logging
+import os
 import queue
 import shutil
 import signal
@@ -37,12 +41,13 @@ import time
 from pathlib import Path
 from queue import Queue
 
-from gfutilities.configuration import parse, get_cfg, log_level
+from gfutilities.configuration import parse, get_cfg, log_level, set_cfg
 from gfutilities.service.authentication import authenticate_machine
 from gfutilities.service.websocket import get_session, WsClient
 
 CONF = '/data/etc/gfhome.conf'
 CONF_SAMPLE = '/etc/gfhome.conf.sample'
+MACHINE_CONF = os.environ.get('GFHOME_CONF', '/data/forgefirm.conf')
 
 logging.basicConfig(format='(%(levelname)s) %(module)s:%(funcName)s %(message)s')
 logger = logging.getLogger('openglow')
@@ -68,6 +73,30 @@ def load_config(path: str) -> bool:
         logger.addHandler(fh)
     logger.setLevel(logging.DEBUG)
     return True
+
+
+def apply_identity_overrides():
+    """Identity overrides from the shared machine config (set in the
+    forgectrl UI): non-empty gf_serial / gf_password / gf_hostname beat
+    the OCOTP fuse identity - Machine.__init__ sets its fuse values
+    with keep_value, so whatever is in the config store first wins."""
+    keys = {}
+    try:
+        with open(MACHINE_CONF) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                k, v = line.split('=', 1)
+                keys[k.strip()] = v.strip()
+    except OSError:
+        return
+    for key, cfg in (('gf_serial', 'MACHINE.SERIAL'),
+                     ('gf_password', 'MACHINE.PASSWORD'),
+                     ('gf_hostname', 'MACHINE.HOSTNAME')):
+        if keys.get(key):
+            set_cfg(cfg, keys[key])
+            logger.info('identity override: %s from %s', cfg, MACHINE_CONF)
 
 
 def make_machine():
@@ -252,10 +281,17 @@ def home(machine, args) -> int:
 
 
 def main() -> int:
+    try:
+        # The controller exports its own $H budget minus a margin, so
+        # the runner always gives up before the controller kills it.
+        timeout_default = max(30, int(os.environ.get('GFHOME_TIMEOUT_S', 240)))
+    except ValueError:
+        timeout_default = 240
+
     ap = argparse.ArgumentParser(description='ForgeFIRM one-shot Glowforge cloud homing')
     ap.add_argument('-c', '--config', default=CONF, help='config file (default %s)' % CONF)
-    ap.add_argument('--timeout', type=int, default=240,
-                    help='overall time budget in seconds (default 240)')
+    ap.add_argument('--timeout', type=int, default=timeout_default,
+                    help='overall time budget in seconds (default %d)' % timeout_default)
     ap.add_argument('--start-timeout', type=int, default=120,
                     help='max seconds to wait for the service to begin homing (default 120)')
     ap.add_argument('--quiet', type=int, default=10,
@@ -266,6 +302,8 @@ def main() -> int:
 
     if not load_config(args.config):
         return 1
+
+    apply_identity_overrides()
 
     # Machine() reads the OCOTP identity and head info; it fails cleanly
     # when the controller still owns /dev/glowforge.
