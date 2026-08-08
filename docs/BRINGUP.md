@@ -506,6 +506,12 @@ chooses otherwise).
   updated in the field — `.fw` updates don't touch the boot
   partitions, so every machine still runs its as-manufactured
   recovery.
+- **Bench slot contents** (probed 2026-08-08, `ffboot -l`): eMMC slot 1
+  = factory **20240612194245** (the machine's last cloud update, June
+  2024 — the newer slot and the factory-archive candidate), slot 2 =
+  factory 20220810204015, legacy p4 = ForgeFIRM v0.1.0 (written during
+  the Phase 0 slot-agnostic test). Factory `/etc/version` is a numeric
+  datetime stamp — newest-slot selection is integer comparison.
 - **Factory `.fw` format** = signed fwup 0.14.2 archive (ZIP:
   `meta.conf` + `meta.conf.ed25519` + payloads). Tasks: `complete`
   (MBR, U-Boot to user area, zero both env copies, rootfs → slot A,
