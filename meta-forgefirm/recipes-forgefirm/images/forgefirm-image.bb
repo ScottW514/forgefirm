@@ -14,13 +14,16 @@ IMAGE_INSTALL:remove = "gfui-client"
 # forgectrl: the ForgeFIRM control daemon (camera MJPEG service on :8080).
 # gfhome: one-shot Glowforge web-service homing, invoked by the controller
 # for $H when homing_mode = gfcloud (/data/forgefirm.conf).
+# gfcloud: full Glowforge web-service controller daemon (the factory cloud
+# experience), started when controller_mode = cloud - mutually exclusive with
+# grblHAL. Pulls python3-ffmachine (shared web-service machine glue).
 # v4l-utils provides media-ctl / v4l2-ctl for the imx-media pipeline (also a
 # forgectrl runtime dependency, kept explicit here for bring-up use).
 # fwup: applies signed .fw archives (ForgeFIRM upgrades + factory restore)
 # to the inactive rootfs slot.
 # ffboot: boot-slot inventory and switching (also ships fw_env.config).
 # slotmigrate: boot-time reclaim of the legacy p4 layout (grows /data).
-IMAGE_INSTALL:append = " grblhal-glowforge forgectrl gfhome v4l-utils fwup ffboot slotmigrate"
+IMAGE_INSTALL:append = " grblhal-glowforge forgectrl gfhome gfcloud v4l-utils fwup ffboot slotmigrate"
 
 # The release rootfs must fit a 200 MiB factory eMMC slot (409600 blocks).
 # Sizing: content + 40 MiB working space, hard-capped at the slot size —
