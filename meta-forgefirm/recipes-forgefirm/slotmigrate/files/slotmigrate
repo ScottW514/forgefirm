@@ -16,7 +16,10 @@
 DISK=/dev/mmcblk2
 P3=${DISK}p3
 
-log () { echo "slotmigrate: $*"; }
+log () {
+  echo "slotmigrate: $*"
+  echo "slotmigrate: $*" > /dev/kmsg 2>/dev/null
+}
 
 case "$1" in
   start|"") ;;
@@ -48,10 +51,11 @@ if sfdisk -d "$DISK" 2>/dev/null | grep -q "^${DISK}p4"; then
   partx -d --nr 4 "$DISK" 2>/dev/null
 fi
 
-DISK_SECT=$(blockdev --getsz "$DISK")
+DISK_SECT=$(cat /sys/class/block/mmcblk2/size 2>/dev/null)
 P3_START=$(sfdisk -d "$DISK" 2>/dev/null | sed -n "s|^${P3} : start=[ ]*\([0-9]*\),.*|\1|p")
 P3_SIZE=$(sfdisk -d "$DISK" 2>/dev/null | sed -n "s|^${P3} .*size=[ ]*\([0-9]*\),.*|\1|p")
-[ -n "$P3_START" ] && [ -n "$P3_SIZE" ] || { log "cannot read p3 geometry"; exit 0; }
+[ -n "$DISK_SECT" ] && [ -n "$P3_START" ] && [ -n "$P3_SIZE" ] \
+  || { log "cannot read disk/p3 geometry"; exit 0; }
 
 if [ $((P3_START + P3_SIZE)) -lt "$DISK_SECT" ]; then
   log "growing p3 to the end of the disk ($((P3_START + P3_SIZE)) -> $DISK_SECT sectors)"
@@ -61,7 +65,8 @@ if [ $((P3_START + P3_SIZE)) -lt "$DISK_SECT" ]; then
 fi
 
 # --- filesystem ----------------------------------------------------------
-PART_SECT=$(blockdev --getsz "$P3")
+PART_SECT=$(cat /sys/class/block/mmcblk2p3/size 2>/dev/null)
+[ -n "$PART_SECT" ] || { log "cannot read p3 size"; exit 0; }
 FS_BLOCKS=$(tune2fs -l "$P3" 2>/dev/null | sed -n 's/^Block count:[ ]*//p')
 FS_BSIZE=$(tune2fs -l "$P3" 2>/dev/null | sed -n 's/^Block size:[ ]*//p')
 [ -n "$FS_BLOCKS" ] && [ -n "$FS_BSIZE" ] || { log "cannot read p3 filesystem"; exit 0; }
