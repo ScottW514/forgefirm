@@ -74,7 +74,9 @@ motion constants were extracted from the `_RESOURCES` pulse files
 
 - **Board**: SSH `root@172.16.1.97` (fixed DHCP lease since 2026-08-02;
   was .130), empty password
-  (`ssh -o PreferredAuthentications=none` logs straight in). Dev image
+  (`ssh -o PreferredAuthentications=none` logs straight in). The bench
+  machine is a **Basic/Plus** (the control board is common to
+  Basic/Plus/Pro). Dev image
   (`forgefirm-image-dev`) on SD; BusyBox userland + python3 + gdb/strace.
   Serial console on ttymxc0 available at the bench.
 - **Deploying kernels**: re-burn the SD with the freshly built
@@ -354,8 +356,13 @@ max. Images from 20260807204056 carry forgectrl at the bumped SRCREV
   differ by design); x/y_decay=1; ×8 microstepping; run currents applied
   only while motion plays, hold otherwise.
 - Laser PWM: 39.98 kHz register-verified (divider 13 × 127 counts).
-- Switches: truthy = closed/OK; SW_INTERLOCK reads False on units without
-  the rear plug — must NOT gate motion (beam is hardware-gated).
+- Switches: truthy = closed/OK for lid/doors/button. **SW_INTERLOCK is
+  INVERTED**: the remote interlock (the regulatory 2-pin lockout
+  connector) reads ACTIVE only when the loop is OPEN. Basic/Plus —
+  including the bench machine — ship the connector factory-jumpered, so
+  the bit reads 0 = satisfied/good-to-go; Pro brings it out for an
+  external lockout chain. Must NOT gate motion (beam is
+  hardware-gated).
   **SW_ESTOP reads LOW during ANY motion** (measured 2026-08-07:
   polled at 20 ms through X and Z jogs — low for the whole run, ~70/75
   samples, recovers instantly at idle; True at idle) — must NOT gate
