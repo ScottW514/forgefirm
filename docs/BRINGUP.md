@@ -833,3 +833,10 @@ max. Images from 20260807204056 carry forgectrl at the bumped SRCREV
    meta-forgefirm, boot autostart, reboot-verified). Remaining: Phase 7
    doc sweep (CLAUDE.md charter refresh, README roadmap), kas flip +
    first GitHub release per kas/README.md once ready to publish.
+7. **Install/update system overhaul** (planned 2026-08-08): adopt the
+   factory A/B slot scheme end-to-end — fwup-packaged signed `.fw`
+   releases, single-stage installer, GUI update manager + boot
+   selector in forgectrl, offline factory restore from a `/data`
+   archive, legacy-p4 migration, and later a refreshed recovery image
+   in boot0. Full phased plan with invariants and decision gates:
+   `docs/UPDATE-SYSTEM.md` (builds on the facts-bank eMMC map).

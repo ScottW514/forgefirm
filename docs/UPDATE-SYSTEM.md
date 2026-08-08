@@ -1,0 +1,240 @@
+# ForgeFIRM install, update & recovery system — implementation plan
+
+Phased plan for moving ForgeFIRM from the legacy carve-out-a-partition
+install to the factory's own A/B slot scheme, with signed `.fw`
+packaging, a GUI update manager, factory restore, and a refreshed
+recovery image. The measured ground truth this builds on (eMMC layout,
+boot0/boot1 maps, saved-env location, factory `.fw`/updater internals)
+is in `BRINGUP.md` → "eMMC boot & recovery architecture".
+
+## Settled decisions
+
+- **Factory partition scheme, unmodified**: ForgeFIRM lives in the two
+  200 MiB rootfs slots (`mmcblk2p1`/`p2`); `/data` (p3) keeps its full
+  factory size. No repartitioning at install, ever.
+- **Single-OS, not dual-boot**: a machine runs ForgeFIRM *or* factory
+  firmware, with a clean migration each way. The factory updater's
+  behavior toward foreign slot contents is irrelevant because we never
+  operate both long-term.
+- **fwup is the universal package/apply format** (the factory's own
+  mechanism): ForgeFIRM upgrades, factory restore, and provisioning all
+  use signed `.fw` archives applied to the inactive slot, followed by a
+  U-Boot env flip — exactly the factory update flow.
+- **Factory firmware is archived to `/data` before any factory slot is
+  overwritten.** Restore-to-factory never depends on Glowforge's
+  servers; the cloud path (`GET /update/current`, already implemented
+  in gfutilities) is the optional "restore to *latest*" upgrade.
+- **Release artifacts are built and signed locally**, uploaded as
+  GitHub releases. The Ed25519 private key never leaves the build
+  host, so GitHub is untrusted hosting: machines verify signatures
+  before applying. CI does compile checks only, never artifacts.
+- **Reinstalling ForgeFIRM from factory = run the installer again**,
+  until the recovery refresh (Phase 5) subsumes it.
+- **Recovery refresh is squashfs-only in v1**: factory U-Boot, DTB and
+  the 3.14.28 recovery kernel stay in place; only the recovery
+  userspace is replaced.
+
+## Invariants (every flash path, every phase)
+
+1. Never write the active (running) slot.
+2. Machine idle; one flash operation at a time (lock file); no
+   flash/reboot while a job runs.
+3. Archive factory content before the write that would destroy the
+   last copy of it (rootfs slots; boot0/boot1 before a recovery
+   refresh).
+4. Env flips are atomic: one `fw_setenv -s` transaction setting all
+   four of `mmcdev`/`mmchwpart`/`mmcpart`/`mmcroot`.
+5. Automatic paths (release updater, cloud restore) require a valid
+   signature — ours or Glowforge's respectively. Manual uploads may be
+   unsigned behind an explicit "unsigned dev image" warning.
+6. The image must fit the 200 MiB slot; the build fails past the size
+   gate rather than producing an unflashable release.
+7. Boot selection refuses targets that fail the content probe (no
+   kernel / no recognizable rootfs).
+8. Verify a written slot (fwup on-the-fly hashes, or an explicit
+   readback/mount check for raw writes) before flipping boot to it.
+
+## Phase 0 — enablers (no eMMC flashing)
+
+- **0.1 Slot-agnostic images.** Goal: one image boots unmodified from
+  p1, p2, or SD, steered only by the saved env (U-Boot's `mmcargs`
+  already takes `root=${mmcroot}` from the env). Audit what our
+  `/boot/uEnv.txt` currently sets; strip it to entries that are not
+  per-location (`fdt_file` etc.); bench-verify by flipping env alone.
+  This removes the mount-and-sed step from every flash path.
+  *Exit: the same built image boots from two locations with no
+  per-slot edit.*
+- **0.2 fwup toolchain + keys.** Yocto recipe for fwup (target) and a
+  host-side pack step. Generate the ForgeFIRM Ed25519 keypair
+  (custody: offline on the build host, passphrase-protected, backed
+  up). Compatibility gates, both directions: (a) a `.fw` we pack must
+  apply with the **factory's** fwup 0.14.2 (the installer runs on
+  factory firmware; fall back to shipping a static armv7 fwup with the
+  installer if archive-format drift bites), and (b) our shipped fwup
+  must apply a **factory** `.fw` verified against the GF pubkeys
+  (carried from the factory image) for cloud restore.
+- **0.3 Build outputs.** `forgefirm-image` additionally emits the raw
+  ext4 rootfs and a packed+signed `forgefirm-<ver>.fw` with
+  `upgrade.a` / `upgrade.b` tasks in the factory pattern
+  (partition-relative raw writes, unmounted-destination +
+  on-the-fly-verify options); size gate enforced here. A `complete`
+  full-provisioning task joins with the Phase 5 recovery work. The wic
+  stays for SD/dev burns.
+
+## Phase 1 — ffboot v2 + slot probe
+
+- Atomic env flip (invariant 4) — fixes the existing gaps: three
+  separate `fw_setenv` calls today, and `mmchwpart` never set (relies
+  on the saved 0).
+- `ffboot -l` (or a sibling tool): inventory every candidate — eMMC
+  p1/p2, legacy p4, SD — by read-only mount: factory `/etc/version` or
+  `/etc/forgefirm-version`, kernel presence; plus the current env
+  selection. Machine-parsable output; this is the probe the GUI and
+  the installer both reuse.
+- *Exit: bench-verified flips SD ↔ eMMC slots; inventory correct for
+  factory / ForgeFIRM / empty slots.*
+
+## Phase 2 — slot installer (factory → ForgeFIRM)
+
+Rewrite `install-forgefirm.sh` as a **single-stage** script run from
+factory firmware:
+
+1. Sanity: factory 3-partition layout, both slots 200 MiB, active slot
+   detected (`rdev`), enough `/data` space.
+2. Archive: identify the **newer** factory version of the two slots;
+   `dd | gzip` it to `/data/forgefirm/archive/factory-rootfs-<ver>.img.gz`
+   with a manifest (versions of both slots, date); also dump
+   boot0/boot1 (32 MiB) into the archive now, ahead of Phase 5.
+3. Fetch `forgefirm-<ver>.fw` from GitHub releases (or take a local
+   file argument for offline/dev installs).
+4. Apply to the slot holding the **older** factory version (fwup +
+   our pubkey). The newer factory install stays bootable in the other
+   slot *and* is archived — so the first ForgeFIRM self-upgrade may
+   overwrite it without a second archive step.
+5. Atomic env flip (embed the flip logic — the factory rootfs has no
+   ffboot v2), reboot.
+
+No repartitioning, no `/data` backup/restore dance, no stage 2.
+Rewrite `INSTALL.md` accordingly (serial console procedure stays).
+
+*Exit: a factory machine converts in one pass; `ffboot` returns it to
+the intact factory slot; `/data` (calibration, credentials, logs)
+demonstrably untouched.*
+
+## Phase 2b — legacy p4 migration
+
+- Boot-time init script (before `/data` mounts), gated on: booted from
+  `mmcblk2p1`/`p2` (never SD, never p4) AND legacy geometry present
+  (p4 exists, or p3 ends short of the disk). Actions: delete p4,
+  extend p3's end to the disk (starts unchanged), `resize2fs`.
+  Idempotent and power-safe: every step keyed off actual disk state,
+  re-runnable after interruption.
+- Existing p4 users reach the new scheme by running the new installer
+  from their running ForgeFIRM (same flow as Phase 2; both factory
+  slots intact → archive newer, overwrite older), then the boot-time
+  check reclaims p4/p3 on first slot boot.
+- *Exit: a legacy-layout machine migrates with `/data` contents intact
+  and grown to full size; re-boot is a no-op.*
+
+## Phase 3 — release pipeline
+
+- `scripts/release.sh` (build host): kas build → size gate → pack
+  `.fw` → sign → `sha256sums.txt` → `gh release create` → post-check
+  that asset names match what the installer, GUI updater, and (later)
+  recovery expect.
+- One version source: `FORGEFIRM_RELEASE` = git tag = 
+  `/etc/forgefirm-version` = `.fw` meta-version; the script enforces
+  agreement.
+- Dev builds emit a `.fw` too (dev-key or unsigned — see open
+  questions) for the GUI upload path.
+- GitHub Actions: per-push compile checks for grblHAL-glowforge and
+  forgectrl (minutes, no Yocto); optional `workflow_dispatch`
+  cold-Yocto reproducibility build whose only product is a checksum.
+
+## Phase 4 — forgectrl update manager (GUI)
+
+Backend endpoints + a panel page (OpenGlow visual identity):
+
+- **Inventory**: slot contents (Phase 1 probe), current/next boot
+  selection, archive presence/version.
+- **Update check** against the GitHub releases API (manual button +
+  periodic while idle; offline-tolerant, rate-limit friendly).
+- **Apply release**: download `.fw` to `/data`, verify signature,
+  apply to inactive slot, verify, then flip only on explicit user
+  confirmation, prompt reboot.
+- **Upload**: streamed multipart to `/data` (never RAM-buffered);
+  accepts `.fw` (verify; warn if unsigned) and `.wic.gz`/`.ext4.gz`
+  (dev; size + superblock sanity checks).
+- **Boot selector** incl. SD, with warnings — most prominently on
+  switch-to-factory: the factory updater may auto-update and overwrite
+  the other slot. Refuses unprobeable targets.
+- **Factory restore**: from the `/data` archive (offline) or cloud
+  latest (gfutilities device auth → GF-signed `.fw` → verify with GF
+  pubkeys) → inactive slot → flip. Optional cleanup of ForgeFIRM
+  residue in `/data` for true factory condition.
+- Interlocks throughout: idle-only, update lock, never the active
+  slot, rollback = flip back to the previous slot.
+
+*Exit: full loop on the bench — GUI upgrade, rollback via boot
+selector, factory restore and return — without touching a shell.*
+
+## Phase 5 — recovery refresh (reserved; build after 0–4 land)
+
+- **v1 scope**: replace only the boot0 recovery squashfs (boot1 `/usr`
+  only if needed). Never write below offset 0xC0000 in boot0 — U-Boot
+  is physically untouchable by the refresh tool. Factory DTB and
+  kernel 3.14.28 stay.
+- Userspace: static busybox + fwup + a small C webapp (ulfius) +
+  hostapd/wpa_supplicant. No Python. Must carry 3.14.28-matched WiFi
+  modules (decision gate: lift from the factory recovery vs rebuild
+  from Glowforge's published GPL kernel source).
+- Functions: button-hold → AP + web UI (factory UX): upload a `.fw`
+  (verified against our **and** GF pubkeys — either firmware
+  installable), install from the `/data` archive, set boot target,
+  export logs.
+- Flash tool: boot0/boot1 archived first (Phase 2 already does),
+  `force_ro` unlock, write high regions only, readback verify; if both
+  partitions are written, boot1 first, boot0 last.
+- First flashes bench-gated on an attached serial console.
+- Documented recovery ladder from then on: other slot → button-hold
+  recovery → SD card → serial console.
+
+## Contracts
+
+- **Artifacts** (consumers: installer, GUI updater, recovery):
+  `forgefirm-<semver>.fw` (signed; tasks `upgrade.a`/`upgrade.b`,
+  `complete` from Phase 5), `sha256sums.txt`,
+  `forgefirm-image-glowforge.rootfs.wic.gz` (SD burns), release tag
+  `v<semver>`.
+- **Env**: SD = `0/0/1//dev/mmcblk1p1`; slot N = `1/0/N//dev/mmcblk2pN`
+  (`mmcdev/mmchwpart/mmcpart/mmcroot`, always one transaction).
+- **Archive layout**: `/data/forgefirm/archive/` —
+  `factory-rootfs-<ver>.img.gz`, `boot0.img`, `boot1.img`,
+  `manifest` (slot versions, dates, checksums).
+
+## Open questions / decision gates
+
+1. Exact minimal `uEnv.txt` contents (Phase 0.1 spike decides).
+2. fwup archive compatibility with the factory 0.14.2 binary — else
+   ship a static fwup alongside the installer.
+3. Size-gate thresholds (proposal: warn > 170 MiB, fail > 190 MiB
+   image vs the ~195 MiB usable slot).
+4. Dev-image signing policy: dedicated dev key vs unsigned-with-warning
+   only.
+5. Periodic GUI update check default-on vs opt-in (it pings the GitHub
+   API; proposal: on by default, apply always manual, config switch to
+   disable).
+6. Recovery kernel modules: carried from the factory image vs rebuilt
+   from GPL source (Phase 5 gate).
+7. U-Boot bootcount/auto-revert: **out of scope** — the recovery
+   ladder covers bad flips; revisit only if field incidents say
+   otherwise.
+
+## Sequencing
+
+0 → 1 → 2 + 2b → 3 → 4 → 5, strictly: everything after Phase 0 assumes
+slot-agnostic images and working `.fw` round-trips; the GUI (4) reuses
+the probe (1) and pipeline (3); recovery (5) is an independent
+mini-project once the slot scheme is provenly stable. First
+user-visible milestone is after Phase 2: a converted machine with
+instant offline factory switchback.
