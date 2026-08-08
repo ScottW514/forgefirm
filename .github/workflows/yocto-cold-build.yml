@@ -1,0 +1,77 @@
+# Cold-build reproducibility probe: proves a fresh clone still builds the
+# release image, and publishes the artifact checksums for comparison
+# against locally built releases. Dispatch-only - releases are built and
+# signed on the maintainer's build host (see docs/UPDATE-SYSTEM.md); this
+# workflow never produces release artifacts.
+#
+# A cold Yocto build on a 4-core hosted runner takes hours and lives
+# close to the 6-hour job cap; a timeout here is a data point, not an
+# emergency.
+
+name: yocto-cold-build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/.ghcup \
+                      /usr/local/share/boost
+          df -h /
+
+      - name: Checkout forgefirm
+        uses: actions/checkout@v4
+        with:
+          path: forgefirm
+
+      # The kas config references meta-openglow as a local sibling, and
+      # meta-openglow's kernel-module bbappend uses an externalsrc sibling
+      # (both by design during active BSP development - kas/README.md
+      # "Push & release order" step 4 flips these at release time).
+      - name: Checkout meta-openglow (sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: ScottW514/meta-openglow
+          ref: scarthgap
+          path: meta-openglow
+
+      - name: Checkout kernel-module-glowforge (sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: ScottW514/kernel-module-glowforge
+          path: kernel-module-glowforge
+
+      - name: Host dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gawk wget git diffstat unzip texinfo \
+            gcc build-essential chrpath socat cpio python3 python3-pip \
+            python3-pexpect xz-utils debianutils iputils-ping python3-git \
+            python3-jinja2 zstd liblz4-tool file locales libacl1
+          sudo locale-gen en_US.UTF-8
+          pip3 install kas
+
+      - name: Build (rm_work, release image only)
+        working-directory: forgefirm
+        run: kas build kas/forgefirm-glowforge.yml:kas/ci.yml
+
+      - name: Checksums
+        working-directory: forgefirm
+        run: |
+          cd build/tmp/deploy/images/glowforge
+          sha256sum $(readlink forgefirm-image-glowforge.rootfs.ext4) \
+                    $(readlink forgefirm-image-glowforge.rootfs.wic.gz) \
+            | tee cold-build-checksums.txt "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: cold-build-checksums
+          path: forgefirm/build/tmp/deploy/images/glowforge/cold-build-checksums.txt
+          retention-days: 90
