@@ -1,6 +1,12 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-08-08** — the control panel carries the
+Last updated: **2026-08-08** — **SD images 20260808011035 built**
+(forgefirm-image + -dev): the first images carrying the whole
+control-panel era — gfcloud homing, the OpenGlow-branded panel with
+the /status dashboard, controller-mode selector + boot dispatch, the
+idle settings lock, and all four platform bug fixes (estop gate,
+cnc.halt, forgectrl-routed captures, blocking dms chain). Also: the
+control panel carries the
 **OpenGlow visual identity** (navy header + recreated starburst
 wordmark, light content, laser red as accent only) and the status
 page is an **operational dashboard**: motion state + true machine
