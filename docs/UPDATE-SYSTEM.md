@@ -161,7 +161,22 @@ demonstrably untouched.*
   forgectrl (minutes, no Yocto); optional `workflow_dispatch`
   cold-Yocto reproducibility build whose only product is a checksum.
 
-## Phase 4 — forgectrl update manager (GUI)
+## Phase 4 — forgectrl update manager (GUI) — IMPLEMENTED
+
+Endpoints in `forgectrl/src/update.c`, driven from the panel's System
+tab; trust anchors in `/etc/forgefirm/keys` (`forgefirm-keys` recipe:
+the release pubkey + the Glowforge keyring). Release version resolves
+from the fixed-name asset redirect (`.../releases/latest/download/forgefirm.fw`
+→ `.../download/v<ver>/...`), so no GitHub API / rate limits. All slot
+writes run on one background job (polled `/update/status`), take the
+installer's `/data/forgefirm/update.lock`, require idle + no diagnostic,
+refuse the booted root slot, verify signature before writing, and
+re-verify the written filesystem. `GET /slots` inventory, `POST /boot`
+(probe-gated), `POST /update/{check,download,apply,upload}`,
+`POST /restore/factory` (archive md5 checked), `POST /system/reboot`.
+Original design notes below.
+
+
 
 Backend endpoints + a panel page (OpenGlow visual identity):
 
