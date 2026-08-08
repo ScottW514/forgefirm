@@ -16,7 +16,19 @@ IMAGE_INSTALL:remove = "gfui-client"
 # for $H when homing_mode = gfcloud (/data/forgefirm.conf).
 # v4l-utils provides media-ctl / v4l2-ctl for the imx-media pipeline (also a
 # forgectrl runtime dependency, kept explicit here for bring-up use).
-IMAGE_INSTALL:append = " grblhal-glowforge forgectrl gfhome v4l-utils"
+# fwup: applies signed .fw archives (ForgeFIRM upgrades + factory restore)
+# to the inactive rootfs slot.
+IMAGE_INSTALL:append = " grblhal-glowforge forgectrl gfhome v4l-utils fwup"
+
+# The release rootfs must fit a 200 MiB factory eMMC slot (409600 blocks).
+# Sizing: content + 40 MiB working space, hard-capped at the slot size —
+# the build fails rather than emit an unflashable image. The raw ext4 is
+# deployed alongside the wic; scripts/mkfw.sh packs it into the signed
+# .fw release artifact.
+IMAGE_FSTYPES:append = " ext4"
+IMAGE_OVERHEAD_FACTOR = "1.0"
+IMAGE_ROOTFS_EXTRA_SPACE = "40960"
+IMAGE_ROOTFS_MAXSIZE = "204800"
 
 # Version stamp: /etc/forgefirm-version (machine-readable), echoed on the
 # serial-console login prompt (/etc/issue) and at SSH login (motd).

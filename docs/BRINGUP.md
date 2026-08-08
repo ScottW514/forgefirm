@@ -113,6 +113,15 @@ motion constants were extracted from the `_RESOURCES` pulse files
   kas/forgefirm-glowforge.yml -c 'bitbake forgefirm-image
   forgefirm-image-dev'`. Artifacts:
   `forgefirm/build/tmp/deploy/images/glowforge/`.
+- **fwup lab (host)**: `~/fwup-lab/bin/` holds host-built `fwup-0.14.2`
+  (factory-era) and `fwup-v1.16.0`; `~/fwup-lab/devkeys/fwup-key.{priv,pub}`
+  is the DEV signing keypair (`fwup-key-raw.pub` = raw 32-byte form —
+  what fwup 0.14.2 expects; 1.x reads both). Cross-version compat is
+  proven both ways (modern-packed signed archives apply with 0.14.2;
+  modern fwup verifies+applies the factory .fw — signer key
+  2017-05-001.pub). The production release key does not exist yet —
+  generation/custody is an operator ceremony (UPDATE-SYSTEM.md gate 3).
+  Pack releases with `scripts/mkfw.sh`.
 - **Shell gotchas** (cost real time): PowerShell mangles embedded double
   quotes in git-commit here-strings (avoid `"` in messages); `wsl -- bash
   -c '...'` eats `$VAR` expansions (use script files run via PowerShell,
