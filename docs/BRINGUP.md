@@ -1053,3 +1053,15 @@ go-ahead: deploy both binaries, live re-check, then SRCREV bumps.
    /data/forgefirm/archive, dev image still on SD via `ffboot -s`).
    Remaining Phase 2 nicety: the installer's embedded pubkey is the
    DEV key until the production ceremony.
+   **Post-test: the bench rests on the SD dev image again** (`ffboot
+   -s`; slot 1 = factory 2024, slot 2 = ForgeFIRM v0.1.0, archives in
+   /data/forgefirm/archive). Platform fact pinned by experiment while
+   chasing a console cosmetic: **busybox mount's auto-type iteration
+   against an already-mounted ext4 device prints a kernel
+   "`Can't open blockdev`" for each foreign-type (ext3/ext2) exclusive
+   claim before the ext4 attempt joins the existing superblock** — the
+   image's fstab keeps the factory slots mounted under /factory, so
+   any auto-type probe of a slot triggered it. Cosmetic only; ffboot
+   and the installer now reuse existing mountpoints from /proc/mounts
+   and mount fresh targets with explicit `-t ext4` (verified: dmesg
+   count unchanged across `ffboot -l`).
