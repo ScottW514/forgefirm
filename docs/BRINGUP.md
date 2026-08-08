@@ -194,14 +194,19 @@ pattern as build-glowforge.sh). One ulfius daemon exposes both OV5648
 cameras as MJPEG over the mainline imx-media pipeline:
 
 - `GET /` — the tabbed machine control panel (Status / Machine /
-  GF Cloud / GRBL; ui.c): status page with a scaled lid snapshot +
-  on-demand live stream, and the settings forms for homing method,
-  home-position calibration, identity overrides, and the session
-  timeout. `/?action=stream|snapshot` remain the mjpg-streamer-
+  GF Cloud / GRBL; ui.c): status page with the controller-mode
+  selector (GRBL active; factory cloud disabled until implemented),
+  the operational dashboard, a scaled lid snapshot + on-demand live
+  stream, and the settings forms for homing method, home-position
+  calibration, identity overrides, and the session timeout. All
+  settings controls disable (with a banner) while the machine is not
+  idle. `/?action=stream|snapshot` remain the mjpg-streamer-
   compatible aliases (lid camera; LightBurn uses the stream one).
 - `GET/POST /settings` — the shared machine settings store
-  (/data/forgefirm.conf, validated keys, empty-value-clears via query
-  params; gf_password write-only).
+  (/data/forgefirm.conf, validated keys incl. controller_mode,
+  empty-value-clears via query params; gf_password write-only).
+  **Writes 409 unless cnc/state is idle** (the controller and homing
+  runner read the file mid-run) — live-verified during a jog.
 - `GET /cam/stream?cam=lid|head` — multipart MJPEG at 1296×972 (2×2
   Bayer-superpixel demosaic, JPEG q75; `FORGECTRL_STREAM_Q` overrides;
   `FORGECTRL_STREAM_FPS` caps the frame rate, unset/0 = sensor max).
