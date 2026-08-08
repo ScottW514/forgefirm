@@ -7,9 +7,11 @@ LIC_FILES_CHKSUM = "file://LICENSE;md5=19ed4e3e8c28a4311c16b0b2b91357ec"
 PE = "1"
 PV = "0.1.0"
 
-SRC_URI = "git://github.com/ScottW514/forgectrl.git;protocol=https;branch=main"
+SRC_URI = "git://github.com/ScottW514/forgectrl.git;protocol=https;branch=cloud-action-surface"
 # Pinned; bump deliberately after pushing forgectrl changes.
-SRCREV = "a852a5b1dbfcea6c957dc8305806439d067af0a5"
+# TEST-image pin to the cloud-action-surface branch (controller_mode=cloud +
+# the compatibility banner); repoint to main after the branch is merged.
+SRCREV = "0d57cbfe183d037c7e239854bcb66c6cdc672bb0"
 
 S = "${WORKDIR}/git"
 
