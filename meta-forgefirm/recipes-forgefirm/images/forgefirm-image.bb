@@ -17,3 +17,20 @@ IMAGE_INSTALL:remove = "gfui-client"
 # v4l-utils provides media-ctl / v4l2-ctl for the imx-media pipeline (also a
 # forgectrl runtime dependency, kept explicit here for bring-up use).
 IMAGE_INSTALL:append = " grblhal-glowforge forgectrl gfhome v4l-utils"
+
+# Version stamp: /etc/forgefirm-version (machine-readable), echoed on the
+# serial-console login prompt (/etc/issue) and at SSH login (motd).
+# Release images carry the release version; the dev image overrides the
+# string with the build timestamp (the same DATETIME as the artifact
+# name) plus a dev tag.
+FORGEFIRM_RELEASE ?= "0.1.0"
+FORGEFIRM_VERSION_STRING ?= "v${FORGEFIRM_RELEASE}"
+
+write_forgefirm_version() {
+    echo "${FORGEFIRM_VERSION_STRING}" > ${IMAGE_ROOTFS}${sysconfdir}/forgefirm-version
+    echo "ForgeFIRM ${FORGEFIRM_VERSION_STRING}" >> ${IMAGE_ROOTFS}${sysconfdir}/issue
+    echo "" >> ${IMAGE_ROOTFS}${sysconfdir}/issue
+    echo "ForgeFIRM ${FORGEFIRM_VERSION_STRING}" > ${IMAGE_ROOTFS}${sysconfdir}/motd
+}
+write_forgefirm_version[vardepsexclude] += "DATETIME"
+ROOTFS_POSTPROCESS_COMMAND += "write_forgefirm_version;"
