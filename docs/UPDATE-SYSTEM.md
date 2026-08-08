@@ -224,13 +224,27 @@ selector, factory restore and return — without touching a shell.*
 
 ## Open questions / decision gates
 
-1. Exact minimal `uEnv.txt` contents (Phase 0.1 spike decides).
-2. fwup archive compatibility with the factory 0.14.2 binary — else
-   ship a static fwup alongside the installer.
-3. Size-gate thresholds (proposal: warn > 170 MiB, fail > 190 MiB
-   image vs the ~195 MiB usable slot).
-4. Dev-image signing policy: dedicated dev key vs unsigned-with-warning
-   only.
+1. **RESOLVED** (Phase 0): uEnv.txt keeps its `mmcargs` override with
+   `root=${mmcroot}` — slot-agnostic, hardware-verified.
+2. **RESOLVED** (Phase 0): modern-fwup-packed signed archives apply
+   with the factory 0.14.2 binary (raw 32-byte pubkey form); no
+   shipped fwup needed on the factory side.
+3. **RESOLVED** (Phase 3): size gates live in two layers — bitbake
+   fails past the 200 MiB slot; release.sh warns ≥ 170 MiB and fails
+   ≥ 195 MiB.
+4. **RESOLVED** (Phase 3): dev archives are always signed with the
+   dedicated dev key (`release.sh --dev`), never unsigned.
+8. Production signing-key ceremony — **procedure defined, execution
+   pending**: generate with fwup on the build host (never in the
+   repo, CI, or cloud-synced plaintext; the build-host copy is the
+   only online copy), keep ≥ 2 verified offline backups (USB /
+   paper — the private key is 128 hex chars — / passphrase-encrypted
+   file), embed the public key in the installer (release.sh's
+   key-match gate enforces the swap), and verify a signed test
+   archive with both fwup generations before first use. Custody
+   optimizes against compromise over loss: loss means users re-run a
+   fresh installer; compromise means attacker-signed firmware on
+   fielded machines.
 5. Periodic GUI update check default-on vs opt-in (it pings the GitHub
    API; proposal: on by default, apply always manual, config switch to
    disable).

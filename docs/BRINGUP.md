@@ -120,7 +120,7 @@ motion constants were extracted from the `_RESOURCES` pulse files
   proven both ways (modern-packed signed archives apply with 0.14.2;
   modern fwup verifies+applies the factory .fw — signer key
   2017-05-001.pub). The production release key does not exist yet —
-  generation/custody is an operator ceremony (UPDATE-SYSTEM.md gate 3).
+  generation/custody is an operator ceremony (UPDATE-SYSTEM.md gate 8).
   Pack releases with `scripts/mkfw.sh`; the full pipeline is
   `scripts/release.sh`, invoked on this host as:
   `FWUP=~/fwup-lab/bin/fwup-v1.16.0 FWUP_COMPAT=~/fwup-lab/bin/fwup-0.14.2
