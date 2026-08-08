@@ -121,7 +121,13 @@ motion constants were extracted from the `_RESOURCES` pulse files
   modern fwup verifies+applies the factory .fw — signer key
   2017-05-001.pub). The production release key does not exist yet —
   generation/custody is an operator ceremony (UPDATE-SYSTEM.md gate 3).
-  Pack releases with `scripts/mkfw.sh`.
+  Pack releases with `scripts/mkfw.sh`; the full pipeline is
+  `scripts/release.sh`, invoked on this host as:
+  `FWUP=~/fwup-lab/bin/fwup-v1.16.0 FWUP_COMPAT=~/fwup-lab/bin/fwup-0.14.2
+  FORGEFIRM_DEV_KEY=~/fwup-lab/devkeys/fwup-key.priv
+  FORGEFIRM_SIGNING_KEY=<release key> RELEASE_STAGING_DIR=<dir>
+  ./scripts/release.sh <version>` (gh for the publish step lives on the
+  Windows side; release.sh prints the exact command).
 - **Shell gotchas** (cost real time): PowerShell mangles embedded double
   quotes in git-commit here-strings (avoid `"` in messages); `wsl -- bash
   -c '...'` eats `$VAR` expansions (use script files run via PowerShell,
@@ -447,8 +453,20 @@ offline-verified the same way: the **fuse-identity viewer** (GF
 Cloud tab, `GET /fuse-identity` fetched on demand only — serial,
 derived hostname, and the 64-hex SRK password with a
 keep-these-secret warning; modal outside the settings lock, both
-dismiss paths clear the values from the DOM). Pending on
-go-ahead: deploy both binaries, live re-check, then SRCREV bumps.
+dismiss paths clear the values from the DOM).
+**LIVE-VERIFIED 2026-08-08 after the firmware-testing hold lifted**
+(both binaries hot-deployed onto the fresh 20260808171449 image,
+which already shipped the driver at the bumped pin): header reads
+the real fuse identity **XXX-XXX** — the C derivation confirmed
+against this machine's known factory hostname — with
+`gf_hostname`/`hostname` gone from /settings; position shows
+0,0,0 in red on the unhomed fresh boot and re-renders in inches on
+the live units toggle (placeholder 25.9, clean metric round-trip,
+conf key cleared after); /fuse-identity returns the real 8-digit
+serial + XXX-XXX + a 64-hex password (verified by shape, not
+echoed), modal opens and clears on close; driver smoke: one M8
+flow check verified 10.5/9.5 on the redeployed binary. forgectrl
+pin bumped to the panel rework revision.
 
 ## Hardware facts bank (measured)
 
