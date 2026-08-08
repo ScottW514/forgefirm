@@ -9,7 +9,7 @@ PV = "0.1.0"
 
 SRC_URI = "git://github.com/ScottW514/forgectrl.git;protocol=https;branch=main"
 # Pinned; bump deliberately after pushing forgectrl changes.
-SRCREV = "4ae49a2bb969014e8369d8983ed37247d68e3daa"
+SRCREV = "5962e1c77a5d07d76be72c1f2472ba4b1abfd4a7"
 
 S = "${WORKDIR}/git"
 
@@ -18,8 +18,9 @@ inherit cmake update-rc.d
 DEPENDS += "ulfius jpeg"
 # media-ctl / v4l2-ctl configure the imx-media pipeline at runtime;
 # the update manager drives ffboot + fwup and verifies against the
-# shipped keyring; release checks and downloads use curl.
-RDEPENDS:${PN} = "v4l-utils ffboot fwup forgefirm-keys curl"
+# shipped keyring; release checks and downloads use curl; the WiFi
+# regulatory region (wifi_country) is applied with iw reg set.
+RDEPENDS:${PN} = "v4l-utils ffboot fwup forgefirm-keys curl iw"
 
 INITSCRIPT_NAME = "forgectrl"
 INITSCRIPT_PARAMS = "defaults 90"
