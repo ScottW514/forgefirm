@@ -18,7 +18,8 @@ IMAGE_INSTALL:remove = "gfui-client"
 # forgectrl runtime dependency, kept explicit here for bring-up use).
 # fwup: applies signed .fw archives (ForgeFIRM upgrades + factory restore)
 # to the inactive rootfs slot.
-IMAGE_INSTALL:append = " grblhal-glowforge forgectrl gfhome v4l-utils fwup"
+# ffboot: boot-slot inventory and switching (also ships fw_env.config).
+IMAGE_INSTALL:append = " grblhal-glowforge forgectrl gfhome v4l-utils fwup ffboot"
 
 # The release rootfs must fit a 200 MiB factory eMMC slot (409600 blocks).
 # Sizing: content + 40 MiB working space, hard-capped at the slot size —

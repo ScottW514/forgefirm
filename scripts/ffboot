@@ -4,94 +4,210 @@
 # https://community.openglow.org
 # SPDX-License-Identifier:    MIT
 #
-# This program sets the bootloader to the requested image and reboots
+# Boot-slot tool for Glowforge factory hardware running ForgeFIRM or
+# factory firmware: inventories what is installed on each bootable
+# partition and switches the boot target by rewriting the saved U-Boot
+# environment (mmcdev/mmchwpart/mmcpart/mmcroot).
+#
+# The flip writes all four variables in one fw_setenv -s transaction and
+# read-back verifies them, retrying with the classic u-boot-tools script
+# format ("name value") if the libubootenv format ("name=value") did not
+# take, and per-variable calls as a last resort. A switch target must
+# pass a content probe (rootfs mounts, kernel present) unless forced.
 
 usage () {
   cat <<END
-usage: ffboot -s|e[<partition>] [-n]
+usage: ffboot -l | -s|-e[<partition>] [-n] [-f]
+  -l: inventory bootable partitions (key=value lines) and exit
   -s: SDCARD OpenGlow/ForgeFIRM
   -e[<partition>]: eMMC
-     1: Factory image 1
-     2: Factory image 2
-     4: OpenGlow/ForgeFIRM image
-     Default:
-         When run from OpenGlow/ForgeFIRM: Factory image with most recent firmwmare
-         When run from Factory : Factory image 1
+     1: eMMC slot 1 (factory image 1)
+     2: eMMC slot 2 (factory image 2)
+     4: legacy OpenGlow/ForgeFIRM partition
+     Default: factory image with the most recent firmware
   -n: No reboot
+  -f: Force - skip the target content probe
 END
 }
 
-REBOOT=1
-
-if [ $# -gt 2 ]; then
-  usage
-  exit 2
-fi
-
-if [ $# -gt 1 ]; then
-  if [ $2 = "-n" ]; then
-    REBOOT=0
-  else
-    usage
-    exit 2
-  fi
-fi
-
-case "$1" in
-  -s)
-    MMCDEV=0
-    MMCPART=1
-    ;;
-  -e)
-    MMCDEV=1
-    MMCPART=1
-    if [ -d "/factory" ]; then
-      V1=$(cat /factory/img1/etc/version)
-      V2=$(cat /factory/img2/etc/version)
-      if [ $V2 -gt $V1 ]; then
-        MMCPART=2
-      fi
-    fi
-    ;;
-  -e1)
-    MMCDEV=1
-    MMCPART=1
-    ;;
-  -e2)
-    MMCDEV=1
-    MMCPART=2
-    ;;
-  -e4)
-    MMCDEV=1
-    MMCPART=4
-    ;;
-  *)
-    usage
-    exit 2
-esac
-
-# The env always lives on the eMMC (mmcblk2 0x80000/0x82000). On the factory
-# firmware and on the ForgeFIRM image, /etc/fw_env.config already points
-# there; the mmcblk2-specific override is honored if someone provisioned one,
-# but nothing ships it, so fall back rather than failing on a missing file.
+# --- fw_env config selection -------------------------------------------------
+# The env lives on the eMMC user area (0x80000/0x82000, redundant). Factory
+# firmware ships per-device configs; the mmcblk2-specific override is honored
+# if present, otherwise the standard /etc/fw_env.config is used.
 if [ -f "/etc/fw_env_mmcblk2.config" ] && [ ! -d "/factory" ]; then
   FWCONFIG="/etc/fw_env_mmcblk2.config"
 else
   FWCONFIG="/etc/fw_env.config"
 fi
+
+BOOTED_ROOT=$(sed -n 's/.*root=\([^ ]*\).*/\1/p' /proc/cmdline)
+
+# --- partition probe ---------------------------------------------------------
+# probe_part <device>
+# Sets: P_PRESENT P_STATE(ok|empty|unreadable) P_TYPE(forgefirm|factory|unknown)
+#       P_VERSION P_KERNEL(yes|no)
+probe_part () {
+  P_PRESENT=no; P_STATE=unreadable; P_TYPE=unknown; P_VERSION=""; P_KERNEL=no
+  [ -b "$1" ] || return 1
+  P_PRESENT=yes
+  if [ "$1" = "$BOOTED_ROOT" ]; then
+    ROOT_DIR=""
+  else
+    ROOT_DIR="/tmp/ffboot.probe.$$"
+    mkdir -p "$ROOT_DIR"
+    if ! mount -o ro "$1" "$ROOT_DIR" 2>/dev/null; then
+      rmdir "$ROOT_DIR" 2>/dev/null
+      return 1
+    fi
+  fi
+  if [ -f "$ROOT_DIR/etc/forgefirm-version" ]; then
+    P_TYPE=forgefirm; P_STATE=ok
+    P_VERSION=$(cat "$ROOT_DIR/etc/forgefirm-version")
+  elif [ -f "$ROOT_DIR/etc/version" ]; then
+    P_TYPE=factory; P_STATE=ok
+    P_VERSION=$(cat "$ROOT_DIR/etc/version")
+  else
+    P_STATE=empty
+  fi
+  [ -f "$ROOT_DIR/boot/zImage" ] && P_KERNEL=yes
+  if [ -n "$ROOT_DIR" ]; then
+    umount "$ROOT_DIR" 2>/dev/null
+    rmdir "$ROOT_DIR" 2>/dev/null
+  fi
+  return 0
+}
+
+env_get () {
+  fw_printenv -c "$FWCONFIG" -n "$1" 2>/dev/null
+}
+
+# --- inventory ---------------------------------------------------------------
+inventory () {
+  E_DEV=$(env_get mmcdev); E_PART=$(env_get mmcpart); E_ROOT=$(env_get mmcroot)
+  echo "env.mmcdev=$E_DEV"
+  echo "env.mmchwpart=$(env_get mmchwpart)"
+  echo "env.mmcpart=$E_PART"
+  echo "env.mmcroot=$E_ROOT"
+  echo "booted.root=$BOOTED_ROOT"
+  for ENTRY in "sd /dev/mmcblk1p1" "a /dev/mmcblk2p1" "b /dev/mmcblk2p2" "legacy /dev/mmcblk2p4"; do
+    NAME=${ENTRY%% *}; DEV=${ENTRY#* }
+    probe_part "$DEV"
+    echo "slot.$NAME.device=$DEV"
+    echo "slot.$NAME.present=$P_PRESENT"
+    [ "$P_PRESENT" = "yes" ] || continue
+    echo "slot.$NAME.state=$P_STATE"
+    echo "slot.$NAME.type=$P_TYPE"
+    echo "slot.$NAME.version=$P_VERSION"
+    echo "slot.$NAME.kernel=$P_KERNEL"
+    [ "$DEV" = "$BOOTED_ROOT" ] && echo "slot.$NAME.booted=yes"
+    [ "$DEV" = "$E_ROOT" ] && echo "slot.$NAME.next=yes"
+  done
+}
+
+# --- verified env flip -------------------------------------------------------
+# set_env <mmcdev> <mmchwpart> <mmcpart> <mmcroot>
+env_verify () {
+  [ "$(env_get mmcdev)" = "$1" ] && [ "$(env_get mmchwpart)" = "$2" ] && \
+  [ "$(env_get mmcpart)" = "$3" ] && [ "$(env_get mmcroot)" = "$4" ]
+}
+
+set_env () {
+  SCRIPT="/tmp/ffboot.env.$$"
+  # libubootenv format
+  printf 'mmcdev=%s\nmmchwpart=%s\nmmcpart=%s\nmmcroot=%s\n' "$1" "$2" "$3" "$4" > "$SCRIPT"
+  fw_setenv -c "$FWCONFIG" -s "$SCRIPT" 2>/dev/null
+  if env_verify "$1" "$2" "$3" "$4"; then rm -f "$SCRIPT"; return 0; fi
+  # classic u-boot-tools format
+  printf 'mmcdev %s\nmmchwpart %s\nmmcpart %s\nmmcroot %s\n' "$1" "$2" "$3" "$4" > "$SCRIPT"
+  fw_setenv -c "$FWCONFIG" -s "$SCRIPT" 2>/dev/null
+  rm -f "$SCRIPT"
+  if env_verify "$1" "$2" "$3" "$4"; then return 0; fi
+  # last resort: per-variable
+  fw_setenv -c "$FWCONFIG" mmcdev "$1"    && \
+  fw_setenv -c "$FWCONFIG" mmchwpart "$2" && \
+  fw_setenv -c "$FWCONFIG" mmcpart "$3"   && \
+  fw_setenv -c "$FWCONFIG" mmcroot "$4"
+  env_verify "$1" "$2" "$3" "$4"
+}
+
+# --- argument parsing --------------------------------------------------------
+REBOOT=1
+FORCE=0
+MODE=""
+
+for ARG in "$@"; do
+  case "$ARG" in
+    -l) MODE=list ;;
+    -n) REBOOT=0 ;;
+    -f) FORCE=1 ;;
+    -s|-e|-e1|-e2|-e4)
+      [ -z "$MODE" ] || { usage; exit 2; }
+      MODE="$ARG" ;;
+    *) usage; exit 2 ;;
+  esac
+done
+[ -n "$MODE" ] || { usage; exit 2; }
+
 if [ ! -f "$FWCONFIG" ]; then
-  echo "ERROR: $FWCONFIG not found; cannot switch boot device" >&2
+  echo "ERROR: $FWCONFIG not found; cannot access the U-Boot environment" >&2
   exit 1
 fi
 
-MMCROOT="/dev/mmcblk"$(($MMCDEV + 1))"p"$MMCPART
+if [ "$MODE" = "list" ]; then
+  inventory
+  exit 0
+fi
 
-echo "Setting to boot from $MMCROOT"
-fw_setenv -c $FWCONFIG mmcdev $MMCDEV   || { echo "ERROR: fw_setenv mmcdev failed" >&2; exit 1; }
-fw_setenv -c $FWCONFIG mmcpart $MMCPART || { echo "ERROR: fw_setenv mmcpart failed" >&2; exit 1; }
-fw_setenv -c $FWCONFIG mmcroot $MMCROOT || { echo "ERROR: fw_setenv mmcroot failed" >&2; exit 1; }
+# --- resolve the switch target ----------------------------------------------
+case "$MODE" in
+  -s)
+    MMCDEV=0; MMCPART=1 ;;
+  -e)
+    # Pick the factory slot with the newest firmware; a slot occupied by
+    # ForgeFIRM is not a factory-restore target.
+    MMCDEV=1; MMCPART=""
+    BEST=0
+    for CAND in 1 2; do
+      probe_part "/dev/mmcblk2p$CAND" || continue
+      [ "$P_TYPE" = "factory" ] || continue
+      V=$(echo "$P_VERSION" | tr -cd '0-9')
+      [ -n "$V" ] || V=0
+      if [ -z "$MMCPART" ] || [ "$V" -gt "$BEST" ]; then
+        MMCPART=$CAND; BEST=$V
+      fi
+    done
+    [ -n "$MMCPART" ] || {
+      echo "ERROR: no factory image found in eMMC slot 1 or 2." >&2
+      echo "Use -e1/-e2/-e4 to select a slot explicitly." >&2
+      exit 1
+    } ;;
+  -e1) MMCDEV=1; MMCPART=1 ;;
+  -e2) MMCDEV=1; MMCPART=2 ;;
+  -e4) MMCDEV=1; MMCPART=4 ;;
+esac
 
-if [ $REBOOT -gt 0 ]; then
+MMCROOT="/dev/mmcblk$((MMCDEV + 1))p$MMCPART"
+
+# --- target sanity probe -----------------------------------------------------
+if [ "$FORCE" -eq 0 ]; then
+  if ! probe_part "$MMCROOT"; then
+    echo "ERROR: $MMCROOT is missing or unreadable (use -f to override)" >&2
+    exit 1
+  fi
+  if [ "$P_STATE" != "ok" ] || [ "$P_KERNEL" != "yes" ]; then
+    echo "ERROR: $MMCROOT does not look bootable (state=$P_STATE kernel=$P_KERNEL; use -f to override)" >&2
+    exit 1
+  fi
+  echo "Target $MMCROOT: $P_TYPE $P_VERSION"
+fi
+
+echo "Setting boot to $MMCROOT"
+if ! set_env "$MMCDEV" 0 "$MMCPART" "$MMCROOT"; then
+  echo "ERROR: environment write did not verify; boot selection unchanged or inconsistent" >&2
+  exit 1
+fi
+
+if [ "$REBOOT" -gt 0 ]; then
   echo "Rebooting..."
   reboot
 fi
