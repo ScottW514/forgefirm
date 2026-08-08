@@ -10,8 +10,13 @@ server_url: https://app.glowforge.com
 status_service_url: wss://status.glowforge.com
 
 [FACTORY_FIRMWARE]
-# Homing sessions never fetch factory firmware.
-check: False
+# check: probe the firmware version the service advertises so forgectrl can
+# warn when Glowforge has moved past the version this release was tested
+# against. Read-only - ForgeFIRM never downloads or installs factory firmware.
+check: True
+# Where the probe records {latest_gf_version, tested_against_gf}; forgectrl
+# reads this for the cloud-mode compatibility banner (GF_LATEST_FILE).
+status_file: /data/forgefirm/gf-latest.json
 
 [LOGGING]
 file: /data/log/gfhome/gfhome.log
