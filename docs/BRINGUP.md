@@ -103,9 +103,13 @@ motion constants were extracted from the `_RESOURCES` pulse files
   reproduce by reverting the edit (the kernel patch tree is a fresh
   git commit each do_patch, not sstate-restored), so after any
   overlay edit the module can only ship with a full image flash.
-  Batch kernel-overlay edits accordingly. Queued for the next batch:
-  `vs-supply = <&reg_3p3v>` on the lm75 node (the last cosmetic
-  "dummy regulator" probe line besides the two SoC USB PHYs).
+  Batch kernel-overlay edits accordingly. In the tree awaiting the
+  next SD burn (batch of 2026-08-08): CFG80211/MAC80211 flipped to
+  modules (the regulatory.db boot-message fix, bench record below),
+  CFG80211_DEFAULT_PS off (power save default; forgectrl pins it off
+  at startup regardless), and `vs-supply = <&reg_3p3v>` on the lm75
+  node (was the last queued cosmetic "dummy regulator" probe line
+  besides the two SoC USB PHYs). Nothing else queued.
 - **Build host**: WSL2 distro `forge-yocto`, tree at
   `~/dev/openglow-forgefirm`. `~/src-sync.sh` rsyncs the Windows repos in
   (includes `python3-gfhardware` and `grblHAL-glowforge`). Build:
@@ -471,6 +475,45 @@ serial + the derived hostname + a 64-hex password (verified by shape, not
 echoed), modal opens and clears on close; driver smoke: one M8
 flow check verified 10.5/9.5 on the redeployed binary. forgectrl
 pin bumped to the panel rework revision.
+
+**Wireless regulatory + region setting (2026-08-08, later):** the
+boot-time `cfg80211: failed to load regulatory.db` never was a
+missing file — packagegroup-base-wifi has always shipped
+regulatory.db(.p7s) + iw on both images. The cause:
+imx_v6_v7_defconfig builds cfg80211 IN (=y), so it requests the db at
+~2.51 s, before `VFS: Mounted root` at ~2.62 s; the load fails (-2)
+and stays failed — a later `iw reg set` alone does NOT retry the
+file, only an explicit `iw reg reload` recovers it. Fixes shipped:
+glowforge.cfg flips CFG80211/MAC80211 to =m (they load with wlcore at
+~5.5 s, well after mount, so the direct load succeeds — kills the
+message; in the kernel batch above, awaiting the next SD burn), and
+forgectrl gained `wifi_country` (System-tab Wireless card, full ISO
+3166-1 alpha-2 dropdown, default 00 = world) applied via
+`iw reg reload` + `iw reg set <cc>` at daemon startup and on every
+change. LIVE-VERIFIED on the flashed 20260808171449 image
+(hot-deployed forgectrl): startup domain is the db-backed world
+regdom (it shows the 755–928 MHz S1G rules only the db carries),
+`POST /settings?wifi_country=US` flipped the kernel to
+`country US: DFS-FCC`, and clearing the key returned 00 and removed
+it from the conf. The release image still builds under the 200 MiB
+slot cap; an explicit wireless-regdb-static image entry was reverted
+as redundant (packagegroup-base-wifi covers it).
+Power save: the flashed kernel default is on
+(CFG80211_DEFAULT_PS=y), so the same forgectrl startup pass pins
+`wlan0 power_save off` (cold-boot verified off on the flashed
+image); the kernel batch flips the default off too. Quirk: hinting
+`iw reg set 00` while the kernel is already in its default world
+domain makes cfg80211 intersect world-with-world and report the
+alias `country 98` (identical rules, confusing label) — the startup
+pass therefore hints a region only when one is set, and hints 00
+only to revert a live region change. Consequence, reboot-verified:
+with the db loaded and no user hint, cfg80211 follows the AP's
+802.11d country IE (the bench AP advertises US — fresh boot came up
+`country US: DFS-FCC` with the setting unset; no `country=` in the
+supplicant conf, wl18xx does not self-hint), a user-set region
+overrides the IE (DE applied while associated to the US AP), and
+clearing reverts to the 00 hint. The UI labels the default
+accordingly ("Automatic — AP country, else World").
 
 ## Hardware facts bank (measured)
 
