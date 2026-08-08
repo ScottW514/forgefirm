@@ -1,19 +1,21 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-08-07 (late)** — forgectrl is now the machine
-CONTROL PANEL: tabbed web UI (Status / Machine / GF Cloud / GRBL) with
-a status-first landing page (scaled lid snapshot + on-demand live
-stream), homing-position calibration (`gfcloud_home_x/y/z`),
-cloud-identity overrides (`gf_serial`/`gf_password`/`gf_hostname`,
-fuses = fallback, applied by the runner via set_cfg before Machine()),
-and a validated multi-key `/settings` API (empty value = clear; clears
-must ride the query string — empty form-body values are dropped by the
-HTTP stack). Bench + browser-verified (save/clear roundtrips from the
-real UI, live toggle, no JS errors). Earlier same day: **gfcloud
-homing LIVE-VERIFIED end-to-end** ($H → homed at the factory corner in
-65 s; four platform bugs fixed — see Next work #3, incl. the
-estop-sense-reads-low-during-motion hardware fact); fd-blocking
-protocol pacing; the fortify step_us_min fix.
+Last updated: **2026-08-08** — the control panel carries the
+**OpenGlow visual identity** (navy header + recreated starburst
+wordmark, light content, laser red as accent only) and the status
+page is an **operational dashboard**: motion state + true machine
+position (kernel step counters anchored at homing via
+`/run/grblhal.homed` — the Grbl socket is never polled, a connection
+there displaces the sender), coolant temps, pump/TEC, all four fan
+tachs (air assist µs @ 8 ppr, chassis fans ns @ 2 ppr — live-checked),
+laser lockout (interlock_circuit b3; `cnc/laser_latch` is
+write-only), and the safety switches via EVIOCGSW (head sense reads
+not-detected with a working head — display it dim, not alarming).
+Previous same-day work: control panel + calibration + identity
+overrides + multi-key `/settings`; **gfcloud homing LIVE-VERIFIED
+end-to-end** ($H → homed at the factory corner in 65 s; four platform
+bugs fixed — see Next work #3); fd-blocking protocol pacing; the
+fortify step_us_min fix.
 Read together with `AUDIT_ACTION_PLAN.md` in the project root (sibling of
 this repo; per-finding status of the 2026-07-03 audit) and
 `kernel-module-glowforge/UAPI.md` (the pulse-stream feeder contract).
