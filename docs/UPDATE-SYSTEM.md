@@ -101,16 +101,20 @@ factory firmware:
 
 1. Sanity: factory 3-partition layout, both slots 200 MiB, active slot
    detected (`rdev`), enough `/data` space.
-2. Archive: identify the **newer** factory version of the two slots;
-   `dd | gzip` it to `/data/forgefirm/archive/factory-rootfs-<ver>.img.gz`
-   with a manifest (versions of both slots, date); also dump
-   boot0/boot1 (32 MiB) into the archive now, ahead of Phase 5.
-3. Fetch `forgefirm-<ver>.fw` from GitHub releases (or take a local
-   file argument for offline/dev installs).
-4. Apply to the slot holding the **older** factory version (fwup +
-   our pubkey). The newer factory install stays bootable in the other
-   slot *and* is archived — so the first ForgeFIRM self-upgrade may
-   overwrite it without a second archive step.
+2. Archive: **every factory slot version** not already archived —
+   `dd | gzip` to `/data/forgefirm/archive/factory-rootfs-<ver>.img.gz`
+   with a manifest line (slot, version, date, md5); also dump
+   boot0/boot1 (32 MiB) into the archive now, ahead of Phase 5. With
+   both slots archived, any later overwrite needs no second archive
+   step.
+3. Fetch `forgefirm.fw` from GitHub releases (fixed asset name — the
+   `releases/latest/download/` URL needs one; the version lives in the
+   fwup metadata and the release tag), or take a local file argument
+   for offline/dev installs. Verify the signature against the
+   ForgeFIRM pubkey embedded in the installer (raw 32-byte form for
+   the factory's fwup; a dev key until the production ceremony).
+4. Apply to the **inactive** slot (fwup + our pubkey). The booted
+   factory install stays bootable in the other slot.
 5. Atomic env flip (embed the flip logic — the factory rootfs has no
    ffboot v2), reboot.
 
@@ -202,10 +206,10 @@ selector, factory restore and return — without touching a shell.*
 ## Contracts
 
 - **Artifacts** (consumers: installer, GUI updater, recovery):
-  `forgefirm-<semver>.fw` (signed; tasks `upgrade.a`/`upgrade.b`,
+  `forgefirm.fw` (fixed asset name; signed; version in the fwup
+  metadata = release tag `v<semver>`; tasks `upgrade.a`/`upgrade.b`,
   `complete` from Phase 5), `sha256sums.txt`,
-  `forgefirm-image-glowforge.rootfs.wic.gz` (SD burns), release tag
-  `v<semver>`.
+  `forgefirm-image-glowforge.rootfs.wic.gz` (SD burns).
 - **Env**: SD = `0/0/1//dev/mmcblk1p1`; slot N = `1/0/N//dev/mmcblk2pN`
   (`mmcdev/mmchwpart/mmcpart/mmcroot`, always one transaction).
 - **Archive layout**: `/data/forgefirm/archive/` —

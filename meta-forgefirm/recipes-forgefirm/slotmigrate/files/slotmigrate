@@ -1,0 +1,83 @@
+#!/bin/sh
+# (C) Copyright 2020-2026
+# Scott Wiederhold, s.e.wiederhold@gmail.com
+# https://community.openglow.org
+# SPDX-License-Identifier:    MIT
+#
+# Legacy-layout migration: reclaims the legacy ForgeFIRM partition (p4)
+# and grows /data (p3) to the end of the eMMC, restoring the factory
+# disk footprint. Runs in rcS before mountall, so /data is not yet
+# mounted. Every step is keyed off the actual disk state - an
+# interrupted run resumes on the next boot; a factory-layout disk is a
+# fast no-op. Only acts when booted from an eMMC rootfs slot: SD boots
+# (bench/dev) never touch the eMMC and p4 itself must not saw off its
+# own branch.
+
+DISK=/dev/mmcblk2
+P3=${DISK}p3
+
+log () { echo "slotmigrate: $*"; }
+
+case "$1" in
+  start|"") ;;
+  *) exit 0 ;;
+esac
+
+# Runs at S02, possibly before the sysfs/proc mount scripts.
+mountpoint -q /proc 2>/dev/null || mount -t proc proc /proc 2>/dev/null
+mountpoint -q /sys 2>/dev/null || mount -t sysfs sysfs /sys 2>/dev/null
+
+[ -r /proc/cmdline ] || exit 0
+ROOT=$(sed -n 's/.*root=\([^ ]*\).*/\1/p' /proc/cmdline)
+case "$ROOT" in
+  /dev/mmcblk2p1|/dev/mmcblk2p2) ;;
+  *) exit 0 ;;
+esac
+
+command -v sfdisk >/dev/null || { log "sfdisk missing, skipping"; exit 0; }
+if grep -q "^${P3} " /proc/mounts; then
+  log "/data already mounted, skipping this boot"
+  exit 0
+fi
+
+# --- partition table -----------------------------------------------------
+if sfdisk -d "$DISK" 2>/dev/null | grep -q "^${DISK}p4"; then
+  log "removing legacy partition p4"
+  sfdisk --no-reread --force --delete "$DISK" 4 >/dev/null 2>&1 \
+    || { log "p4 delete FAILED"; exit 0; }
+  partx -d --nr 4 "$DISK" 2>/dev/null
+fi
+
+DISK_SECT=$(blockdev --getsz "$DISK")
+P3_START=$(sfdisk -d "$DISK" 2>/dev/null | sed -n "s|^${P3} : start=[ ]*\([0-9]*\),.*|\1|p")
+P3_SIZE=$(sfdisk -d "$DISK" 2>/dev/null | sed -n "s|^${P3} .*size=[ ]*\([0-9]*\),.*|\1|p")
+[ -n "$P3_START" ] && [ -n "$P3_SIZE" ] || { log "cannot read p3 geometry"; exit 0; }
+
+if [ $((P3_START + P3_SIZE)) -lt "$DISK_SECT" ]; then
+  log "growing p3 to the end of the disk ($((P3_START + P3_SIZE)) -> $DISK_SECT sectors)"
+  echo ", +" | sfdisk --no-reread --force -N 3 "$DISK" >/dev/null 2>&1 \
+    || { log "p3 grow FAILED"; exit 0; }
+  partx -u --nr 3 "$DISK" 2>/dev/null
+fi
+
+# --- filesystem ----------------------------------------------------------
+PART_SECT=$(blockdev --getsz "$P3")
+FS_BLOCKS=$(tune2fs -l "$P3" 2>/dev/null | sed -n 's/^Block count:[ ]*//p')
+FS_BSIZE=$(tune2fs -l "$P3" 2>/dev/null | sed -n 's/^Block size:[ ]*//p')
+[ -n "$FS_BLOCKS" ] && [ -n "$FS_BSIZE" ] || { log "cannot read p3 filesystem"; exit 0; }
+
+FS_SECT=$((FS_BLOCKS * (FS_BSIZE / 512)))
+if [ "$FS_SECT" -lt $((PART_SECT - 2048)) ]; then
+  log "growing /data filesystem ($FS_SECT -> $PART_SECT sectors)"
+  e2fsck -f -p "$P3" >/dev/null 2>&1
+  RC=$?
+  if [ "$RC" -ge 4 ]; then
+    log "e2fsck found errors (rc=$RC), NOT resizing"
+    exit 0
+  fi
+  resize2fs "$P3" >/dev/null 2>&1 \
+    && log "/data grown to full size" \
+    || log "resize2fs FAILED (will retry next boot)"
+fi
+
+exit 0
