@@ -785,12 +785,16 @@ chooses otherwise).
      reach the gate; that is honest, not a bug).
    - **TEC handling: PLANNED (laser-milestone scope,
      operator-directed 2026-08-08).** The control board is common to
-     Basic/Plus/Pro but the TEC itself is populated on Pro only, and
-     `thermal/tec_on` is a bare on/off output with NO readback —
-     presence cannot be detected, so it is a user setting:
+     Basic/Plus/Pro; per Glowforge's published specs the TEC ships on
+     the Pro (Basic/Plus: same passive closed-loop cooling, 60-75 °F
+     operating window; Pro: "solid-state thermoelectric cooler",
+     60-81 °F — owners-forum consensus matches), but that is a
+     spec-level claim, not teardown-verified per unit, and
+     rebuilt/revision units may vary. Moot for the design either
+     way: `thermal/tec_on` is a bare on/off output with NO readback —
+     presence cannot be detected — so it is a user setting:
      `tec_present` (Machine tab, default off; ForgeFIRM never drives
-     tec_on unless set — on the bench Basic/Plus the line lands on an
-     unpopulated position). Operation when present: the factory
+     tec_on unless set). The setting also covers retrofits. Operation when present: the factory
      regulates coolant toward its ~18 °C setpoints (CMet/CMdt
      18134/18364 mdeg — the same WTub/WTvb raw-754/751 pair that
      proved the thermistor curve); plan is a simple hysteresis while
