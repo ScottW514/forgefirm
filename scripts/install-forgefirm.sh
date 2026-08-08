@@ -99,7 +99,14 @@ slot_probe () {
 # Verified atomic env flip (all four variables, classic u-boot-tools script
 # format first - that is what factory firmware ships - then libubootenv
 # format, then per-variable writes; read-back verified in every case).
-FWCONFIG="/etc/fw_env.config"
+# Config selection matches ffboot: newer factory firmware's generic
+# fw_env.config points at the wrong device; its per-device
+# fw_env_mmcblk2.config is the correct one for the eMMC environment.
+if [ -f "/etc/fw_env_mmcblk2.config" ] && [ ! -d "/factory" ]; then
+  FWCONFIG="/etc/fw_env_mmcblk2.config"
+else
+  FWCONFIG="/etc/fw_env.config"
+fi
 
 env_get () { fw_printenv -c "$FWCONFIG" -n "$1" 2>/dev/null; }
 
