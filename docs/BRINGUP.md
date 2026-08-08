@@ -34,7 +34,7 @@ pre-run integrity guard); the end-of-data protocol reworked and bench-proven
 (underrun is a first-class `underrun` state behind the `streaming` attr;
 16/16 protocol bench); laser PWM verified at 39.98 kHz (register level);
 `CONFIG_PREEMPT=y`; uEnv/u-boot/ulfius build integrity restored; legacy
-cloud mode repaired (nvmem identity → hostname XXX-XXX verified on fuses;
+cloud mode repaired (nvmem identity → fuse hostname verified;
 deadman/safety loop; camera error paths).
 
 **Phase 6 spike: achieved.**
@@ -440,7 +440,7 @@ chooses otherwise).
 OFFLINE-VERIFIED ONLY — board deploy + bump HELD during the
 operator's firmware-upgrade bench testing.** Verified against the
 `tools/mock.py` harness in forgectrl (serves the ui.c panel with
-mock endpoints; POSTs logged): fuse-identity header (XXX-XXX), red
+mock endpoints; POSTs logged): fuse-identity header (sample id), red
 unreferenced position (needed the `.kv>span:first-child` selector
 fix — the old descendant selector out-specified `.b-bad` on nested
 value spans), imperial placeholders 14.4→25.9 (delta) / 33→91.4
@@ -457,13 +457,13 @@ dismiss paths clear the values from the DOM).
 **LIVE-VERIFIED 2026-08-08 after the firmware-testing hold lifted**
 (both binaries hot-deployed onto the fresh 20260808171449 image,
 which already shipped the driver at the bumped pin): header reads
-the real fuse identity **XXX-XXX** — the C derivation confirmed
-against this machine's known factory hostname — with
+the machine's **real fuse identity** — the C derivation confirmed
+against its known factory hostname — with
 `gf_hostname`/`hostname` gone from /settings; position shows
 0,0,0 in red on the unhomed fresh boot and re-renders in inches on
 the live units toggle (placeholder 25.9, clean metric round-trip,
 conf key cleared after); /fuse-identity returns the real 8-digit
-serial + XXX-XXX + a 64-hex password (verified by shape, not
+serial + the derived hostname + a 64-hex password (verified by shape, not
 echoed), modal opens and clears on close; driver smoke: one M8
 flow check verified 10.5/9.5 on the redeployed binary. forgectrl
 pin bumped to the panel rework revision.
@@ -516,8 +516,11 @@ pin bumped to the panel rework revision.
   samples, recovers instantly at idle; True at idle) — must NOT gate
   motion on the factory board either (it false-tripped every legacy
   cloud motion ~0.1 s in). Doors/door1/door2 stay stable during motion.
-- Machine identity from OCOTP nvmem: serial 00000000 → hostname XXX-XXX
-  (matches the factory label).
+- Machine identity from OCOTP nvmem: HW_OCOTP_MAC0 is the serial,
+  base-23-encoded to the factory hostname — fuse-verified on the bench
+  against the factory label. The bench machine's actual values are
+  deliberately not recorded here: this is a public document and a fuse
+  identity cannot be rotated.
 
 ### eMMC boot & recovery architecture (dumped from the bench board 2026-08-08)
 
