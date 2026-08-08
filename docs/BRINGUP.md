@@ -212,19 +212,27 @@ pattern as build-glowforge.sh). One ulfius daemon exposes both OV5648
 cameras as MJPEG over the mainline imx-media pipeline:
 
 - `GET /` — the tabbed machine control panel (Status / Machine /
-  GF Cloud / GRBL; ui.c): status page with the controller-mode
-  selector (GRBL active; factory cloud disabled until implemented),
-  the operational dashboard, a scaled lid snapshot + on-demand live
-  stream, and the settings forms for homing method, home-position
-  calibration, identity overrides, and the session timeout. All
+  GF Cloud / GRBL / Diagnostics; ui.c): status page with the
+  controller-mode selector (GRBL active; factory cloud disabled until
+  implemented), the operational dashboard, a scaled lid snapshot +
+  on-demand live stream, and the settings forms for homing method,
+  home-position calibration, the nine cooling tunables, identity
+  overrides, and the session timeout. All
   settings controls disable (with a banner) while the machine is not
-  idle. `/?action=stream|snapshot` remain the mjpg-streamer-
+  idle **or a diagnostic is running**. `/?action=stream|snapshot`
+  remain the mjpg-streamer-
   compatible aliases (lid camera; LightBurn uses the stream one).
 - `GET/POST /settings` — the shared machine settings store
-  (/data/forgefirm.conf, validated keys incl. controller_mode,
+  (/data/forgefirm.conf, validated keys incl. controller_mode and the
+  cool_* cooling tunables,
   empty-value-clears via query params; gf_password write-only).
   **Writes 409 unless cnc/state is idle** (the controller and homing
-  runner read the file mid-run) — live-verified during a jog.
+  runner read the file mid-run) — live-verified during a jog — **and
+  409 while a diagnostic owns the hardware**.
+- `POST /diag/flow-verify`, `POST /diag/flow-calibrate`,
+  `POST /diag/abort`, `GET /diag/status` — the diagnostics runner
+  (own section below). `GET /status` carries a `diag` flag for the
+  UI lock.
 - `GET /cam/stream?cam=lid|head` — multipart MJPEG at 1296×972 (2×2
   Bayer-superpixel demosaic, JPEG q75; `FORGECTRL_STREAM_Q` overrides;
   `FORGECTRL_STREAM_FPS` caps the frame rate, unset/0 = sensor max).
@@ -342,6 +350,68 @@ don't count toward fps — **bench-verified 2026-08-07**: cap 5 →
 relief valve if future CPU work needs headroom). Default stays sensor
 max. Images from 20260807204056 carry forgectrl at the bumped SRCREV
 (73283b6), so a fresh burn ships the right daemon.
+
+## Diagnostics (forgectrl-owned hardware tests)
+
+The Diagnostics tab runs tools that **take the hardware over**: the
+runner (forgectrl diag.c, one slot) stops the `grblhal` service
+(launch is gated on cnc idle + no diagnostic), drives the loop
+directly through sysfs — the same model as the bench characterization
+scripts — and restarts the service on every exit path (completion,
+tool error, operator abort via `POST /diag/abort`, safety ceiling).
+`/run/forgefirm-diag.active` marks the ownership; forgectrl startup
+recovers a stale marker (stand-down + controller start), covering a
+daemon crash mid-diagnostic. The laser is untouched throughout (latch
+stays locked). While a diagnostic runs: settings POSTs 409, `/status`
+reports `diag:true`, and the whole panel locks with a banner. Live
+progress (phase, elapsed, both coolant temps, a scrolling log) streams
+through `GET /diag/status` on a 2.5 s poll; results persist on the
+page until the next run.
+
+Cooling tools (both run at the *configured* duty/window/threshold so
+the verdict applies to the check the driver actually runs; trials use
+cut-profile chassis fans = the characterization condition; pump-off
+windows hard-abort at 48 °C downstream):
+- **flow-verify** (~3 min measured): one check with the pump on, one
+  with it commanded off, judged against `cool_flow_rise`. PASS =
+  threshold separates the readings; margins under 1.5 °C add a
+  run-calibration warning.
+- **flow-calibrate** (~15-25 min): 3 trials per case, alternating,
+  with settle gates between; reports both bands and recommends
+  threshold = (flow max + no-flow min)/2 with an Apply button, or
+  refuses when the gap is under 3 °C (raise the duty and rerun) —
+  the per-machine path for replacement coolant or a swapped pump.
+
+**Cooling tunables are conf-backed since 2026-08-08**: the nine
+`cool_*` keys (flow_rise, flow_heater_pct, flow_check_s, recheck_s,
+confirm_max_s, temp_max, temp_resume, cooldown_s, cooldown_max_s) live
+in `/data/forgefirm.conf` (forgectrl Machine tab, validated ranges),
+the driver re-reads them at **every flood start** (env `GFCOOL_*` >
+conf > compiled default; env stays the bench-override path — it wins
+for the process lifetime), and the conf parser now lives in
+`glowforge_io.c` shared with homing.
+
+Bench record 2026-08-08 (hot-deployed binaries, all through the HTTP
+API): **conf plumbing** — `cool_flow_rise=8` posted, next M8's healthy
+check read `limit 8.0` → SUSPECT; key cleared mid-session, next M8
+re-read 14.4 and the confirming pass cleared the suspicion (also
+proving episode continuity across M9/M8). **Takeover** — during a
+running verify: grblHAL process gone, marker present, settings POST
+409, second start 409. **flow-verify PASS** in 2:42: flow 11.4
+(dT 9.7) / threshold 14.4 / no-flow 17.6 (dT 12.8), margins +3.0 and
++3.2; controller back (fresh pid), marker removed, heater 0, pump on
+after. Validation ranges live-checked (rise 0.5 → 400, pct 101 → 400,
+confirm 45 → 400). UI browser-verified mid-run: Diagnostics panel
+streaming phase/temps/log with the lock banner up, Machine tab
+Cooling card showing defaults as placeholders, inputs disabled.
+**flow-calibrate COMPLETE in 8:45**: flow band 11.6/12.0/12.0
+(max 12.0), no-flow band 17.6/17.7/18.1 (min 17.6), gap 5.7 →
+**recommended 14.8 — within 0.4 °C of the hand-derived 14.4** from
+the original 60-run matrix (the tool independently reproducing the
+ground-truth calibration). Result panel + Apply button
+browser-verified: the click wrote `cool_flow_rise = 14.8` to the
+conf (cleared after; the compiled default stands until the operator
+chooses otherwise).
 
 ## Hardware facts bank (measured)
 
@@ -638,6 +708,9 @@ max. Images from 20260807204056 carry forgectrl at the bumped SRCREV
        the FAULT state logs `coolant flow recovered`. Laser
        milestone: safe posture (hold + laser off + forced cooling)
        moves to the SUSPECT edge; FAULT stays the hard fire gate.
+       Every threshold in this machinery is a `cool_*` conf key since
+       2026-08-08 (forgectrl Machine tab, re-read per flood start;
+       verification/calibration tools in the Diagnostics section).
        Bench drill (`scripts/bench/flow_confirm_drill.py`, on-board,
        real pump-off transients through the production path, single
        M8 session): verified 11.6/9.4 → pump off SUSPECT 16.4/12.0 →
