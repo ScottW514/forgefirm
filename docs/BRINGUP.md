@@ -215,13 +215,30 @@ cameras as MJPEG over the mainline imx-media pipeline:
   GF Cloud / GRBL / Diagnostics; ui.c): status page with the
   controller-mode selector (GRBL active; factory cloud disabled until
   implemented), the operational dashboard, a scaled lid snapshot +
-  on-demand live stream, and the settings forms for homing method,
-  home-position calibration, the nine cooling tunables, identity
-  overrides, and the session timeout. All
+  on-demand live stream, and the settings forms for display units,
+  homing method, home-position calibration, the nine cooling
+  tunables, identity overrides, and the session timeout. All
   settings controls disable (with a banner) while the machine is not
   idle **or a diagnostic is running**. `/?action=stream|snapshot`
   remain the mjpg-streamer-
   compatible aliases (lid camera; LightBurn uses the stream one).
+  **Panel conventions (2026-08-08, operator-directed):** the header
+  identifies the machine by its **fuse identity** — the factory
+  hostname derived from the OCOTP serial (HW_OCOTP_MAC0 base-23 over
+  `BCDFGHJKMQRTVWXY2346789`, XXX-YYY; the C implementation matches
+  gfhardware id.py over 200k random serials) — regardless of any
+  cloud identity override; the `gf_hostname` override is REMOVED
+  (the service hostname always derives from whichever serial is in
+  effect — gfhome.py re-derives it from an overridden gf_serial);
+  **units** are a display-only preference (`ui_units` metric |
+  imperial): the backend stores metric, lengths convert mm↔in,
+  absolute temps °C↔°F, temperature DELTAS (the flow-rise family)
+  scale by 1.8 with no offset, and saves post **only fields whose
+  display string changed** (dirty tracking — unit round-trips never
+  masquerade as edits); **position always shows**, counters-only and
+  painted red while unreferenced (the machine moves fine unhomed —
+  relative to wherever it started), normal once anchored; sender
+  hints are unopinionated (no named Grbl clients).
 - `GET/POST /settings` — the shared machine settings store
   (/data/forgefirm.conf, validated keys incl. controller_mode and the
   cool_* cooling tunables,
@@ -412,6 +429,21 @@ ground-truth calibration). Result panel + Apply button
 browser-verified: the click wrote `cool_flow_rise = 14.8` to the
 conf (cleared after; the compiled default stands until the operator
 chooses otherwise).
+
+**Units/identity/position panel rework (2026-08-08, later):
+OFFLINE-VERIFIED ONLY — board deploy + bump HELD during the
+operator's firmware-upgrade bench testing.** Verified against the
+`tools/mock.py` harness in forgectrl (serves the ui.c panel with
+mock endpoints; POSTs logged): fuse-identity header (XXX-XXX), red
+unreferenced position (needed the `.kv>span:first-child` selector
+fix — the old descendant selector out-specified `.b-bad` on nested
+value spans), imperial placeholders 14.4→25.9 (delta) / 33→91.4
+(absolute), position 12.34 mm→0.486 in, dirty-save posting exactly
+one changed key converted back (27 °F→15 °C), diag bands ×1.8 with
+Apply still posting metric, and a units round-trip leaving nothing
+dirty. The C serial→hostname derivation matches gfhardware id.py on
+200k random 32-bit serials (host-side cross-check). Pending on
+go-ahead: deploy both binaries, live re-check, then SRCREV bumps.
 
 ## Hardware facts bank (measured)
 

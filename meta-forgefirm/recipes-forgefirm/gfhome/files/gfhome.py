@@ -14,8 +14,9 @@ homing_mode = gfcloud is set in /data/forgefirm.conf, releasing
 /dev/glowforge for the duration of the run. It can also be run by hand
 (with the controller stopped or its homing session active). The same
 shared config supplies optional identity overrides (gf_serial /
-gf_password / gf_hostname; the fuse identity is the fallback), managed
-from the forgectrl UI.
+gf_password; the fuse identity is the fallback), managed from the
+forgectrl UI. The service hostname is always derived from whichever
+serial is in effect - it is never set independently.
 
 The service ends the sequence silently - there is no completion
 message - so the run is considered homed once a hunt and at least one
@@ -75,11 +76,25 @@ def load_config(path: str) -> bool:
     return True
 
 
+def _hostname_for(serial):
+    """The factory serial -> hostname encoding (base 23 over the
+    consonant alphabet, up to six characters, split XXX-YYY) - the
+    same derivation gfhardware applies to the fuse serial."""
+    enc = ''
+    serial = int(serial)
+    while serial > 0 and len(enc) < 6:
+        enc = 'BCDFGHJKMQRTVWXY2346789'[serial % 23] + enc
+        serial //= 23
+    return '{}-{}'.format(enc[:3], enc[3:])
+
+
 def apply_identity_overrides():
     """Identity overrides from the shared machine config (set in the
-    forgectrl UI): non-empty gf_serial / gf_password / gf_hostname beat
-    the OCOTP fuse identity - Machine.__init__ sets its fuse values
-    with keep_value, so whatever is in the config store first wins."""
+    forgectrl UI): non-empty gf_serial / gf_password beat the OCOTP
+    fuse identity - Machine.__init__ sets its fuse values with
+    keep_value, so whatever is in the config store first wins. The
+    hostname is never overridden independently: it derives from the
+    serial, so a serial override re-derives it."""
     keys = {}
     try:
         with open(MACHINE_CONF) as f:
@@ -92,11 +107,18 @@ def apply_identity_overrides():
     except OSError:
         return
     for key, cfg in (('gf_serial', 'MACHINE.SERIAL'),
-                     ('gf_password', 'MACHINE.PASSWORD'),
-                     ('gf_hostname', 'MACHINE.HOSTNAME')):
+                     ('gf_password', 'MACHINE.PASSWORD')):
         if keys.get(key):
             set_cfg(cfg, keys[key])
             logger.info('identity override: %s from %s', cfg, MACHINE_CONF)
+    if keys.get('gf_serial'):
+        try:
+            set_cfg('MACHINE.HOSTNAME', _hostname_for(keys['gf_serial']))
+            logger.info('identity override: MACHINE.HOSTNAME derived '
+                        'from gf_serial')
+        except ValueError:
+            logger.warning('gf_serial is not numeric; hostname left '
+                           'at the fuse derivation')
 
 
 def make_machine():

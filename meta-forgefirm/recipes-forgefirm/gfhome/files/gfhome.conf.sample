@@ -1,8 +1,9 @@
 # gfhome - Glowforge web-service homing configuration.
 # Copied to /data/etc/gfhome.conf on first run; edit the copy.
 # Machine identity (serial/password) is read from the OCOTP fuses;
-# gf_serial / gf_password / gf_hostname in /data/forgefirm.conf (the
-# forgectrl UI, GF Cloud tab) override it.
+# gf_serial / gf_password in /data/forgefirm.conf (the forgectrl UI,
+# GF Cloud tab) override it. The service hostname always derives from
+# whichever serial is in effect.
 
 [SERVICE]
 server_url: https://app.glowforge.com
