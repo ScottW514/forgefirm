@@ -1,89 +1,91 @@
-# Dual Booting OpenGlow and Glowforge Factory Firmware
-OpenGlow firmware for Glowforge brand CNC lasers can be installed along side the factory firmware using the on-board flash storage.  This has the advantage of not requiring you to solder on an external SDCARD holder.
+# Installing OpenGlow/ForgeFIRM
 
-The factory flash is a 4GB eMMC.  The factory firmware resides on two partitions that are 200MB each, and has a non-volatile (survives firmware updates) ```/data``` partition of ~3GB.  All that is stored on the ```/data``` partition is configuration files and log files.
+ForgeFIRM installs **alongside** the factory firmware on the stock eMMC,
+using the factory's own A/B rootfs slot scheme: the installer writes
+ForgeFIRM to the slot the factory firmware is *not* running from, and
+switches the bootloader to it. Nothing is repartitioned, the factory
+`/data` partition (settings, calibration, logs) is untouched, and the
+booted factory firmware stays installed in the other slot.
 
-We can resize the ```/data``` partition down to 2GB, leaving a ~1GB partition for us to install OpenGlow on.
+Before anything is overwritten, the installer archives **every** factory
+firmware version on the machine — both rootfs slots and the recovery
+boot partitions — to `/data/forgefirm/archive/`, so a full offline
+factory restore is always possible, no Glowforge cloud required.
+
+> **Requires a ForgeFIRM release that ships the `forgefirm.fw` asset
+> (v0.1.0 or later).**
 
 ## Prerequisites
-Before getting started, you will need [serial console](https://github.com/ScottW514/forgefirm/blob/master/SERIAL.md)  access to your Glowforge.  If you do not have a unit with the factory installed, you will need to install your own.
 
-You should also have followed the initial Glowforge [setup instructions](https://glowforge.com/support/topic/unboxing-setting-up/unboxing-and-setting-up-your-glowforge), and have your unit connected to your wireless network.
+- [Serial console](SERIAL.md) access. Current factory firmware does not
+  offer SSH, so the install is run at the console (login `root`, no
+  password).
+- ~300 MB free on `/data` (a factory machine has far more).
+- Internet access on the machine for the standard flow. For an offline
+  install, place a `forgefirm.fw` on `/data` beforehand and pass its
+  path to the installer.
 
-## Installation
-Connect to the console port (or plug in your wired adapter) and fire up your Glowforge.  When you reach the logon prompt, enter ```root``` for the username.  No password is necessary.
+**A very important warning: this is experimental software. Use of this
+software could seriously maim or kill you or others, and voids your
+warranty. It is not affiliated with or endorsed by Glowforge. Use it at
+your own risk.**
 
-![initial_boot|689x417](https://raw.githubusercontent.com/ScottW514/forgefirm/master/docs/assets/initial_boot.PNG) 
+## Install
 
-### Stage 1
-We'll need to remount the root partition as read/write, and download and run the [installation script](https://github.com/ScottW514/forgefirm/blob/master/scripts/install-forgefirm.sh) by entering the following commands:
-```bash
-mount -o remount,rw /
-curl -L https://raw.githubusercontent.com/ScottW514/forgefirm/master/scripts/install-forgefirm.sh --output ./install-forgefirm.sh
-chmod +x install-forgefirm.sh
-./install-forgefirm.sh
+Log in at the factory console and run:
+
+```sh
+curl -fL https://raw.githubusercontent.com/ScottW514/forgefirm/master/scripts/install-forgefirm.sh --output /tmp/install-forgefirm.sh
+sh /tmp/install-forgefirm.sh
 ```
 
-This will fire up the installation script, and present you with **a very important warning**:
+(For an offline install: `sh /tmp/install-forgefirm.sh /data/forgefirm.fw`)
 
-![initial_go2|690x342](https://raw.githubusercontent.com/ScottW514/forgefirm/master/docs/assets/initial_go2.png) 
+One stage, no intermediate reboots. The installer:
 
-**---Dramatic Pause---**
+1. Confirms it is running on factory firmware, from a factory eMMC
+   slot, with the factory partition layout.
+2. Stops the Glowforge services (including the updater).
+3. Archives every factory slot version and the recovery boot
+   partitions to `/data/forgefirm/archive/` (manifest with checksums;
+   a few minutes each, with progress).
+4. Downloads the latest `forgefirm.fw` release (or uses the local file
+   you passed) and **verifies its signature** before touching anything.
+5. Writes ForgeFIRM to the inactive slot with the factory's own `fwup`,
+   then verifies the written filesystem.
+6. Installs `/data/ffboot` (the boot-slot tool) and switches the saved
+   U-Boot environment to the new slot — the switch is read-back
+   verified; on any failure the machine keeps booting factory firmware.
+7. Reboots into ForgeFIRM.
 
-**Did you read that?  Yes? I'll repeat, just in case - This is experimental software.  Use of this software could seriously maim or kill you or others.  Use at your own risk!**
+Login is `root`, no password (also via SSH). Change it.
 
-If you are bold, type ```y``` and hit ```enter```.
+## Switching firmware
 
-From there, the script will automagically do the following:
+Both systems stay installed; `ffboot` switches between them (as
+`/data/ffboot` on factory firmware, on the PATH in ForgeFIRM):
 
-* Stop all Glowforge services
-* Back up critical data from the ```/data``` partition.  This does not include log files, but you probably don't care about those anyway...
-* Rewrite the flash partition table.  This shrinks the ```/data``` partition from 3GB to 2GB, and creates a new 1GB partition for OpenGlow to live on.
-
-After these steps have completed, you will be prompted to reboot:
-
-![stage1|690x332](https://raw.githubusercontent.com/ScottW514/forgefirm/master/docs/assets/stage1.PNG) 
-
-### Stage 2
-After the device reboots, login as root and run the script again:
-```bash
-./install-forgefirm.sh
+```sh
+ffboot -l     # inventory: what is in each slot, what boots next
+ffboot -e     # switch to the factory firmware (newest factory slot)
+ffboot -e2    # switch to ForgeFIRM (slot 2 on a standard install)
 ```
 
-This will complete the installation process by performing the following steps:
-* Stopping all Glowforge services
-* Restoring the critical ```/data``` files
-* Restarting the network services.
-* Downloads the [latest OpenGlow image](https://github.com/ScottW514/forgefirm/releases) from GitHub.
-* Writes the OpenGlow image to the flash (this takes a bit, be patient)
-* Installs the ```/data/ffboot``` utility so you can switch between ForgeFIRM and factory images.
+Switch targets are probed first — `ffboot` refuses to select a slot
+that does not look bootable (`-f` overrides). Reverting to factory
+firmware and back requires no reinstall.
 
-Hit any key to reboot into your fancy new OpenGlow image.
+To reinstall or update ForgeFIRM before the built-in updater ships:
+switch to factory firmware and run the installer again — it skips
+archives it already has and simply rewrites the ForgeFIRM slot.
 
-![stage2|690x368](https://raw.githubusercontent.com/ScottW514/forgefirm/master/docs/assets/stage2.PNG) 
+## Upgrading from a legacy dual-partition install
 
-### Welcome to OpenGlow!
+Machines installed with the previous (partition-carving) installer
+migrate automatically: run this installer from the factory firmware;
+on ForgeFIRM's first boot from its new slot, the legacy partition is
+reclaimed and `/data` grows back to the full factory size. `/data`
+contents are preserved throughout.
 
-![og_boot|689x219](https://raw.githubusercontent.com/ScottW514/forgefirm/master/docs/assets/og_boot.PNG) 
-
-Login is ```root```, no password.  You can also connect via SSH - same user, no password (obviously, you should change this).
-
-> **Current status: this image is bring-up-only.** No controller or cloud
-> client starts at boot — the machine boots to an idle shell with the kernel
-> driver, hardware libraries (gfhardware/gfutilities), and camera tooling
-> installed. The grblHAL controller (forgectrl) is under development; the
-> legacy cloud client (gfui-client) is deliberately not shipped. Nothing
-> homes, moves, or connects anywhere until you start it yourself.
-
-You can easily switch back and forth between factory and OpenGlow images:
-```bash
-# To switch to the factory image run:
-/data/ffboot -e
-# To switch to the OpenGlow image, run:
-/data/ffboot -e4
-# If you added the SDCARD, you can boot from that with:
-/data/ffboot -s
-```
-
-**NOTE:**
-This firmware is in beta.  It mostly works.  It is for experimentation purposes - not for production. Expect problems.
+**NOTE:** This firmware is in beta. It mostly works. It is for
+experimentation purposes — not for production. Expect problems.
