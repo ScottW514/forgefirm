@@ -18,4 +18,4 @@ do_install() {
     install -Dm 0600 ${WORKDIR}/gfhome.conf.sample ${D}${sysconfdir}/gfhome.conf.sample
 }
 
-RDEPENDS:${PN} += "python3-core python3-gfhardware python3-gfutilities"
+RDEPENDS:${PN} += "python3-core python3-ffmachine python3-gfhardware python3-gfutilities"

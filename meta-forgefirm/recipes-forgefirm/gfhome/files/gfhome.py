@@ -42,14 +42,15 @@ import time
 from pathlib import Path
 from queue import Queue
 
-from gfutilities.configuration import parse, get_cfg, log_level, set_cfg
+from gfutilities.configuration import parse, get_cfg, log_level
 from gfutilities.service.authentication import authenticate_machine
 from gfutilities.service.dispatch import dispatch_action, PULS_ACTIONS
 from gfutilities.service.websocket import get_session, WsClient
 
+import ffmachine
+
 CONF = '/data/etc/gfhome.conf'
 CONF_SAMPLE = '/etc/gfhome.conf.sample'
-MACHINE_CONF = os.environ.get('GFHOME_CONF', '/data/forgefirm.conf')
 
 logging.basicConfig(format='(%(levelname)s) %(module)s:%(funcName)s %(message)s')
 logger = logging.getLogger('openglow')
@@ -75,116 +76,6 @@ def load_config(path: str) -> bool:
         logger.addHandler(fh)
     logger.setLevel(logging.DEBUG)
     return True
-
-
-def _hostname_for(serial):
-    """The factory serial -> hostname encoding (base 23 over the
-    consonant alphabet, up to six characters, split XXX-YYY) - the
-    same derivation gfhardware applies to the fuse serial."""
-    enc = ''
-    serial = int(serial)
-    while serial > 0 and len(enc) < 6:
-        enc = 'BCDFGHJKMQRTVWXY2346789'[serial % 23] + enc
-        serial //= 23
-    return '{}-{}'.format(enc[:3], enc[3:])
-
-
-def apply_identity_overrides():
-    """Identity overrides from the shared machine config (set in the
-    forgectrl UI): non-empty gf_serial / gf_password beat the OCOTP
-    fuse identity - Machine.__init__ sets its fuse values with
-    keep_value, so whatever is in the config store first wins. The
-    hostname is never overridden independently: it derives from the
-    serial, so a serial override re-derives it."""
-    keys = {}
-    try:
-        with open(MACHINE_CONF) as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith('#') or '=' not in line:
-                    continue
-                k, v = line.split('=', 1)
-                keys[k.strip()] = v.strip()
-    except OSError:
-        return
-    for key, cfg in (('gf_serial', 'MACHINE.SERIAL'),
-                     ('gf_password', 'MACHINE.PASSWORD')):
-        if keys.get(key):
-            set_cfg(cfg, keys[key])
-            logger.info('identity override: %s from %s', cfg, MACHINE_CONF)
-    if keys.get('gf_serial'):
-        try:
-            set_cfg('MACHINE.HOSTNAME', _hostname_for(keys['gf_serial']))
-            logger.info('identity override: MACHINE.HOSTNAME derived '
-                        'from gf_serial')
-        except ValueError:
-            logger.warning('gf_serial is not numeric; hostname left '
-                           'at the fuse derivation')
-
-
-def make_machine():
-    """Build the hardware Machine with captures routed through forgectrl.
-
-    forgectrl owns the imx-media pipeline whenever it serves a stream
-    (LightBurn typically keeps one open), so direct V4L2 grabs fail
-    busy. Its snapshot endpoint delivers the same factory-configured
-    full-resolution JPEG, works during an active stream (mux borrow),
-    and takes a per-shot lamp override - head captures request lamp=0
-    because added white light washes out the measure-laser dot the
-    cloud's focus analysis needs. Direct capture remains the fallback
-    when the daemon is unreachable.
-    """
-    import requests
-    from gfhardware import Machine
-    from gfhardware.leds import head_all_led_off, set_head_led_from_pulse
-    from gfutilities.service.websocket import img_upload
-
-    class ForgectrlMachine(Machine):
-
-        @staticmethod
-        def _snapshot(cam: str, lamp: int = None) -> bytes:
-            url = '%s/cam/snapshot?cam=%s&res=full' % (
-                get_cfg('FORGECTRL.URL') or 'http://127.0.0.1:8080', cam)
-            if lamp is not None:
-                url += '&lamp=%d' % lamp
-            rsp = requests.get(url, timeout=45)
-            rsp.raise_for_status()
-            if not rsp.content.startswith(b'\xff\xd8'):
-                raise ValueError('forgectrl returned a non-JPEG body')
-            return rsp.content
-
-        def _save_sent(self, img: bytes, msg: dict) -> None:
-            if get_cfg('LOGGING.SAVE_SENT_IMAGES'):
-                with open('%s/%s.jpeg' % (get_cfg('LOGGING.DIR'), msg['id']),
-                          'wb') as f:
-                    f.write(img)
-
-        def _lid_image(self, msg: dict) -> None:
-            logger.info('capturing Lid Image via forgectrl')
-            try:
-                img = self._snapshot('lid')
-            except Exception:
-                logger.exception('forgectrl snapshot failed; direct capture')
-                return super()._lid_image(msg)
-            logger.info('uploading Lid Image')
-            img_upload(self._session, img, msg)
-            self._save_sent(img, msg)
-
-        def _head_image(self, msg: dict, settings: dict = None) -> None:
-            logger.info('capturing Head Image via forgectrl')
-            if settings and settings.get('HCil') is not None:
-                set_head_led_from_pulse(settings['HCil'])
-            try:
-                img = self._snapshot('head', lamp=0)
-            except Exception:
-                logger.exception('forgectrl snapshot failed; direct capture')
-                return super()._head_image(msg, settings)
-            head_all_led_off()
-            logger.info('uploading Head Image')
-            img_upload(self._session, img, msg)
-            self._save_sent(img, msg)
-
-    return ForgectrlMachine()
 
 
 def home(machine, args) -> int:
@@ -308,12 +199,12 @@ def main() -> int:
     if not load_config(args.config):
         return 1
 
-    apply_identity_overrides()
+    ffmachine.apply_identity_overrides()
 
     # Machine() reads the OCOTP identity and head info; it fails cleanly
     # when the controller still owns /dev/glowforge.
     try:
-        machine = make_machine()
+        machine = ffmachine.build_machine()
     except Exception:
         logger.exception('machine init failed (is the motion controller '
                          'still holding /dev/glowforge?)')
