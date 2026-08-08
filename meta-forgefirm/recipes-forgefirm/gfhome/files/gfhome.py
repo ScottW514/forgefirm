@@ -44,6 +44,7 @@ from queue import Queue
 
 from gfutilities.configuration import parse, get_cfg, log_level, set_cfg
 from gfutilities.service.authentication import authenticate_machine
+from gfutilities.service.dispatch import dispatch_action, PULS_ACTIONS
 from gfutilities.service.websocket import get_session, WsClient
 
 CONF = '/data/etc/gfhome.conf'
@@ -186,26 +187,6 @@ def make_machine():
     return ForgectrlMachine()
 
 
-def dispatch(machine, msg: dict) -> str:
-    """Route one service action to the machine (the GFUIService dispatch
-    table, minus print - a print must never run inside a homing session).
-    Returns the action type if a puls action was accepted for run."""
-    action = msg.get('action_type', '')
-    if action == 'settings' and msg.get('status') == 'ready':
-        machine.run_settings_report(msg)
-    elif 'image' in action:
-        machine.run_capture(msg)
-    elif action in ('hunt', 'motion'):
-        machine.run_puls(msg)
-        if machine.running_action_id == msg.get('id'):
-            return action
-    elif action == 'print':
-        logger.warning('ignoring print action during homing')
-    else:
-        logger.info('ignoring action %s', action)
-    return ''
-
-
 def home(machine, args) -> int:
     q_rx: Queue = Queue()
     q_tx: Queue = Queue()
@@ -280,9 +261,11 @@ def home(machine, args) -> int:
             last_activity = time.monotonic()
             logger.info('service action: %s (%s)',
                         msg.get('action_type'), msg.get('status'))
-            started = dispatch(machine, msg)
-            if started:
-                in_flight = started
+            # Homing borrows the service only for camera homing; a print must
+            # never run inside a homing session (allow_print=False).
+            result = dispatch_action(machine, msg, allow_print=False)
+            if result in PULS_ACTIONS:
+                in_flight = result
     finally:
         if result == 0:
             # Deterministic Z: the hunt file leaves the lens wherever its
