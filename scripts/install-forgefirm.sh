@@ -49,6 +49,28 @@ stop_gf_services () {
   echo "."
 }
 
+# archive_dev <src-device> <out.img.gz>: dd|gzip with a live progress
+# line (compressed MB so far - old busybox dd has no status=progress).
+# dd's exit status is captured via a file so a read failure is not
+# masked by gzip succeeding on truncated input.
+archive_dev () {
+  RC_FILE="/tmp/ffinstall.rc.$$"
+  rm -f "$RC_FILE"
+  ( dd if="$1" bs=1M 2>/dev/null; echo $? > "$RC_FILE" ) | gzip -1 > "$2" &
+  GZPID=$!
+  while kill -0 "$GZPID" 2>/dev/null; do
+    sleep 3
+    SZ=$(wc -c < "$2" 2>/dev/null)
+    printf '\r    %s MB compressed...' "$((${SZ:-0} / 1048576))"
+  done
+  wait "$GZPID"
+  GZRC=$?
+  DDRC=$(cat "$RC_FILE" 2>/dev/null)
+  rm -f "$RC_FILE"
+  printf '\r    %s MB compressed.    \n' "$(($(wc -c < "$2") / 1048576))"
+  [ "$GZRC" = "0" ] && [ "$DDRC" = "0" ]
+}
+
 # slot_probe <1|2>: sets S_TYPE (factory|forgefirm|unknown) and S_VER.
 # The active slot is read from the running rootfs; others are mounted
 # read-only under /tmp (newer factory firmware has no /factory/imgN
@@ -162,7 +184,7 @@ for N in 1 2; do
     continue
   fi
   echo -e "${ASTERISK}Archiving slot $N (factory $S_VER) - takes a few minutes:"
-  dd if=/dev/mmcblk2p$N bs=1M 2>/dev/null | gzip -1 > "$ARC" \
+  archive_dev /dev/mmcblk2p$N "$ARC" \
     || { rm -f "$ARC"; die "archiving slot $N failed"; }
   echo "$(date '+%Y-%m-%d %H:%M:%S') slot$N factory $S_VER $(basename $ARC) md5=$(md5sum "$ARC" | cut -d' ' -f1)" >> "$ARCHIVE_DIR/manifest"
 done
@@ -170,7 +192,7 @@ for B in 0 1; do
   ARC="$ARCHIVE_DIR/recovery-boot$B.img.gz"
   [ -s "$ARC" ] && continue
   echo -e "${ASTERISK}Archiving recovery boot$B:"
-  dd if=/dev/mmcblk2boot$B bs=1M 2>/dev/null | gzip -1 > "$ARC" \
+  archive_dev /dev/mmcblk2boot$B "$ARC" \
     || { rm -f "$ARC"; die "archiving boot$B failed"; }
   echo "$(date '+%Y-%m-%d %H:%M:%S') boot$B recovery - $(basename $ARC) md5=$(md5sum "$ARC" | cut -d' ' -f1)" >> "$ARCHIVE_DIR/manifest"
 done
