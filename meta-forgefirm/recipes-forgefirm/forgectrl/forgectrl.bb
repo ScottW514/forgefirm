@@ -9,15 +9,17 @@ PV = "0.1.0"
 
 SRC_URI = "git://github.com/ScottW514/forgectrl.git;protocol=https;branch=main"
 # Pinned; bump deliberately after pushing forgectrl changes.
-SRCREV = "945d85e37bbb4888b1cb12a837b25e6483f1a95d"
+SRCREV = "64bec0edc7e98c0d071ad594c322babe54341d3c"
 
 S = "${WORKDIR}/git"
 
 inherit cmake update-rc.d
 
 DEPENDS += "ulfius jpeg"
-# media-ctl / v4l2-ctl configure the imx-media pipeline at runtime
-RDEPENDS:${PN} = "v4l-utils"
+# media-ctl / v4l2-ctl configure the imx-media pipeline at runtime;
+# the update manager drives ffboot + fwup and verifies against the
+# shipped keyring; release checks and downloads use curl.
+RDEPENDS:${PN} = "v4l-utils ffboot fwup forgefirm-keys curl"
 
 INITSCRIPT_NAME = "forgectrl"
 INITSCRIPT_PARAMS = "defaults 90"
