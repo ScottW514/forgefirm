@@ -979,3 +979,17 @@ chooses otherwise).
    ships fw_env tooling but **no `/etc/fw_env.config`** — hand-placed
    on the bench SD system (factory-identical: mmcblk2 0x80000/0x82000,
    0x2000, redundant) — the ffboot-v2 recipe must install it.
+   **Phase 1 COMPLETE, hardware-verified 2026-08-08**: ffboot v2 —
+   `-l` machine-parsable slot inventory (the shared probe for the
+   installer and the forgectrl update manager), verified atomic
+   four-variable env flips (one `fw_setenv -s` transaction, read-back
+   verify, libubootenv→classic→per-var format fallbacks — works on
+   both fw_setenv flavors), content-probe gate on switch targets
+   (`-f` overrides), probe-based `-e` newest-factory selection. The
+   `ffboot` recipe installs `/usr/sbin/ffboot` + `/etc/fw_env.config`
+   in the image (closes the gap above; build 20260808160821, ext4
+   still 180.8 MiB). Bench: `-l` classified every slot correctly, and
+   ffboot itself drove the SD→p4→SD flip cycle (probe gate, both
+   flips, clean returns). Untested edge: empty/unreadable-slot
+   classification (no such slot on the bench; exercised naturally
+   when Phase 2 overwrites a slot mid-install).
