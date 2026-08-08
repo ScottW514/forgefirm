@@ -86,10 +86,13 @@ motion constants were extracted from the `_RESOURCES` pulse files
   (`forgefirm-image-dev`) on SD; BusyBox userland + python3 + gdb/strace.
   Serial console on ttymxc0 available at the bench.
 - **Deploying kernels**: re-burn the SD with the freshly built
-  `forgefirm-image-dev-glowforge.rootfs.wic.gz` (deploy dir below). Where
-  the boot flow loads the kernel from was never fully traced (the wic has
-  no boot partition; the eMMC env area reads empty) — re-burning works and
-  is the procedure. **Module-only changes hot-swap**: scp `glowforge.ko`
+  `forgefirm-image-dev-glowforge.rootfs.wic.gz` (deploy dir below).
+  Why this works: U-Boot (in eMMC boot0) reads the saved env at eMMC
+  user-area 0x80000, which selects the boot device (bench board:
+  `mmcdev=0 mmcroot=/dev/mmcblk1p1` = SD), then loads `/boot/uEnv.txt`
+  and `/boot/zImage` from that rootfs partition — so the kernel always
+  comes from the burned SD. Full map: "eMMC boot & recovery
+  architecture" in the facts bank below. **Module-only changes hot-swap**: scp `glowforge.ko`
   over `/lib/modules/<kver>/extras/`, then `rmmod glowforge && modprobe
   glowforge`. NOTE: a module reload turns off the lid LED (relight via
   `/sys/class/leds/lid_led*/target`) and resets analog config (below).
@@ -382,6 +385,59 @@ max. Images from 20260807204056 carry forgectrl at the bumped SRCREV
 - Machine identity from OCOTP nvmem: serial 00000000 → hostname XXX-XXX
   (matches the factory label).
 
+### eMMC boot & recovery architecture (dumped from the bench board 2026-08-08)
+
+- eMMC (`mmcblk2`): 3.6 GiB user area + two 16 MiB hardware boot
+  partitions (`mmcblk2boot0/1`). Factory user-area MBR (per the factory
+  `.fw` manifest): p1/p2 = 200 MiB rootfs A/B at blocks 8192/417792,
+  p3 = `/data` from block 827392 to end of disk. (The bench board runs
+  the legacy ForgeFIRM layout instead: p3 shrunk to ~1.9 GiB plus a
+  1.3 GiB p4.)
+- **U-Boot lives in boot0** at 1 KiB (IMX IVT header), not in the user
+  area — user-area block 2 reads blank on the bench board even though
+  the `.fw` `complete` task writes a U-Boot copy there. Any boot0
+  rewrite below 0xC0000 risks the bootloader.
+- **Saved env**: user area 0x80000 with redundant copy at 0x82000 (the
+  area `ffboot`/`fw_setenv` targets; boot0's own 0x80000 region is
+  zeros). Slot selection = `mmcdev`/`mmchwpart`/`mmcpart`/`mmcroot`;
+  bench board reads `mmcdev=0 mmchwpart=0 mmcpart=1
+  mmcroot=/dev/mmcblk1p1` (SD boot). Gap: `ffboot` sets three of the
+  four but never `mmchwpart` — it relies on the saved 0.
+- **Default (compiled-in) env boots recovery**: `mmcdev=1 mmchwpart=1
+  boot_recovery=yes` — a blank/corrupt env lands in recovery mode, not
+  a brick. `bootcmd`: select mmc dev+hwpart → load+import
+  `/boot/uEnv.txt` from the selected partition → if
+  `boot_recovery=yes`, boot kernel+DTB from raw boot0 sectors, else
+  load `/boot/zImage` from the slot's rootfs. U-Boot itself polls the
+  button at power-on ("Recovery boot requested by user; release button
+  to enter" / "Button held too long, booting normally"); it also has
+  watchdog-timeout boot-flag strings (semantics untraced).
+- **boot0 map**: MBR / U-Boot @1 KiB / zeros @0x80000 / recovery DTB
+  @0xC0000 (`fdt_dev_addr=0x600`, 64 KiB slot) / recovery zImage
+  @0x100000 (`image_dev_addr=0x800`, 5 MiB slot, kernel 3.14.28) /
+  recovery squashfs = `boot0p1` @6 MiB (10 MiB slot, 8.6 MiB used,
+  built 2018-03-09).
+- **boot1 map**: MBR / squashfs @1 KiB = `boot1p1` (10.6 MiB used),
+  mounted as the recovery `/usr` (python runtime) by
+  `init.d/recovery-usr`.
+- **Recovery userspace** = the factory setup webapp (bottle): WiFi
+  setup/AP, log export, `/version`, and `.fw` upload (→ tmpfs →
+  `glowforge-updater -f` → fwup signature check against
+  `/glowforge/pubkeys` → writes slot A → flips env). It is never
+  updated in the field — `.fw` updates don't touch the boot
+  partitions, so every machine still runs its as-manufactured
+  recovery.
+- **Factory `.fw` format** = signed fwup 0.14.2 archive (ZIP:
+  `meta.conf` + `meta.conf.ed25519` + payloads). Tasks: `complete`
+  (MBR, U-Boot to user area, zero both env copies, rootfs → slot A,
+  zero p2/p3 heads) and `upgrade.a`/`upgrade.b` (raw-write
+  `rootfs.ext4` into a slot). Factory updater flow: authenticated
+  `GET <server>/update/current` → `{version, download_url}` →
+  resumable download to `/data/glowforge.fw` → verify → apply to the
+  INACTIVE slot → `fw_setenv mmcpart mmcroot` → reboot. Factory
+  `rootfs.ext4` is 65 MiB; the ForgeFIRM rootfs is ~141 MB used, so it
+  fits a 200 MiB slot with headroom.
+
 ## Next work (in rough order)
 
 1. **Backend milestone 2 — motion quality: DONE and human-verified
@@ -526,13 +582,63 @@ max. Images from 20260807204056 carry forgectrl at the bumped SRCREV
        the dependence is weak — with forced flow ΔT = P/(ṁ·c), which
        carries no absolute-temperature term — but that is reasoning,
        not measurement.
-     - **OBSERVED 2026-08-03 (needs triage):** `/data/glowforge.log`
-       carries, from a prior controller run, a passing check (rise
-       11.4 °C) followed by TWO `COOLANT FLOW FAULT` lines (rise
-       16.5 / 15.9 °C vs the 14.4 limit, dT 11.6). Undated (raw
-       stderr log). Either the pump genuinely faltered or this is the
-       warm-baseline false-positive mode above — check the pump and
-       re-run a supervised verification before trusting the loop.
+     - **TRIAGE RESOLVED 2026-08-08 — the 2026-08-03 faults were a
+       REAL transient stagnation, not false positives; loop trusted
+       again.** The log lines (pass rise 11.4, then FAULT 16.5 / 15.9,
+       dT 11.6) postdate the warm-baseline validation session:
+       `flow_warm_validate.py`'s controller restart truncates
+       `/data/glowforge.log` (single `>`), so they were written by a
+       driver M8 session after 23:21 on 2026-08-02 — right after a
+       bench session that stopped/started the pump 8+ times with
+       ~50 °C heater excursions (classic airlock conditions).
+       Signature analysis against the design matrix: the fault rises
+       sit at the characterized no-flow floor (16.04), and the
+       establish-window dT 11.6 sits in the no-flow band (driver-
+       equivalent dT-mean from the matrix: no-flow 11.9–13.2 vs flow
+       9.8–10.2) — the checks correctly read stagnant/near-stagnant
+       water at that moment. Probable cause: transient pump airlock
+       from the bench session's pump cycling, self-cleared (the
+       preceding 11.4 pass shows flow was fine minutes earlier).
+       **Re-verified 2026-08-08 through the production path** (M8 on
+       the flashed v0.1.0 image, pump operator-confirmed, 22 °C
+       settled loop): rise 11.3 dT 9.5, and after an M9→M8
+       layer-cycle, rise 10.8 dT 9.3 — textbook flow-band values.
+       Also measured: **no recirculating heat slug** — each check's
+       heat is fully shed within ~60 s (two checks left the loop
+       0.4 °C net cooler), and fan-profile transitions inject brief
+       ~1.7 °C COLD slugs from the radiator (~20 s), showing the loop
+       circulates in tens of seconds. Operational lesson: expect a
+       possible legitimate flow SUSPECT on the first checks after
+       manual pump stop/start cycling — the confirmation machinery
+       below absorbs it.
+     - **Suspicion/confirmation state machine — IMPLEMENTED
+       2026-08-08, bench-drilled 6/6 + escalation** (driver
+       `glowforge_cooling.c`). An over-limit check is a SUSPICION,
+       not a fault: `COOLANT FLOW SUSPECT` warning + an immediate
+       re-check request (no cadence wait). The next completed check
+       decides it — "consecutive" means no clean check in between,
+       whatever the wall-clock gap: over-limit again →
+       `COOLANT FLOW FAULT`; clean → `coolant flow suspicion
+       cleared`, episode counted (3 cleared episodes in one job earn
+       an aggregated check-your-coolant warning; counter resets when
+       cooldown reaches idle). A suspicion that cannot produce any
+       verdict within `GFCOOL_CONFIRM_MAX_S` (default 480 s; budget
+       restarts per flood session, runs only in Cool_Run) escalates
+       to FAULT — a loop that will not settle after a fault-level
+       reading has shown no evidence of health. A clean check from
+       the FAULT state logs `coolant flow recovered`. Laser
+       milestone: safe posture (hold + laser off + forced cooling)
+       moves to the SUSPECT edge; FAULT stays the hard fire gate.
+       Bench drill (`scripts/bench/flow_confirm_drill.py`, on-board,
+       real pump-off transients through the production path, single
+       M8 session): verified 11.6/9.4 → pump off SUSPECT 16.4/12.0 →
+       pump on cleared 11.9/9.5 in 92 s (the 2026-08-03 field case,
+       now non-fatal) → pump off SUSPECT 18.5 → still-off confirmed
+       FAULT 16.1 just 109 s after the suspect → pump on recovered
+       11.1/9.4. All six verdicts in order, 6/6. Escalation drilled
+       separately (`flow_escalate_drill.py` with
+       GFCOOL_CONFIRM_MAX_S=45): suspect → starved settle → "no
+       clean re-check within 45 s" FAULT.
 
      *(Superseded earlier text kept below for context.)*
      **Coolant flow verification (first attempt, live-verified both ways).**
@@ -567,6 +673,57 @@ max. Images from 20260807204056 carry forgectrl at the bumped SRCREV
      there.
    - **Interlock readback semantics cross-check: OPEN** (see
      factory-laser-safety-readbacks notes).
+   - **Head-IRQ source validation — beam-emission hypothesis: OPEN
+     (exploratory feature; NOT a first-light prerequisite).** The
+     EV_SW `head` bit (GPIO3_22, factory pad name HEAD_IRQ; the
+     panel's "Head sense" row) is the head MCU's attention line —
+     idle LOW with a healthy head attached (measured 2026-08-08); it
+     pulses on head reboot (hence the 60 ms DT debounce) and floats
+     to the SoC pull-up with no head driving it, so the raw level is
+     NOT a presence signal (presence = the head answering at I²C
+     0x47). The factory app answers this IRQ by reading the head's
+     interrupt flags over I²C, and the only flag register is the reg
+     0x05 RO group — bit0 hall_sensor, bit1 accel_irq, bit2
+     beam_detect_digital (head_private.h) — so there are exactly
+     three candidate IRQ sources; working hypothesis (operator): the
+     in-cut source is the head's IR beam-emission detector — digital
+     flag 0x05 b2 + analog level reg 0x16 (both already head sysfs
+     attrs), tunable detection model at regs 0x22–0x2a
+     (lambda_k/lambda_t/theta_r/theta_t/e_t = the factory
+     BDlk/BDlt/BDtr/BDtt/BDet settings; regs defined in
+     head_private.h, not yet exposed as attrs).
+     Priority/scope (operator, 2026-08-08): later exploration, not a
+     must-have —
+     - The bench head is **gen2** (a first-round Kickstarter unit
+       already shipped gen2). Gen1 heads are presumed rare to
+       nonexistent in the wild, though the factory images still
+       support them, so some must be assumed to exist. The gen1
+       board-level beam chain (!BEAM_DET GPIO4_15, !BEAM_DET_XOR
+       GPIO4_08, !BEAM_DET_TIMEOUT GPIO4_07, BEAM_DET_ERR GPIO4_10 —
+       DT-pinmuxed, not driver-requested; BEAM_DET_LATCH_RST GPIO7_13
+       pulsed at cut start, boards v13/v14 only) is documented here
+       as legacy reference only.
+     - Whether the factory actually USES beam detect is unknown. The
+       v2.6.0 factory app carries a complete but config-gated
+       subsystem (separate printing/idle enables, severities
+       failing-abort / pausing-alert / silent-alert, level-vs-edge
+       trigger option, beam_detect_irq + irq_override, fault report
+       upload; an invalid severity defaults to DISABLED), so the
+       plumbing exists but production enablement is an open question.
+       Detection at low fire energies is also unverified — the sensor
+       may simply not trip on a low-power pulse.
+     - Same status for the accelerometer: a promo-touted factory
+       feature that was not active in early releases and may not be
+       today. Its data path is direct (lis2hh12 on the I²C bus) but
+       its INT pin routes to the head MCU as flag 0x05 b1, so it is
+       also a head-IRQ source.
+     Cheap opportunistic check during live-fire bring-up (no gating):
+     log EV_SW head-bit edges + head/beam_detect_digital/_analog
+     while firing — if the beam flag level-holds the IRQ, the panel
+     row asserts during sustained emission. Later-feature decisions
+     if it pans out: beam-absent-while-FIRE as an optional fault
+     input, attrs for the calibration regs, panel row relabel (e.g.
+     "Head IRQ / emission").
 3. **Homing: runtime-selectable, Glowforge web-service mode
    IMPLEMENTED and bench-verified (stub session) 2026-08-07; LIVE
    cloud run still pending operator.** The operator picks the method
