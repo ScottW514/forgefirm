@@ -9,5 +9,8 @@
 # kas
 *.lock.yml.bak
 
+# release.sh staging output
+/release-staging/
+
 # Python bytecode
 __pycache__/

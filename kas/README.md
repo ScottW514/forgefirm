@@ -109,10 +109,16 @@ config move in the right order. The sequence, with current status:
      base recipe) so a fresh clone is fully self-contained;
    - refresh `kas lock`, tag all repos, and prove self-containment by building
      from a **fresh clone**.
-5. **GitHub release**: upload the image asset under the exact name the
-   installer downloads — Scarthgap emits
-   `forgefirm-image-glowforge.rootfs.wic.gz`; align BUILD.md and
-   `install-forgefirm.sh` to one name before the first release.
+5. **GitHub release**: run `scripts/release.sh <version>` on the build
+   host. It gates (version single-source, rootfs-vs-slot size,
+   installer-embedded pubkey vs the signing key, factory-era fwup
+   verification), builds, packs and signs `forgefirm.fw`, stages the
+   assets with `sha256sums.txt`, and prints the `gh release create`
+   command. Assets and their exact names (the installer and the update
+   manager download them verbatim): `forgefirm.fw`, `sha256sums.txt`,
+   `forgefirm-image-glowforge.rootfs.wic.gz`. The release tag
+   `v<version>` = `FORGEFIRM_RELEASE` = the rootfs `/etc/forgefirm-version`
+   = the `.fw` meta-version; `release.sh` enforces the agreement.
 
 For gfhardware development, either bump the recipe pin per iteration or add a
 tracked externalsrc bbappend mirroring the kernel-module pattern.

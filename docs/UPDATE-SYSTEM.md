@@ -142,15 +142,21 @@ demonstrably untouched.*
 
 ## Phase 3 — release pipeline
 
-- `scripts/release.sh` (build host): kas build → size gate → pack
-  `.fw` → sign → `sha256sums.txt` → `gh release create` → post-check
-  that asset names match what the installer, GUI updater, and (later)
-  recovery expect.
-- One version source: `FORGEFIRM_RELEASE` = git tag = 
+- `scripts/release.sh` (build host): gates → kas build → pack `.fw` →
+  sign → `sha256sums.txt` → staged assets + `gh release create`
+  command (`--publish` runs it where gh is authenticated). Gates:
+  clean tree, version single-source, rootfs-vs-slot size
+  (warn ≥ 170 MiB / fail ≥ 195 MiB, under bitbake's own hard cap),
+  **installer-embedded pubkey must match the signing key**, and
+  factory-era fwup (0.14.2) verification of the packed archive.
+- One version source: `FORGEFIRM_RELEASE` = git tag =
   `/etc/forgefirm-version` = `.fw` meta-version; the script enforces
   agreement.
-- Dev builds emit a `.fw` too (dev-key or unsigned — see open
-  questions) for the GUI upload path.
+- `release.sh --dev` packs a **dev-key-signed** `forgefirm-dev.fw`
+  from the release rootfs for the GUI upload path (decides open
+  question 4: dev archives are signed with the dev key, never
+  unsigned — the GUI exercises the same verification path either
+  way).
 - GitHub Actions: per-push compile checks for grblHAL-glowforge and
   forgectrl (minutes, no Yocto); optional `workflow_dispatch`
   cold-Yocto reproducibility build whose only product is a checksum.
