@@ -1034,3 +1034,22 @@ go-ahead: deploy both binaries, live re-check, then SRCREV bumps.
    flips, clean returns). Untested edge: empty/unreadable-slot
    classification (no such slot on the bench; exercised naturally
    when Phase 2 overwrites a slot mid-install).
+   **Phase 2 COMPLETE — FULL SLOT INSTALL bench-proven end-to-end
+   2026-08-08** (operator at the factory console, agent over SSH):
+   single-stage installer ran on the FACTORY 2024 firmware — archived
+   both factory rootfs versions + boot0/boot1 (~88 MB total, manifest
+   with md5s), signature-verified the dev-signed forgefirm.fw, applied
+   it to slot 2 with the factory's own fwup (29 s), post-verified,
+   verified-flipped, and ForgeFIRM booted from slot 2; slotmigrate
+   reclaimed p4 and grew /data to the **byte-exact factory geometry**
+   (827392/6725632; 0.7 s at boot, silent no-op thereafter); factory
+   round-trip proven (`ffboot -e` → factory 2024 boots → `-e2` back).
+   2024-firmware facts learned: no `/factory/imgN` mounts, generic
+   fw_env.config points at the WRONG device (use per-device
+   `fw_env_mmcblk2.config` — ffboot's selection logic), no SSH (serial
+   console only), factory kernel cannot see the SD card (ffboot -s
+   needs `-f` from factory). The **bench board now runs ForgeFIRM
+   v0.1.0 from eMMC slot 2** (factory 2024 in slot 1, archives in
+   /data/forgefirm/archive, dev image still on SD via `ffboot -s`).
+   Remaining Phase 2 nicety: the installer's embedded pubkey is the
+   DEV key until the production ceremony.
