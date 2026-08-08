@@ -759,6 +759,47 @@ chooses otherwise).
      profiles restored on stand-down. TEC control remains for the
      laser milestone; these warnings/holds become hard fire gates
      there.
+   - **Low-temperature gates + warm-up: PLANNED (laser-milestone
+     scope, operator-directed 2026-08-08).** The factory has a low
+     side we do not implement yet, on two layers: the firmware
+     coolant-window FLOORS (this machine's settings dump: CMrn/CMwn
+     1017 mdeg ≈ 1.0 °C, CMin 4008 ≈ 4.0 °C — freeze/hardware
+     protection) and the user-facing ~16 °C / 60 °F operating floor,
+     enforced as the factory's "warming up" pause: the machine holds
+     the job and warms the coolant with the loop heater until in
+     range (the cloud CF* heater-PID keys are that mechanism —
+     setpoint/Kp/Ki, zeroed on this unit; the OpenGlow stack uses a
+     static 10 %). Plan: two more keys in the Cooling card —
+     `cool_temp_min` (hard floor, default ~5 °C; becomes a fire gate)
+     and `cool_temp_start` (warm-up gate, default ~16 °C): a job
+     starting below the gate holds in a factory-style warm-up phase
+     (loop heater on, senders see the Hold + a warming message) and
+     releases above it; below the floor nothing fires at all.
+     Rationale: cold-tube thermal shock, condensation when the TEC
+     pulls below the dew point, frozen coolant. Sequencing with the
+     flow check: warm-up first, flow check after (a warm-up that
+     raises the bulk temperature is itself circulation evidence).
+     Measured physics for the phase (this bench): 50 % duty warms the
+     bulk ~0.5-0.8 °C/min and plateaus ~8-9 °C above ambient — the
+     same unaided limit the factory has (a cold garage may never
+     reach the gate; that is honest, not a bug).
+   - **TEC handling: PLANNED (laser-milestone scope,
+     operator-directed 2026-08-08).** The control board is common to
+     Basic/Plus/Pro but the TEC itself is populated on Pro only, and
+     `thermal/tec_on` is a bare on/off output with NO readback —
+     presence cannot be detected, so it is a user setting:
+     `tec_present` (Machine tab, default off; ForgeFIRM never drives
+     tec_on unless set — on the bench Basic/Plus the line lands on an
+     unpopulated position). Operation when present: the factory
+     regulates coolant toward its ~18 °C setpoints (CMet/CMdt
+     18134/18364 mdeg — the same WTub/WTvb raw-754/751 pair that
+     proved the thermistor curve); plan is a simple hysteresis while
+     a job runs — TEC on above `cool_tec_on_c`, off below
+     `cool_tec_off_c`, defaults from the factory setpoints, off at
+     idle (factory init state) — with `cool_temp_min` as the chill
+     floor so the TEC can never drive the loop toward condensation/
+     freeze territory. Exact policy (and whether the /status panel
+     shows TEC as absent vs off) lands with the implementation.
    - **Interlock readback semantics cross-check: OPEN** (see
      factory-laser-safety-readbacks notes).
    - **Head-IRQ source validation — beam-emission hypothesis: OPEN
