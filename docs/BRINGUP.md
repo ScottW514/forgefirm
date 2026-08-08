@@ -922,3 +922,13 @@ chooses otherwise).
    archive, legacy-p4 migration, and later a refreshed recovery image
    in boot0. Full phased plan with invariants and decision gates:
    `docs/UPDATE-SYSTEM.md` (builds on the facts-bank eMMC map).
+   **Phase 0 COMPLETE, hardware-verified 2026-08-08**: slot-agnostic
+   images (`root=${mmcroot}`; the SAME release ext4 boot-verified from
+   SD and from eMMC p4, steered by env alone — bench flip test), fwup
+   toolchain cross-version proven (modern-packed signed `.fw` applies
+   with the factory's 0.14.2; 0.14.2 wants raw 32-byte pubkeys), fwup
+   in both images, slot-sized release rootfs + hard size gate + ext4
+   artifact + `scripts/mkfw.sh`. GAP found for Phase 1: the image
+   ships fw_env tooling but **no `/etc/fw_env.config`** — hand-placed
+   on the bench SD system (factory-identical: mmcblk2 0x80000/0x82000,
+   0x2000, redundant) — the ffboot-v2 recipe must install it.
