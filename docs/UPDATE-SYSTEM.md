@@ -174,7 +174,13 @@ refuse the booted root slot, verify signature before writing, and
 re-verify the written filesystem. `GET /slots` inventory, `POST /boot`
 (probe-gated), `POST /update/{check,download,apply,upload}`,
 `POST /restore/factory` (archive md5 checked), `POST /system/reboot`.
-Original design notes below.
+**Bench-verified end-to-end 2026-08-08** (slot b as scratch, no
+reboots): production-signed upload classified `forgefirm` and applied
+(`signed:true`); dev-signed classified `unsigned`, apply refused until
+`confirm_unsigned=1`; factory-2022 restore md5-verified and written;
+boot-select flipped and reverted without reboot; path-traversal /
+bogus-target / booted-root-slot writes all refused; `/slots` inventory
+matched the physical layout. Original design notes below.
 
 
 
