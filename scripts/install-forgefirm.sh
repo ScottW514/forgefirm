@@ -49,18 +49,28 @@ stop_gf_services () {
   echo "."
 }
 
-# slot_probe <1|2>: sets S_TYPE (factory|forgefirm|unknown) and S_VER
+# slot_probe <1|2>: sets S_TYPE (factory|forgefirm|unknown) and S_VER.
+# The active slot is read from the running rootfs; others are mounted
+# read-only under /tmp (newer factory firmware has no /factory/imgN
+# mounts, and the rootfs is read-only).
 slot_probe () {
   S_TYPE=unknown; S_VER=""
-  MP="/factory/img$1"
-  if [ ! -f "$MP/etc/version" ] && [ ! -f "$MP/etc/forgefirm-version" ]; then
-    mkdir -p "$MP"
-    mount -o ro "/dev/mmcblk2p$1" "$MP" 2>/dev/null
+  if [ "$1" = "$ACTIVE" ]; then
+    RD=""
+  else
+    RD="/tmp/ffinstall.probe.$$"
+    mkdir -p "$RD" || return 1
+    mount -o ro "/dev/mmcblk2p$1" "$RD" 2>/dev/null \
+      || { rmdir "$RD" 2>/dev/null; return 1; }
   fi
-  if [ -f "$MP/etc/forgefirm-version" ]; then
-    S_TYPE=forgefirm; S_VER=$(cat "$MP/etc/forgefirm-version")
-  elif [ -f "$MP/etc/version" ]; then
-    S_TYPE=factory; S_VER=$(cat "$MP/etc/version")
+  if [ -f "$RD/etc/forgefirm-version" ]; then
+    S_TYPE=forgefirm; S_VER=$(cat "$RD/etc/forgefirm-version")
+  elif [ -f "$RD/etc/version" ]; then
+    S_TYPE=factory; S_VER=$(cat "$RD/etc/version")
+  fi
+  if [ -n "$RD" ]; then
+    umount "$RD" 2>/dev/null
+    rmdir "$RD" 2>/dev/null
   fi
 }
 
@@ -186,23 +196,34 @@ fwup -m -i "$FW_FILE" | grep meta-version
 
 # --- apply to the inactive slot -----------------------------------------------
 echo -e "${ASTERISK}Writing ForgeFIRM to slot $TARGET (/dev/mmcblk2p$TARGET):"
-umount "/factory/img$TARGET" 2>/dev/null
+for M in $(sed -n "s|^/dev/mmcblk2p$TARGET \([^ ]*\).*|\1|p" /proc/mounts); do
+  umount "$M" 2>/dev/null
+done
 fwup -a -d "/dev/mmcblk2p$TARGET" -i "$FW_FILE" -t "$TASK" -p "$KEYFILE" \
   || { rm -f "$KEYFILE"; die "fwup apply failed - slot $TARGET is now undefined, factory slot $ACTIVE is untouched"; }
 rm -f "$KEYFILE"
 
 # --- post-write verify --------------------------------------------------------
-MP="/factory/img$TARGET"
+MP="/tmp/ffinstall.verify.$$"
 mkdir -p "$MP"
 mount -o ro "/dev/mmcblk2p$TARGET" "$MP" || die "new rootfs does not mount"
 NEWVER=$(cat "$MP/etc/forgefirm-version" 2>/dev/null)
 [ -n "$NEWVER" ] || { umount "$MP"; die "new rootfs has no ForgeFIRM version stamp"; }
 [ -f "$MP/boot/zImage" ] || { umount "$MP"; die "new rootfs has no kernel"; }
 umount "$MP"
+rmdir "$MP" 2>/dev/null
 echo -e "${ASTERISK}Slot $TARGET now holds ForgeFIRM $NEWVER"
 
 # --- ffboot for the factory side ----------------------------------------------
-curl -fL "$FFBOOT_URL" --output /data/ffboot || die "ffboot download failed"
+if curl -fL "$FFBOOT_URL" --output /data/ffboot.new 2>/dev/null \
+   && [ -s /data/ffboot.new ]; then
+  mv /data/ffboot.new /data/ffboot
+else
+  rm -f /data/ffboot.new
+  [ -x /data/ffboot ] \
+    || die "ffboot download failed and no /data/ffboot is present"
+  echo -e "${ASTERISK}ffboot download failed; keeping the existing /data/ffboot"
+fi
 chmod +x /data/ffboot
 
 # --- flip the boot selection --------------------------------------------------
