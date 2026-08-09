@@ -45,7 +45,7 @@ from queue import Queue
 from gfutilities.configuration import parse, get_cfg, log_level
 from gfutilities.service.authentication import authenticate_machine
 from gfutilities.service.dispatch import dispatch_action, PULS_ACTIONS
-from gfutilities.service.websocket import get_session, WsClient
+from gfutilities.service.websocket import get_session, ws_connect
 
 import ffmachine
 
@@ -87,16 +87,11 @@ def home(machine, args) -> int:
         logger.error('sign-in to %s failed', get_cfg('SERVICE.SERVER_URL'))
         return 1
 
-    # ws_connect() discards the client object, which makes a clean
-    # disconnect impossible - build the client directly instead.
-    ws = WsClient(q_rx, q_tx)
-    ws.start()
-    deadline = time.monotonic() + 16
-    while not ws.ready and time.monotonic() < deadline:
-        time.sleep(0.5)
-    if not ws.ready:
+    # No session passed: homing is a single short connect that never needs
+    # a reconnect token refresh.
+    ws = ws_connect(q_rx, q_tx)
+    if not ws:
         logger.error('web socket connection failed')
-        ws.stop = True
         return 1
 
     result = 2
@@ -168,7 +163,7 @@ def home(machine, args) -> int:
             except Exception:
                 logger.exception('final Z reference failed')
                 result = 2
-        ws.stop = True
+        ws.shutdown()
         try:
             machine.stop()
         except Exception:
