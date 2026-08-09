@@ -640,6 +640,83 @@ accordingly ("Automatic — AP country, else World").
    (bit 7) + bit 4 laser-enable, M3/M4/$32 semantics, PWM-reset rule per
    the contract. **No live fire before the standing scope gates.** Gate
    status:
+   - **GRBL-MODE LASER SOFTWARE: IMPLEMENTED 2026-08-09, bench-verified
+     without fire. FIRST LIGHT PENDING (operator-run, chain armed).**
+     - Architecture: the real spindle lives in
+       `grblHAL-glowforge/src/glowforge_laser.c`; per-segment spindle
+       updates (the core's laser-mode path, running on the stepper
+       producer thread at exact virtual-tick positions) map power/fire
+       transitions onto the pulse-byte grid via `gf_stream_laser()`,
+       and the shipper emits them: a power byte (0x80 | 7-bit duty,
+       raw PWMSAR counts, 127 = 100 %) inserted ahead of the first
+       tick byte it covers, FIRE as bit 4 OR'd into tick bytes. The
+       spindle PWM is precomputed to a period of exactly 127 so
+       computed values ARE power bytes ($30 default 1000 → S1000 =
+       127). Contract rules enforced structurally: a power byte leads
+       every kernel run before any fire bit (run start resets duty to
+       ~100 %), transitions are coalesced per tick so power bytes are
+       never consecutive, and power bytes cost no machine tick (the
+       SDMA script processes the following byte in the same EPIT
+       interrupt), leaving the wall-clock due math untouched. Fire
+       only ever rides motion segments of laser blocks - jogs, G0 and
+       homing are fire-free by construction, and the end-of-data
+       backstop covers every stream end.
+     - **Arming - the operator's button press is required.** The first
+       laser-on of a job (M3/M4, always planner-synced by the core)
+       refuses outright if a coolant fire gate stands, else forces the
+       run fan profile on, unlocks the kernel laser latch, lights the
+       button white and blocks the gcode stream - pumping real-time
+       traffic exactly like the homing session - until the operator
+       presses the physical button (EV_SW bit 2), a soft reset aborts,
+       or `laser_button_timeout_s` (default 300 s) expires into
+       alarm 3. The armed window survives S changes and M5/M3 toggles
+       (no re-prompt mid-job) and closes - relocking the latch - after
+       `laser_disarm_s` (default 60 s) of spindle-off idle, or
+       immediately on alarm/homing/reset/stream fault. Both keys live
+       in the shared machine config, re-read per arm.
+     - **Underrun policy while armed: fail safe, no retry.** The
+       stop/run recovery restarts the kernel run, which resets the
+       duty to ~100 % - replaying queued fire bits would fire at full
+       power - so an armed underrun acks the kernel and faults (alarm,
+       latch relock). Motion-only streams keep the one-shot retry.
+     - **Coolant fire gates live** (`gfcool_fire_ok`): flow FAULT or
+       over-ceiling coolant temperature (resume-gate hysteresis)
+       blocks arming and suppresses fire mid-job with a loud warning.
+       While armed the run fan profile + flow interrogation are forced
+       on regardless of the sender's M8/M9; a flow SUSPECT/FAULT
+       verdict inside an armed window takes the safe posture (feed
+       hold + run airflow; laser mode drops the spindle in hold).
+       SUSPECT auto-resumes on a clean re-check; FAULT leaves the hold
+       and the gate for the operator.
+     - **Host verification** (`scripts/bench/laser_stream_test.py`,
+       null-sink + `GFSINK_DUMP` stream capture, M4 job S500→S1000
+       with a G0 return): power byte leads the stream, no consecutive
+       power bytes, first FIRE bit rides nonzero duty, M4 dynamic
+       accel scaling visible (duties 44/52 on the ramp), S500 plateau
+       63 / S1000 127 exact, 28 354 fire ticks = the cutting time at
+       28160 Hz, X peak 533 steps net 0 (steps survive the
+       insertions), and 534 dark steps after the last fire bit = the
+       entire G0 return.
+     - **On-board no-fire verification 15/15 PASS** (chain unarmed,
+       nobody at the button; `laser_arm_test.py` drill): latch locked
+       at idle and through jogs (interlock_circuit 13), M4 → prompt +
+       latch unlocked (5) + button LED white + run fans forced +
+       status served during the wait, soft-reset abort relocks + LED
+       off, 3 s timeout drill → warning + ALARM:3 + relock, jogs
+       clean after. One transient on the first-ever arm: the
+       air-assist run write didn't land (204) - a head-I²C first-write
+       blip; deterministic PASS on every rerun, and real jobs re-apply
+       run fans with every M8. Note for senders: a disconnecting
+       sender leaves a pending arm wait until the button timeout
+       clears it (latch relocks then).
+     - **Remaining for first light** (operator present, coolant
+       flowing, never autonomous): the chain-armed procedure itself;
+       verify the hardware button latch persists across kernel-run
+       gaps mid-job (if OK_2_FIRE drops between motion bursts, the
+       fix is a stream keepalive across armed gaps); interlock-trip
+       recovery; warm-baseline flow-check behavior under real laser
+       heating; then the planned low-temperature gates and TEC
+       handling below.
    - **LASER_PWM waveform: PASSED 2026-08-02** (scope on the physical
      pin). Method: direct PWMSAR duty steps (`scripts/bench/pwm_sweep.py`
      / `pwm_hold.py`) with the controller stopped, cnc `disabled`

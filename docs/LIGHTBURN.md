@@ -1,11 +1,29 @@
-# LightBurn setup & operation (ForgeFIRM, motion-only stage)
+# LightBurn setup & operation (ForgeFIRM)
 
-Status: motion-only. At this
-stage **the laser cannot fire** — the driver forces the hardware laser
-latch locked and never emits the laser bit in the pulse stream. A "job"
-runs every motion of the design (cuts at cut speed, travels at travel
-speed) with the beam off. Live fire is a later milestone, gated on the
-standing scope checks (BRINGUP.md).
+Status: laser software implemented, **first light pending** (see
+BRINGUP.md for the commissioning record). The laser fires only inside
+an operator-armed window:
+
+- **Starting a job that fires: press the button.** At the first
+  laser-on command of a job the machine unlocks its laser latch,
+  lights the big button **white**, and pauses the incoming gcode until
+  you **press the button** (the same press the factory firmware
+  requires). LightBurn simply waits; press the button and the job
+  runs. If nobody presses within `laser_button_timeout_s` (default
+  300 s) the job aborts with alarm 3. Stop in LightBurn (soft reset)
+  cancels the wait at any time.
+- One press covers the whole job — power changes and M5/M3 toggles do
+  not re-prompt. The window relocks after `laser_disarm_s` (default
+  60 s) of idle with the spindle off; the next job prompts again.
+- S-value scale: `$30` defaults to 1000, so set LightBurn's S-max to
+  1000. 100 % power = S1000. Use M4 (variable/dynamic) mode for cuts
+  and engraves.
+- The machine forces the cut fan profile on while armed and
+  continuously verifies coolant flow; a flow fault or over-temperature
+  pauses/blocks firing (messages appear in LightBurn's console).
+- The hardware safety chain stands above all of this: lid open,
+  interlock open, or power faults make firing physically impossible
+  regardless of software state.
 
 ## One-time device setup
 
