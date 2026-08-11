@@ -646,7 +646,9 @@ accordingly ("Automatic — AP country, else World").
    the contract. **No live fire before the standing scope gates.** Gate
    status:
    - **GRBL-MODE LASER SOFTWARE: IMPLEMENTED 2026-08-09, bench-verified
-     without fire. FIRST LIGHT PENDING (operator-run, chain armed).**
+     without fire. FIRST LIGHT LANDED 2026-08-11 — first GRBL-mode burn
+     completed (operator-run LightBurn job, chain armed, motor-rail
+     settle in place).**
      - Architecture: the real spindle lives in
        `grblHAL-glowforge/src/glowforge_laser.c`; per-segment spindle
        updates (the core's laser-mode path, running on the stepper
@@ -714,14 +716,14 @@ accordingly ("Automatic — AP country, else World").
        run fans with every M8. Note for senders: a disconnecting
        sender leaves a pending arm wait until the button timeout
        clears it (latch relocks then).
-     - **Remaining for first light** (operator present, coolant
-       flowing, never autonomous): the chain-armed procedure itself;
-       verify the hardware button latch persists across kernel-run
-       gaps mid-job (if OK_2_FIRE drops between motion bursts, the
-       fix is a stream keepalive across armed gaps); interlock-trip
-       recovery; warm-baseline flow-check behavior under real laser
-       heating; then the planned low-temperature gates and TEC
-       handling below.
+     - **Remaining commissioning items** (first light itself landed
+       2026-08-11; operator present, coolant flowing, never
+       autonomous): verify the hardware button latch persists across
+       kernel-run gaps mid-job (if OK_2_FIRE drops between motion
+       bursts, the fix is a stream keepalive across armed gaps);
+       interlock-trip recovery; warm-baseline flow-check behavior
+       under real laser heating; then the planned low-temperature
+       gates and TEC handling below.
      - **2026-08-11: the failed first-light attempts' no-motion root
        cause — fast 40 V motor-rail bounces — found and mitigated.**
        An off→on bounce of the 40 V rail within ~tens to hundreds of
