@@ -222,8 +222,13 @@ its planned scope. The meta-forgefirm recipe pins its SRCREV (bump
 deliberately after pushing) and installs the sysvinit script from the
 repo's `init/`; bench builds cross-compile with
 `forgefirm/scripts/bench/build-forgectrl.sh` (same toolchain-borrow
-pattern as build-glowforge.sh). One ulfius daemon exposes both OV5648
-cameras as MJPEG over the mainline imx-media pipeline:
+pattern as build-glowforge.sh). The **machine-services contract** —
+the EV_SW switch map, the authoritative sensor conversions, the
+hardware single-writer ownership matrix, and the interface for the
+shared cooling service both controller modes will use — is
+`forgectrl/docs/SERVICES.md` in the forgectrl repo. One ulfius daemon
+exposes both OV5648 cameras as MJPEG over the mainline imx-media
+pipeline:
 
 - `GET /` — the tabbed machine control panel (Status / Machine /
   GF Cloud / GRBL / Diagnostics; ui.c): status page with the
@@ -717,6 +722,34 @@ accordingly ("Automatic — AP country, else World").
        recovery; warm-baseline flow-check behavior under real laser
        heating; then the planned low-temperature gates and TEC
        handling below.
+     - **2026-08-11: the failed first-light attempts' no-motion root
+       cause — fast 40 V motor-rail bounces — found and mitigated.**
+       An off→on bounce of the 40 V rail within ~tens to hundreds of
+       ms (the gfhome→grbl homing handover measured 38–360 ms in
+       dmesg) can leave the supply folded back: SDMA playback and the
+       position/byte counters run in exact real time while the X/Y
+       motors produce no torque, or stall mid-sweep. Bench matrix:
+       raw replay of the captured job stream (bytes verified to carry
+       correct steps/fire/power content) reproduced no-motion with
+       perfect counters; `disable` → ≥2 s rail-off → `clear_all
+       (lseek 0)` → `enable` restores torque; a deliberate 40 ms
+       bounce reproduced a mid-sweep stall; one post-heal baseline
+       still failed — **the rail is marginal at the hardware level;
+       watch it**. Exonerated by bisection (Z-hall stream probes +
+       operator-observed 20 mm X sweeps): stream content, kernel
+       module and SDMA context, the granular lseek clears, analog
+       config values, PIC currents, close/reopen, stop, halt.
+       Driver mitigation (grblHAL-glowforge b7264bf): every takeover
+       of the pulse device (init and homing-session resume) starts
+       with a deliberate rail-off settle, conf key `rail_settle_s`
+       (default 2.5 s, 0 disables).
+       **SAFETY COROLLARY: advancing position counters are NOT proof
+       of physical motion** — an armed job can fire with the gantry
+       stalled (dwell burn). The laser milestone needs a physical
+       motion-liveness gate (limit switches when they land, or the
+       head accelerometer); until then the first-light procedure is:
+       operator watches from the first commanded move and stops the
+       job on any no-motion.
    - **LASER_PWM waveform: PASSED 2026-08-02** (scope on the physical
      pin). Method: direct PWMSAR duty steps (`scripts/bench/pwm_sweep.py`
      / `pwm_hold.py`) with the controller stopped, cnc `disabled`
