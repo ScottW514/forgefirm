@@ -8,40 +8,21 @@
 # Short-Description: grblHAL motion controller (Grbl over TCP:23)
 ### END INIT INFO
 
-DAEMON=/usr/bin/grblHAL_glowforge
-PIDFILE=/var/run/grblhal.pid
-LOG=/data/glowforge.log
-CONF=/data/forgefirm.conf
-
-# Boot-time controller-mode dispatch: this service runs the machine in
-# GRBL mode. controller_mode = cloud (once that mode exists, with its
-# own service consulting the same key) keeps grblHAL down; anything
-# else - grbl, unset, or no config file - starts it.
-controller_mode() {
-    [ -r $CONF ] || { echo grbl; return; }
-    m=$(sed -n 's/^[ \t]*controller_mode[ \t]*=[ \t]*\([a-z]*\).*/\1/p' $CONF | tail -n 1)
-    echo "${m:-grbl}"
-}
+# The controller lifecycle belongs to the forgectrl supervisor: it
+# spawns the controller selected by controller_mode as a direct child
+# (that relationship carries the pulse-device fd and death detection).
+# This script remains only as a manual emergency stop.
 
 case "$1" in
   start)
-    if [ "$(controller_mode)" = "cloud" ]; then
-      echo "grblHAL not started (controller_mode = cloud)"
-      exit 0
-    fi
-    echo "Starting grblHAL"
-    start-stop-daemon -S -q -p $PIDFILE -m -b -x /bin/sh -- \
-      -c "cd /data && GFSINK=/dev/glowforge exec $DAEMON -p 23 -e /data/EEPROM-glowforge.DAT >> $LOG 2>&1"
+    echo "grblHAL is managed by forgectrl (POST /mode to switch controllers)"
     ;;
   stop)
     echo "Stopping grblHAL"
-    start-stop-daemon -K -q -p $PIDFILE
-    rm -f $PIDFILE
+    pkill -x grblHAL_glowfor 2>/dev/null
     ;;
   restart)
     $0 stop
-    sleep 1
-    $0 start
     ;;
   *)
     echo "Usage: $0 {start|stop|restart}"
