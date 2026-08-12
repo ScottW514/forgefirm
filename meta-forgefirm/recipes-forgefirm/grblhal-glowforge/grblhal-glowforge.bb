@@ -11,7 +11,7 @@ PV = "0.1.0"
 # upstream).
 SRC_URI = "gitsm://github.com/ScottW514/grblHAL-glowforge.git;protocol=https;branch=main"
 # Pinned; bump deliberately after pushing grblHAL-glowforge changes.
-SRCREV = "20201fe8f6ac4360bba8c111d220081aa289240e"
+SRCREV = "9a91e18fae87fa291cc4bca648677d7867ec7c2b"
 
 SRC_URI += "file://grblhal.init"
 
