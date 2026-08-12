@@ -76,6 +76,25 @@ motion constants were extracted from the `_RESOURCES` pulse files
   `GLOWFORGE_DEFAULTS` values, run `$RST=$` once on the board (the sim
   persists settings in its eeprom file in /data).
 
+**First light: 2026-08-11** — first GRBL-mode burn (operator-run
+LightBurn job, chain armed; details in the laser item under Next work).
+
+**Shared machine services: complete and bench-verified 2026-08-11.**
+forgectrl is the machine-services daemon: the cooling engine (single
+thermal-hardware owner for both controller modes, flow verification and
+over-temp policy behind the `/cool/state` + verdict-file channels), the
+controller-mode supervisor (one managed child, live `POST /mode`
+switching, crash respawn with machine safing, a respawn wrapper on
+forgectrl itself with retake-at-idle), the pulse-device broker (one
+exclusive `/dev/glowforge` hold for the daemon's lifetime — handovers
+and respawns never cycle the 40 V rail), and the **motion-liveness
+gate**: the head accelerometer is the only truth about physical motion
+(the DRV8825 drivers can wedge unserviceably on rail glitches with
+counters running normally — see the hardware facts bank), so the
+supervisor probes real motion before each session's first controller
+spawn and gfhome refuses to report a homing the accelerometer did not
+witness. The contract for all of it is `forgectrl/docs/SERVICES.md`.
+
 ## The bench
 
 - **Board**: SSH `root@172.16.1.97` (fixed DHCP lease since 2026-08-02;
@@ -149,12 +168,18 @@ grblHAL driver repo** (github.com/ScottW514/grblHAL-glowforge, branch
 `forgefirm` = **upstream master + the step_us_min buffer fix pending
 upstream**; the settings-write crash fix merged upstream 2026-08-04 as
 grblHAL/core PR #999), `driver.c` implementing the HAL, machine
-constants in `src/boards/glowforge.h`. **The controller autostarts at boot** since
-2026-08-03: the `grblhal-glowforge` recipe (meta-forgefirm; gitsm pin +
-sysvinit script `grblhal`, defaults 92) is installed in both images, and
-the same init script is installed on the current bench rootfs
-(reboot-verified: controller + forgectrl both up unattended, Grbl
-answering on :23). The manual start below remains the bench/debug path. Architecture: a wall-paced producer thread runs
+constants in `src/boards/glowforge.h`. **The controller is spawned and
+supervised by forgectrl**: the supervisor starts the controller selected
+by `controller_mode` (grbl | cloud) as a direct child, respawns it on a
+crash (after safing the machine), and switches modes live via
+`POST /mode` / the Status-tab selector. The `grblhal` and `gfcloud` init
+scripts defer to it (they remain only as manual emergency stops). The
+pulse device arrives as a broker-inherited fd (`GF_PULSE_FD`; see the
+pulse-device ownership section of forgectrl `docs/SERVICES.md`) — the
+device never closes across mode switches, homing handovers, or respawns,
+so the 40 V rail never cycles as a side effect, and the supervisor
+verifies **physical motion** (head-accelerometer liveness probe) before
+the first controller spawn of each session. Architecture: a wall-paced producer thread runs
 the core stepper ISR against a virtual step clock (1000× machine tick)
 and maps step events to pulse bytes; a SCHED_FIFO shipper feeds
 `/dev/glowforge` with the bounded queue; a recursive core mutex stands in
@@ -167,18 +192,25 @@ hardware I/O — host testing).
    force-included into the core: 53.333 µsteps/mm XY @ ×8, 2.832
    half-steps/mm Z, 0.417" Z travel, 12000 mm/min max, 700/590 mm/s²
    accel — factory-derived, see `puls_profile.py`).
-2. Deploy to `/usr/bin/grblHAL_glowforge` on the board (kill the running
-   instance first — the binary can't be overwritten while executing).
-3. Start: `cd /data && GFSINK=/dev/glowforge grblHAL_glowforge -p 23 -e
-   /data/EEPROM-glowforge.DAT` (no `-t` — real-time pacing is intrinsic
-   now). Env knobs: `GFSINK_RATE` (machine tick, default 28160 Hz =
-   factory travel tick), `GFSINK_DEPTH_MS` (queue depth = feed-hold
-   latency, default 200). The driver applies the full analog machine
-   config itself at init (×8 modes, decay 1, motor_lock 8, laser latched,
-   PIC hold currents) and swaps PIC run/hold currents around motion. If
-   the baked $-defaults changed since the last run, `$RST=$` once (stored
-   settings win). Each motion run logs a producer-stats line to stderr
-   (callbacks, µs/call, max-behind, clamped) — clamped should stay 0.
+2. Deploy: move the new binary over `/usr/bin/grblHAL_glowforge` (mv
+   replaces the inode, so the running instance is untouched), then kill
+   the running controller — the supervisor respawns it on the new binary
+   within about a second.
+3. Standalone start (bench/debug only — requires forgectrl stopped,
+   since the broker's exclusive hold on `/dev/glowforge` makes any
+   self-open fail EBUSY): `cd /data && GFSINK=/dev/glowforge
+   grblHAL_glowforge -p 23 -e /data/EEPROM-glowforge.DAT`. Env knobs:
+   `GFSINK_RATE` (machine tick, default 28160 Hz = factory travel tick),
+   `GFSINK_DEPTH_MS` (queue depth = feed-hold latency, default 200).
+   Standalone, the driver opens the device itself and every takeover
+   runs the `rail_settle_s` off-period; under the broker it inherits
+   the fd and skips the settle (the rail never dropped). The driver
+   applies the full analog machine config at init either way (×8 modes,
+   decay 1, motor_lock 8, laser latched, PIC hold currents) and swaps
+   PIC run/hold currents around motion. If the baked $-defaults changed
+   since the last run, `$RST=$` once (stored settings win). Each motion
+   run logs a producer-stats line to stderr (callbacks, µs/call,
+   max-behind, clamped) — clamped should stay 0.
 4. Connect LightBurn/UGS to `172.16.1.97:23`, or jog raw:
    `$J=G91X40F1200`. `^X` mid-motion aborts via kernel `cnc/stop`
    (controlled decel) and raises an alarm; TCP disconnects never kill the
@@ -212,28 +244,40 @@ image binaries — grblHAL (fortified) serves at 1.0 ms RTT with exact
 jogs, $0 min 35.5 intact, $H rejected ($22=0); forgectrl streams
 15.0 fps, `"buffers":"cached"`, vpu, 41% CPU; grblHAL idle 2.1%.
 
-## The camera service (forgectrl, port 8080)
+## The machine-services daemon (forgectrl, port 8080)
 
 Source: `C:\dev\openglow-forgefirm\forgectrl` — the **canonical repo**
 (github.com/ScottW514/forgectrl, branch `main`, MIT). forgectrl is the
-ForgeFIRM control daemon: camera service today; realtime hardware
-status/settings, hardware control, and GRBL-vs-cloud mode selection are
-its planned scope. The meta-forgefirm recipe pins its SRCREV (bump
+ForgeFIRM machine-services daemon: **controller-mode supervision** (it
+spawns exactly one of grblHAL / gfcloud as a direct child, respawns on
+crash after safing the machine, and switches live via `POST /mode`),
+the **pulse-device broker** (one exclusive hold on `/dev/glowforge` for
+its lifetime; controllers inherit the fd, the rail never cycles on
+handovers, and the supervisor is the writers' dead-man), the
+**motion-liveness gate** (head-accelerometer probe before the first
+spawn of each session, with a rail-off recovery ladder for wedged
+DRV8825 drivers and a loud `motion-fault` state), the **cooling
+engine** (single owner of fans/pump/TEC/heater for both modes:
+`POST /cool/state` job reports in, the `/run/forgefirm/cooling.state`
+verdict file out), plus cameras, telemetry, settings, diagnostics, the
+web panel, and updates. It runs under a respawn wrapper (its init
+script) and a restarted daemon retakes supervision automatically once
+the machine is idle. The meta-forgefirm recipe pins its SRCREV (bump
 deliberately after pushing) and installs the sysvinit script from the
 repo's `init/`; bench builds cross-compile with
 `forgefirm/scripts/bench/build-forgectrl.sh` (same toolchain-borrow
 pattern as build-glowforge.sh). The **machine-services contract** —
 the EV_SW switch map, the authoritative sensor conversions, the
-hardware single-writer ownership matrix, and the interface for the
-shared cooling service both controller modes will use — is
+hardware single-writer ownership matrix, the cooling channels, mode
+supervision, and pulse-device ownership — is
 `forgectrl/docs/SERVICES.md` in the forgectrl repo. One ulfius daemon
-exposes both OV5648 cameras as MJPEG over the mainline imx-media
-pipeline:
+serves it all, including both OV5648 cameras as MJPEG over the
+mainline imx-media pipeline:
 
 - `GET /` — the tabbed machine control panel (Status / Machine /
   GF Cloud / GRBL / Diagnostics; ui.c): status page with the
-  controller-mode selector (GRBL active; factory cloud disabled until
-  implemented), the operational dashboard, a scaled lid snapshot +
+  controller-mode selector (live switch through the supervisor; the
+  setting persists for boot), the operational dashboard, a scaled lid snapshot +
   on-demand live stream, and the settings forms for display units,
   homing method, home-position calibration, the nine cooling
   tunables, identity overrides, and the session timeout. All
@@ -265,6 +309,16 @@ pipeline:
   **Writes 409 unless cnc/state is idle** (the controller and homing
   runner read the file mid-run) — live-verified during a jog — **and
   409 while a diagnostic owns the hardware**.
+- `GET /mode` / `POST /mode?controller=grbl|cloud` — the supervisor:
+  current mode, controller state (`running | stopped | standby |
+  motion-fault`), pid, and the motion-liveness verdict
+  (`verified | unverified | fault`); the POST is the live idle-gated
+  mode switch and the retry lever after a motion fault.
+- `POST /cool/state` (job-state reports from the active controller,
+  level-triggered ~1 Hz) and `GET /cool/status` (engine phase, verdict,
+  temps, report age) — the cooling engine's channels; the verdict the
+  controllers enforce is the `/run/forgefirm/cooling.state` file, per
+  the SERVICES.md contract.
 - `POST /diag/flow-verify`, `POST /diag/flow-calibrate`,
   `POST /diag/abort`, `GET /diag/status` — the diagnostics runner
   (own section below). `GET /status` carries a `diag` flag for the
@@ -390,15 +444,18 @@ max. Images from 20260807204056 carry forgectrl at the bumped SRCREV
 ## Diagnostics (forgectrl-owned hardware tests)
 
 The Diagnostics tab runs tools that **take the hardware over**: the
-runner (forgectrl diag.c, one slot) stops the `grblhal` service
-(launch is gated on cnc idle + no diagnostic), drives the loop
-directly through sysfs — the same model as the bench characterization
-scripts — and restarts the service on every exit path (completion,
-tool error, operator abort via `POST /diag/abort`, safety ceiling).
-`/run/forgefirm-diag.active` marks the ownership; forgectrl startup
-recovers a stale marker (stand-down + controller start), covering a
-daemon crash mid-diagnostic. The laser is untouched throughout (latch
-stays locked). While a diagnostic runs: settings POSTs 409, `/status`
+runner (forgectrl diag.c, one slot) suspends the active controller
+through the supervisor (launch is gated on cnc idle + no diagnostic),
+drives the loop directly through sysfs — the same model as the bench
+characterization scripts — and resumes the controller on every exit
+path (completion, tool error, operator abort via `POST /diag/abort`,
+safety ceiling); the controller that returns is the selected mode's,
+whichever that is. The cooling engine suspends its own writes for the
+duration and publishes fire-blocked. `/run/forgefirm-diag.active`
+marks the ownership; forgectrl startup recovers a stale marker
+(stand-down + controller resume), covering a daemon crash
+mid-diagnostic. The laser is untouched throughout (latch stays
+locked). While a diagnostic runs: settings POSTs 409, `/status`
 reports `diag:true`, and the whole panel locks with a banner. Live
 progress (phase, elapsed, both coolant temps, a scrolling log) streams
 through `GET /diag/status` on a 2.5 s poll; results persist on the
@@ -418,14 +475,18 @@ windows hard-abort at 48 °C downstream):
   refuses when the gap is under 3 °C (raise the duty and rerun) —
   the per-machine path for replacement coolant or a swapped pump.
 
-**Cooling tunables are conf-backed since 2026-08-08**: the nine
-`cool_*` keys (flow_rise, flow_heater_pct, flow_check_s, recheck_s,
-confirm_max_s, temp_max, temp_resume, cooldown_s, cooldown_max_s) live
-in `/data/forgefirm.conf` (forgectrl Machine tab, validated ranges),
-the driver re-reads them at **every flood start** (env `GFCOOL_*` >
-conf > compiled default; env stays the bench-override path — it wins
-for the process lifetime), and the conf parser now lives in
-`glowforge_io.c` shared with homing.
+**Cooling tunables are conf-backed**: the nine `cool_*` keys
+(flow_rise, flow_heater_pct, flow_check_s, recheck_s, confirm_max_s,
+temp_max, temp_resume, cooldown_s, cooldown_max_s) live in
+`/data/forgefirm.conf` (forgectrl Machine tab, validated ranges), and
+the **cooling engine** (forgectrl cool.c — the single fan/pump/TEC/
+heater owner for both controller modes) re-reads them at **every run
+start** (env `GFCOOL_*` > conf > compiled default; env stays the
+bench-override path — it wins for the process lifetime). The GRBL
+driver is a thin client of the engine: it reports job state, enforces
+the published verdict in-process (fire gate, hold/resume, the
+compiled-duty emergency fallback), and touches no thermal hardware
+otherwise; the cloud client works the same way.
 
 Bench record 2026-08-08 (hot-deployed binaries, all through the HTTP
 API): **conf plumbing** — `cool_flow_rise=8` posted, next M8's healthy
@@ -778,6 +839,25 @@ accordingly ("Automatic — AP country, else World").
        head accelerometer); until then the first-light procedure is:
        operator watches from the first commanded move and stops the
        job on any no-motion.
+     - **2026-08-11 (later, same day): root cause corrected and the
+       liveness gate landed.** The supply is fine — the **DRV8825
+       stepper drivers wedge on rail glitches** (operator diagnosis;
+       see the hardware facts bank): whether a given power-up leaves
+       them unserviceable is chance, which is why one clean-settle
+       baseline still failed. The mitigation stack is now: the
+       pulse-device broker (the rail never cycles on handovers), the
+       supervisor's **head-accelerometer liveness probe** before each
+       session's first controller spawn (+X-first per the cable rule,
+       laser latched; rail-off recovery ladder 5/15/30 s on a dead
+       verdict; `motion-fault` state when the drivers won't recover),
+       and **gfhome's hardened completion** (a run of near-identical
+       cloud corrections aborts the session; quiet without an
+       accel-witnessed motion window is a failure, not a homing —
+       proven the hard way when the service repeated one correction
+       eleven times into a motionless gantry, gave up, and the old
+       quiet heuristic reported homed). A genuine accel-witnessed
+       homing (8 motion windows, head at the corner,
+       operator-confirmed) closed the episode.
    - **LASER_PWM waveform: PASSED 2026-08-02** (scope on the physical
      pin). Method: direct PWMSAR duty steps (`scripts/bench/pwm_sweep.py`
      / `pwm_hold.py`) with the controller stopped, cnc `disabled`
