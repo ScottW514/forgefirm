@@ -522,6 +522,32 @@ accordingly ("Automatic — AP country, else World").
 
 ## Hardware facts bank (measured)
 
+- **DRV8825 stepper drivers wedge on 40 V rail glitches** (factory board;
+  the TMC2130s belong to the upgraded OpenGlow board only). A glitch can
+  leave the drivers unserviceable: SDMA playback and the position
+  counters run normally while the motors produce nothing. Their reset
+  lines are strapped (no kernel pin), `cnc/faults` does not flag the
+  state, and whether a given rail power-up wedges them is chance —
+  identical settle cycles produce different outcomes. Recovery: a longer
+  true power-off (the forgectrl supervisor ladders 5/15/30 s) and, at
+  worst, a full machine power cycle. Consequences: **counters, anchors,
+  and `H:1` are never proof of motion**; keep the rail up (every
+  power-up is a wedge lottery), which is why the pulse-device broker
+  exists and why there is no idle-rail-off policy.
+- **Motion liveness = the head accelerometer** (`glowforge.dts`
+  `head-accel`, i2c-3 @0x1e — resolve iio devices by bus path, never by
+  index; lid = i2c-0 @0x1e, board = i2c-3 @0x1d). Bench-characterized on
+  an identical commanded 30 mm move: wedged drivers ≤ ~210 counts
+  peak-to-peak on X/Y (noise floor at 1 g ≈ 16384); real motion
+  ≥ ~1000 p2p. The forgectrl liveness probe gates controller start on
+  p2p ≥ 500 (dead ≤ 250); gfhome requires at least one accel-witnessed
+  motion window before a quiet service counts as homed. Raw sysfs accel
+  reads are slow (~150 ms each) — enough for a binary verdict over a
+  multi-second window, not for waveforms (iio buffers exist, no trigger
+  devices in this kernel).
+- **Any probe/liveness move goes RIGHT (+X) first, then back**: a cable
+  lives at the end of LEFT travel and must never be crushed.
+
 - SDMA pulse engine: ring size = the `ring_mb` module parameter
   (default 16 MiB; power of two, must fit the 16 MiB `cnc-pulsebuf` DT
   pool; both were 128 MiB before 2026-08-03 — shrinking returned
