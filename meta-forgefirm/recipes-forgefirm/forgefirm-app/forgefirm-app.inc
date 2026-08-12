@@ -10,6 +10,9 @@ SRC_URI = "git://github.com/ScottW514/python3-gfhardware.git;protocol=https;bran
 # Pinned; bump deliberately (AUTOREV is not reproducible).
 SRCREV = "40d0de27083d31f21301060d10bfa855b9158c98"
 
-PV = "0.1.0+git"
+# Bump PV with every SRCREV move: the hash-derived package version is not
+# monotonic on its own and buildhistory QA fails the build when it sorts
+# backwards.
+PV = "0.1.1+git"
 
 S = "${WORKDIR}/git"
