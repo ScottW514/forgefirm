@@ -832,9 +832,11 @@ accordingly ("Automatic — AP country, else World").
        autonomous): verify the hardware button latch persists across
        kernel-run gaps mid-job (if OK_2_FIRE drops between motion
        bursts, the fix is a stream keepalive across armed gaps);
-       interlock-trip recovery; warm-baseline flow-check behavior
-       under real laser heating; then the planned low-temperature
-       gates and TEC handling below.
+       warm-baseline flow-check behavior under real laser heating;
+       then the planned low-temperature gates and TEC handling below.
+       Interlock-trip recovery came out of this list on 2026-08-12 —
+       exercised in commissioning runs (see the readback cross-check
+       below).
      - **2026-08-11: the failed first-light attempts' no-motion root
        cause — fast 40 V motor-rail bounces — found and mitigated.**
        An off→on bounce of the 40 V rail within ~tens to hundreds of
@@ -940,7 +942,8 @@ accordingly ("Automatic — AP country, else World").
      HV_WDOG retriggering only while genuinely cutting, M3/M4/$32
      mapping) plus a chain-armed first-light procedure; the hardware
      verification prerequisites are complete. Interlock-trip recovery
-     behavior remains to be exercised (non-scope check).
+     (the one non-scope check that was left) was exercised in
+     commissioning runs and closed 2026-08-12.
    - **Fan/thermal control (operator-mandated laser-on prerequisite):
      DONE 2026-08-02, bench-verified** (test
      `scripts/bench/fan_test.py`). The policy described in this and the
@@ -1156,8 +1159,18 @@ accordingly ("Automatic — AP country, else World").
      floor so the TEC can never drive the loop toward condensation/
      freeze territory. Exact policy (and whether the /status panel
      shows TEC as absent vs off) lands with the implementation.
-   - **Interlock readback semantics cross-check: OPEN** (see
-     factory-laser-safety-readbacks notes).
+   - **Interlock readback semantics cross-check: CLOSED 2026-08-12.**
+     The full `interlock_circuit` bitmask is mapped: b0 (SoC-side
+     LASER_ON monitor, active low), b1 (FIRE, active high) and b3
+     (latch, 1 = locked) were pinned by the 2026-08-02 scope
+     experiment recorded in the gate section above; b2 (button latch)
+     and b4 (interlock latch reset) come from the factory decode the
+     attrs were ported from. The armed kill-mid-FIRE drills exercised
+     the mask across armed, firing, idle and disarmed states with
+     consistent readings, and interlock-trip recovery is confirmed
+     from commissioning runs. Attribute semantics are documented in
+     `kernel-module-glowforge/UAPI.md`; note `cnc/laser_latch` is
+     write-only, so lock state is read from `interlock_circuit` b3.
    - **Head-IRQ source validation — beam-emission hypothesis: OPEN
      (exploratory feature; NOT a first-light prerequisite).** The
      EV_SW `head` bit (GPIO3_22, factory pad name HEAD_IRQ; the
@@ -1295,7 +1308,13 @@ accordingly ("Automatic — AP country, else World").
      skipping into sub-threshold grinding — so any contact-sensing
      scheme must strike fast.
 4. **6.5 safety mapping**: door/estop evdev → feed-hold/halt in the
-   backend; underrun → grblHAL alarm; interlock-trip recovery check.
+   backend; underrun → grblHAL alarm. The driver reads EV_SW only for
+   the arm-flow button today (`driver.c` still calls these inputs a
+   later milestone), so this is wiring an already-documented signal —
+   the switch map is in `forgectrl/docs/SERVICES.md` and forgectrl
+   serves the live states — into the controller's real-time path.
+   Open question from the audit (N5): whether the laser latch needs a
+   software reset path. Interlock-trip recovery: closed 2026-08-12.
 4b. **Cloud-mode complete review** (operator-directed 2026-08-03):
    `load_motion` preloads a job's ENTIRE pulse file into the ring with
    no backpressure recovery — with the 16 MiB default ring that caps
