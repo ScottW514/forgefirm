@@ -13,6 +13,6 @@ SRCREV = "7a4973bc9add9cc6f356335669b282fcd7bf7aeb"
 # Bump PV with every SRCREV move: the hash-derived package version is not
 # monotonic on its own and buildhistory QA fails the build when it sorts
 # backwards.
-PV = "0.1.1+git"
+PV = "0.1.2+git"
 
 S = "${WORKDIR}/git"
