@@ -1307,14 +1307,40 @@ accordingly ("Automatic — AP country, else World").
      approaches are near-silent** — belt compliance turns slow-speed
      skipping into sub-threshold grinding — so any contact-sensing
      scheme must strike fast.
-4. **6.5 safety mapping**: door/estop evdev → feed-hold/halt in the
-   backend; underrun → grblHAL alarm. The driver reads EV_SW only for
-   the arm-flow button today (`driver.c` still calls these inputs a
-   later milestone), so this is wiring an already-documented signal —
-   the switch map is in `forgectrl/docs/SERVICES.md` and forgectrl
-   serves the live states — into the controller's real-time path.
-   Open question from the audit (N5): whether the laser latch needs a
-   software reset path. Interlock-trip recovery: closed 2026-08-12.
+4. **6.5 safety mapping — IMPLEMENTED 2026-08-13, bench validation
+   pending** (`grblHAL-glowforge/src/glowforge_switches.c`). The
+   controller reads EV_SW with `EVIOCGSW` from the protocol thread's
+   realtime hook (no grab — forgectrl polls the same device) and maps:
+   - **doors (bit 3) not closed, or interlock (bit 5) loop open →
+     the core's `safety_door_ajar`.** A running job parks in the door
+     state and resumes when the condition clears, which is what the
+     hardware chain already does to the beam. Bit 3 is the series
+     combination the safety chain itself uses, not the individual door
+     switches.
+   - **e-stop (bit 4): opt-in only.** The line rests ACTIVE on a
+     healthy machine and drops for the duration of any stepper motion
+     on this board, so gating on it would abort every job. Set
+     `estop_halts_motion` in `/data/forgefirm.conf` (hand-edited; it is
+     not in forgectrl's settings whitelist, and unknown keys survive
+     forgectrl's writes) for a machine retrofitted with a real e-stop
+     circuit. Same escape hatch as the cloud client's
+     `MOTION.ESTOP_HALTS_MOTION`.
+   - **interlock latch (bit 6): deliberately not gated on.** Its
+     resting state on a healthy machine is not characterized and a
+     false assertion would wedge every job; the hardware chain enforces
+     it regardless.
+   - No switch device (host builds) = no capability advertised, no
+     signals.
+   **N5 answered: no software latch-reset path is needed.**
+   Interlock-trip recovery was exercised in commissioning runs without
+   one — the chain recovers when the condition clears. `cnc/laser_latch`
+   stays write-only (1 = lock), the driver's arm flow unlocks per job,
+   and `interlock_latch_reset` remains a readback.
+   **Bench items:** open the lid mid-job (expect `Door` at the sender,
+   motion parked, resume on close); jog and `$H` with the lid open
+   (refused); a Pro with an unjumpered interlock connector (expect the
+   same door behavior); confirm no spurious door events across a full
+   job. Underrun → alarm was already covered by the stream-fault path.
 4b. **Cloud-mode complete review** (operator-directed 2026-08-03):
    `load_motion` preloads a job's ENTIRE pulse file into the ring with
    no backpressure recovery — with the 16 MiB default ring that caps
