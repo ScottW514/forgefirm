@@ -168,7 +168,8 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
      `spi-imx.c` has no `PERIODREG`/`word_delay` programming, so re-derive it in
      `spi_imx_setupxfer` (write `MX51_ECSPI_PERIODREG` from `t->word_delay`,
      guarded to ECSPI) and verify the wait-states on a scope. pic.c keeps the
-     inter-transfer delay meanwhile. `glowforge,imx-pwm-audio` (buzzer) deferred.
+     inter-transfer delay meanwhile. The factory `glowforge,imx-pwm-audio`
+   (buzzer) driver is not part of ForgeFIRM.
    - **Camera — DONE and hardware-validated.** The factory
      `ov5648_mipi.c` (NXP's removed `v4l2_int_device`/`mxc_v4l2_capture`) is
      replaced by the mainline `ovti,ov5648` subdev + imx6 `imx-media` (IPU CSI)
@@ -197,9 +198,7 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
    them.
 4. **Device tree — DONE.** The `glowforge` `.dts` is validated against the
    linux-fslc 6.12 bindings and against the running board (motion, safety
-   readbacks, cameras, sensors all bind and work). Residue: `control_12v`
-   still uses the `reg-userspace-consumer` compatible, which matches no 6.12
-   driver — convert it to `regulator-output` or drop the node.
+   readbacks, cameras, sensors all bind and work).
 5. **Real-time strategy — decided.** The kernel runs
    `CONFIG_PREEMPT=y` (factory behavior; `imx_v6_v7_defconfig` alone gives only
    `PREEMPT_VOLUNTARY`). **PREEMPT_RT is not selectable on arm32 6.12** (no
@@ -228,6 +227,10 @@ stack and deploys `forgefirm-image-glowforge.rootfs.wic.gz` (+ `zImage`,
 `glowforge.dtb`, `u-boot-glowforge.imx`) under `build/tmp/deploy/images/glowforge/`.
 Build-time prerequisites baked into the config: `ACCEPT_FSL_EULA = "1"` (NXP
 firmware-imx — the image also installs `firmware-imx-lic` so the EULA text
-ships beside the blobs) and the kernel default in `glowforge.conf`. The stack
+ships beside the blobs) and the kernel default in `glowforge.conf`. Every
+`LICENSE` string in the layers this build uses (`meta-forgefirm`,
+`meta-glowforge-bsp`, `meta-openglow-core`) is SPDX; the pre-SPDX strings that
+remain live in `meta-openglow-bsp` and the xenomai recipes, which ForgeFIRM
+does not build. The stack
 is hardware-validated end to end: motion timing, the laser and safety chain,
 the camera pipeline, both controller modes, and the A/B install path.

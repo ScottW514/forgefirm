@@ -34,13 +34,13 @@ overrides + multi-key `/settings`; **gfcloud homing LIVE-VERIFIED
 end-to-end** ($H → homed at the factory corner in 65 s; four platform
 bugs fixed — see Next work #3); fd-blocking protocol pacing; the
 fortify step_us_min fix.
-Read together with `AUDIT_ACTION_PLAN.md` in the project root (sibling of
-this repo; per-finding status of the 2026-07-03 audit) and
-`kernel-module-glowforge/UAPI.md` (the pulse-stream feeder contract).
+Read together with `kernel-module-glowforge/UAPI.md` (the pulse-stream
+feeder contract) and `forgectrl/docs/SERVICES.md` (the machine-services
+contract).
 
 ## Where the project stands
 
-**Audit phases 0–5: complete and hardware-verified.** Both motion blockers
+**Platform bring-up: complete and hardware-verified.** Both motion blockers
 fixed (cnc probe / 40v-supply; SDMA script relocated to `<26 0xF00>` with a
 pre-run integrity guard); the end-of-data protocol reworked and bench-proven
 (underrun is a first-class `underrun` state behind the `streaming` attr;
@@ -49,7 +49,7 @@ pre-run integrity guard); the end-of-data protocol reworked and bench-proven
 cloud mode repaired (nvmem identity → fuse hostname verified;
 deadman/safety loop; camera error paths).
 
-**Phase 6 spike: achieved.**
+**The controller spike: achieved.**
 - grblHAL (unmodified core) runs on the board, speaking Grbl
   1.1f over **TCP port 23** (LightBurn-confirmed).
 - Underrun proof: 100 kHz × 120 s under full load, 150 ms queue, 0.2 ms
@@ -1307,7 +1307,7 @@ accordingly ("Automatic — AP country, else World").
      approaches are near-silent** — belt compliance turns slow-speed
      skipping into sub-threshold grinding — so any contact-sensing
      scheme must strike fast.
-4. **6.5 safety mapping — IMPLEMENTED 2026-08-13, bench validation
+4. **Controller safety mapping — IMPLEMENTED 2026-08-13, bench validation
    pending** (`grblHAL-glowforge/src/glowforge_switches.c`). The
    controller reads EV_SW with `EVIOCGSW` from the protocol thread's
    realtime hook (no grab — forgectrl polls the same device) and maps:
@@ -1350,7 +1350,7 @@ accordingly ("Automatic — AP country, else World").
    every job's full pulse file into the logging directory (disk
    filler), and many cloud actions are not currently handled at all —
    review the action surface end to end (gfutilities service layer).
-5. **6.6 camera service: DONE 2026-08-03, bench- and operator-verified**
+5. **Camera service: DONE 2026-08-03, bench- and operator-verified**
    (see "The camera service" section above; LightBurn streams it
    directly). Remaining camera work: lens calibration / bed alignment,
    the deferred 5.6 emulator homing-image smoke.
@@ -1360,9 +1360,10 @@ accordingly ("Automatic — AP country, else World").
    the settings-write crash fix is upstream PR grblHAL/core#999; repoint
    the submodule to upstream when it merges). ~~Yocto recipe for
    grblHAL-glowforge~~ **DONE 2026-08-03** (`grblhal-glowforge` in
-   meta-forgefirm, boot autostart, reboot-verified). Remaining: Phase 7
-   doc sweep (CLAUDE.md charter refresh, README roadmap), kas flip +
-   first GitHub release per kas/README.md once ready to publish.
+   meta-forgefirm, boot autostart, reboot-verified). ~~Documentation
+   sweep (CLAUDE.md charter, README roadmap, INSTALL/BUILD/kas README)~~
+   **DONE 2026-08-13.** Remaining: kas flip + first GitHub release per
+   kas/README.md once ready to publish.
 7. **Install/update system overhaul** (planned 2026-08-08): adopt the
    factory A/B slot scheme end-to-end — fwup-packaged signed `.fw`
    releases, single-stage installer, GUI update manager + boot
@@ -1462,3 +1463,53 @@ accordingly ("Automatic — AP country, else World").
      not change where the button is read (per-mode direct evdev, for
      latency) — the switch map itself is contract-documented and
      shared.
+9. **Kernel platform hygiene — CODE-COMPLETE and build-verified
+   2026-08-13 (kernel-module `6fdc4b2`, meta-openglow `34a0e2e`), bench
+   validation pending.** The batch edits the kernel overlay (DTS +
+   config fragment), so it **ships with a full image flash, not a module
+   hot-swap** — flash the next image before running the checks. What
+   changed and what each item needs on the bench:
+   - **Panic handler enabled** (`INSTALL_PANIC_HANDLER 1`), reduced to
+     what is legal in atomic context: `epit_stop()` plus a direct
+     `io_change_pins(cnc_shutdown_pin_changes)` — FIRE parked, charge
+     pump low so the hardware watchdog stops being fed, latch reset
+     asserted, steppers de-energized. It no longer calls
+     `_driver_stop()` (hrtimer cancel, sysfs notify).
+     **Bench:** panic mid-motion with motors locked and the laser
+     latched; confirm motion stops and the safety lines read safe.
+   - **`control_12v` node dropped** along with
+     `CONFIG_REGULATOR_USERSPACE_CONSUMER`; the 12 V rail is
+     `regulator-always-on` and nothing in userspace referenced the node.
+     **Bench:** confirm the rail still comes up and the machine behaves
+     identically.
+   - **`struct gpio_desc` layout hack removed.** The commanded decay
+     mode is tracked per axis and seeded at probe to mixed decay (both
+     pins requested `GPIOF_IN`), instead of reading a private kernel
+     struct. **Bench:** set each mode per axis and read the attr back.
+   - **Module build hygiene:** `-Wno-error` dropped, `.DELETE_ON_ERROR`
+     added, and the warnings that surfaced fixed (missing prototypes now
+     static or declared in the new `ledtrig_smooth.h`; LED teardown no
+     longer flushes the system work queue — the LED work runs on an
+     ordered queue the driver owns and destroys). The recipe passes
+     `KCFLAGS=-Werror` to hold the zero-warning state without making the
+     module's own Makefile unusable against other kernels.
+     **Bench:** LED brightness behavior, and a clean module unload.
+   - **Platform guards** (not reservations — dmaengine has no channel
+     reservation for this path): the SDMA channel number is
+     range-checked and its takeover logged; the EPIT clock rate is read
+     back at probe, failing probe at zero and warning below the rate
+     needed to quantize step frequencies within 1 %; and
+     `io_verify_base_address()` checks the GPIO-number→bank math against
+     each pin's controller node in the DT, warning rather than failing.
+     **Bench:** read the two new probe lines in dmesg and confirm no
+     bank warnings.
+   - **`head_make_safe` implemented:** measure laser off, UV LED off,
+     lens motor de-energized (group-register clear-bits write) — legal
+     now that the dead-man chain is blocking. Head fans and the white
+     LED are deliberately left alone: `SERVICES.md` gives the fans to
+     the cooling engine (whose stand-down keeps airflow after a job
+     dies) and the white LED to the camera. **Bench:** trip the dead
+     man's switch and read the head registers back.
+   - The uniprocessor locking assumption and the panic/dead-man safe
+     states are documented in `kernel-module-glowforge/UAPI.md`; no
+     bench item.
