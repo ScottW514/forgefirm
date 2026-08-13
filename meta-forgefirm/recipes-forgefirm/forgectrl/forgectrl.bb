@@ -9,7 +9,7 @@ PV = "0.1.0"
 
 SRC_URI = "git://github.com/ScottW514/forgectrl.git;protocol=https;branch=main"
 # Pinned; bump deliberately after pushing forgectrl changes.
-SRCREV = "96027b1c90e8bf2e46fa7b0f88307e656405e5ee"
+SRCREV = "c099a288378b15dfc5f32f1a9718e21bcddadcb4"
 
 S = "${WORKDIR}/git"
 

@@ -1396,9 +1396,9 @@ accordingly ("Automatic — AP country, else World").
      drops the rail any more, but the GRBL driver still writes
      `cnc/enable` at init and at homing resume — idempotent, since the
      rail is already up and settled, so this is tidiness rather than a
-     bounce source. The optional idle policy (drop the rail after N
-     idle minutes, always restore it through a settled power-up) is
-     unimplemented.
+     bounce source. (An idle-rail-off policy is not part of this: the
+     rail stays up while the machine is on, per the wedge model in the
+     facts bank.)
    - **Cloud per-job fan profile.** The cloud client passes the pulse
      header's `AArd`/`EFrd`/`IFrd` duties to the engine as the per-job
      run profile. Homing headers are verified end to end (they carry
