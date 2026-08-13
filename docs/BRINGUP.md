@@ -1,6 +1,18 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-08-08** — **SD images 20260808011035 built**
+Last updated: **2026-08-13** — **shared machine services complete and
+closed out.** forgectrl is the one machine-services daemon behind both
+controller modes: the cooling engine (single owner of the thermal
+hardware), controller-mode supervision, the pulse-device broker, and
+the motion-liveness gate. Both controllers are cooling-engine clients
+that enforce the published verdict in-process, and cloud mode ran an
+**11.4 h signed-in soak** on that final stack (12 auth-token refreshes,
+clean stop from the panel and from SIGTERM). First light landed
+2026-08-11 (GRBL mode, operator-run) and the armed kill-mid-FIRE drill
+passed 2026-08-12. The contract is `forgectrl/docs/SERVICES.md`;
+what is left of that work is item 8 under Next work.
+
+Previously — **SD images 20260808011035 built**
 (forgefirm-image + -dev): the first images carrying the whole
 control-panel era — gfcloud homing, the OpenGlow-branded panel with
 the /status dashboard, controller-mode selector + boot dispatch, the
@@ -79,7 +91,8 @@ motion constants were extracted from the `_RESOURCES` pulse files
 **First light: 2026-08-11** — first GRBL-mode burn (operator-run
 LightBurn job, chain armed; details in the laser item under Next work).
 
-**Shared machine services: complete and bench-verified 2026-08-11.**
+**Shared machine services: complete, bench-verified, and closed out
+(2026-08-11 … 2026-08-13).**
 forgectrl is the machine-services daemon: the cooling engine (single
 thermal-hardware owner for both controller modes, flow verification and
 over-temp policy behind the `/cool/state` + verdict-file channels), the
@@ -94,6 +107,17 @@ counters running normally — see the hardware facts bank), so the
 supervisor probes real motion before each session's first controller
 spawn and gfhome refuses to report a homing the accelerometer did not
 witness. The contract for all of it is `forgectrl/docs/SERVICES.md`.
+Both controllers are clients of the engine: the GRBL driver's
+`glowforge_cooling.c` and the cloud client's `coolsvc.py` report job
+state at 1 Hz and enforce the verdict file on their own fire paths,
+each with a compiled-in run-duty fallback for the case where the engine
+is provably absent. Drilled on the board with the operator present:
+engine loss mid-flood and mid-flow-check (warning, fans held, heater
+dropped, restore and resume), an armed kill-mid-FIRE (FIRE gone within
+15–171 ms, latch relocked, burn line ends abruptly), over-temp hold and
+auto-resume inside a real cycle, live mode switches, and a **11.4 h
+cloud-mode soak** on the finished stack. Remaining polish: Next work
+item 8.
 
 ## The bench
 
@@ -918,8 +942,13 @@ accordingly ("Automatic — AP country, else World").
      verification prerequisites are complete. Interlock-trip recovery
      behavior remains to be exercised (non-scope check).
    - **Fan/thermal control (operator-mandated laser-on prerequisite):
-     DONE 2026-08-02, bench-verified** (`glowforge_cooling.c` in the
-     driver; test `scripts/bench/fan_test.py`). Factory pulse-header
+     DONE 2026-08-02, bench-verified** (test
+     `scripts/bench/fan_test.py`). The policy described in this and the
+     following bullets is the cooling engine's; it is now
+     forgectrl `cool.c`, serving both controller modes, and the
+     `GFCOOL_*` env names carry over as bench overrides (the conf keys
+     are the `cool_*` ones — see the cooling-tunables note in the
+     forgectrl section). Factory pulse-header
      values throughout: init = pump on / TEC off / purge on / idle
      fans (air assist 204); **M8** (coolant flood — LightBurn's
      per-layer Air Assist) = cut profile (air 1023, exhaust 65535,
@@ -1020,8 +1049,8 @@ accordingly ("Automatic — AP country, else World").
        manual pump stop/start cycling — the confirmation machinery
        below absorbs it.
      - **Suspicion/confirmation state machine — IMPLEMENTED
-       2026-08-08, bench-drilled 6/6 + escalation** (driver
-       `glowforge_cooling.c`). An over-limit check is a SUSPICION,
+       2026-08-08, bench-drilled 6/6 + escalation** (now in the
+       forgectrl engine). An over-limit check is a SUSPICION,
        not a fault: `COOLANT FLOW SUSPECT` warning + an immediate
        re-check request (no cadence wait). The next completed check
        decides it — "consecutive" means no clean check in between,
@@ -1351,3 +1380,40 @@ accordingly ("Automatic — AP country, else World").
    and the installer now reuse existing mountpoints from /proc/mounts
    and mount fresh targets with explicit `-t ext4` (verified: dmesg
    count unchanged across `ffboot -l`).
+8. **Shared machine services — remaining polish.** The consolidation
+   itself is complete and drilled (see "Where the project stands" and
+   `forgectrl/docs/SERVICES.md`); these are the deliberate leftovers,
+   none of them blocking:
+   - **Diagnostics as engine modes.** The Diagnostics flow tools still
+     drive the thermal hardware themselves while the cooling engine
+     suspends its writes and publishes fire-blocked. The check
+     parameters and factory duties are already shared (`cool.h`, one
+     definition for both), so what remains is folding the tools into
+     the engine as modes and retiring the suspend/resume dance.
+   - **Rail policy** (SERVICES.md "Pulse-device ownership", the one
+     `[contract, pending]` item left). `cnc/enable` / `cnc/disable`
+     are not forgectrl-only writes yet: under the broker no client
+     drops the rail any more, but the GRBL driver still writes
+     `cnc/enable` at init and at homing resume — idempotent, since the
+     rail is already up and settled, so this is tidiness rather than a
+     bounce source. The optional idle policy (drop the rail after N
+     idle minutes, always restore it through a settled power-up) is
+     unimplemented.
+   - **Cloud per-job fan profile.** The cloud client passes the pulse
+     header's `AArd`/`EFrd`/`IFrd` duties to the engine as the per-job
+     run profile. Homing headers are verified end to end (they carry
+     the idle-quiet profile the factory uses — no fans during a hunt);
+     a real print header's duties should be confirmed through the same
+     round trip at the next cloud print.
+   - **`/cool/status` cosmetics.** The endpoint echoes the last
+     reported `armed` flag even when that report is stale
+     (`report_age_s` tells the truth), and a gfcloud homing session
+     reports every motion as a job, so the engine cycles run → smoke →
+     idle per motion. Both are silent and safe — the homing profile
+     keeps the fans at idle duties — but motion actions reporting
+     `idle` would be more honest.
+   - **Button edge detection.** The GRBL arm flow reads the button as
+     an EV_SW level; edge detection belongs in that reader. It does
+     not change where the button is read (per-mode direct evdev, for
+     latency) — the switch map itself is contract-documented and
+     shared.
