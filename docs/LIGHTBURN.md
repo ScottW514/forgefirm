@@ -1,8 +1,6 @@
 # LightBurn setup & operation (ForgeFIRM)
 
-Status: laser software implemented, **first light pending** (see
-BRINGUP.md for the commissioning record). The laser fires only inside
-an operator-armed window:
+The laser fires only inside an operator-armed window:
 
 - **Starting a job that fires: press the button.** At the first
   laser-on command of a job the machine unlocks its laser latch,

@@ -25,6 +25,11 @@ IMAGE_INSTALL:remove = "gfui-client"
 # slotmigrate: boot-time reclaim of the legacy p4 layout (grows /data).
 IMAGE_INSTALL:append = " grblhal-glowforge forgectrl gfhome gfcloud v4l-utils fwup ffboot slotmigrate"
 
+# NXP's firmware EULA covers the i.MX VPU/EPDC blobs the BSP installs, so the
+# image ships the license text with them (/usr/share/licenses/firmware-imx).
+# The SDMA firmware brings its own -license package through linux-firmware.
+IMAGE_INSTALL:append = " firmware-imx-lic"
+
 # The release rootfs must fit a 200 MiB factory eMMC slot (409600 blocks).
 # Sizing: content + 40 MiB working space, hard-capped at the slot size —
 # the build fails rather than emit an unflashable image. The raw ext4 is

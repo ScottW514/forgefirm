@@ -89,11 +89,13 @@ kas auto-loads the lockfile on subsequent runs. Commit it; refresh deliberately.
 The build is only reproducible when recipe pins, layer branches, and the kas
 config move in the right order. The sequence, with current status:
 
-1. **Source repos pushed & pinned** — **DONE.**
-   `kernel-module-glowforge` (`029dfb6`) and `python3-gfhardware` (`9bf31fd`)
-   pushed to GitHub master; both recipes in meta-openglow pin those exact
-   SRCREVs (no `AUTOREV` anywhere). Whenever either repo changes: push it,
-   then bump the recipe `SRCREV` in meta-openglow deliberately.
+1. **Source repos pushed & pinned** — **DONE.** Every source repo
+   (`kernel-module-glowforge`, `python3-gfhardware`, `Glowforge-Utilities`,
+   `grblHAL-glowforge`, `forgectrl`) is on GitHub and its recipe pins an exact
+   `SRCREV` — no `AUTOREV` anywhere. Whenever a source repo changes: push it,
+   then bump the recipe `SRCREV` deliberately (BSP recipes in meta-openglow,
+   ForgeFIRM components in meta-forgefirm) and re-verify with
+   `bitbake -c fetch <recipe>`.
 2. **meta-openglow pushed** — **DONE.** The Scarthgap port lives on
    the **`scarthgap` branch** (Yocto layer convention; the Dunfell-era `master`
    is untouched). Development continues on the local sibling checkout; push /
@@ -104,9 +106,6 @@ config move in the right order. The sequence, with current status:
 4. **At release time**:
    - flip `meta-openglow` in `forgefirm-glowforge.yml` from the local-sibling
      block to the pinned-remote block (commented FUTURE block in the file);
-   - drop meta-openglow's `kernel-module-glowforge.bbappend` (externalsrc to
-     the local sibling — its perl-native DEPENDS is already carried in the
-     base recipe) so a fresh clone is fully self-contained;
    - refresh `kas lock`, tag all repos, and prove self-containment by building
      from a **fresh clone**.
 5. **GitHub release**: run `scripts/release.sh <version>` on the build
@@ -120,8 +119,11 @@ config move in the right order. The sequence, with current status:
    `v<version>` = `FORGEFIRM_RELEASE` = the rootfs `/etc/forgefirm-version`
    = the `.fw` meta-version; `release.sh` enforces the agreement.
 
-For gfhardware development, either bump the recipe pin per iteration or add a
-tracked externalsrc bbappend mirroring the kernel-module pattern.
+All recipes fetch their pinned revision from GitHub, so an image build is
+reproducible from the repos alone. For fast iteration on a source repo, bump
+its pin per iteration, or add a **local, untracked** `externalsrc` bbappend
+pointing at the sibling checkout — never commit one, or released images stop
+matching the pins.
 
 ## Scarthgap migration backlog
 
@@ -145,8 +147,9 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
      `st,lis2hh12` ×3 + `national,lm75b` + `ti,wl1805` + gpio keys/leds bind to
      mainline drivers; `reg-userspace-consumer` enabled via `glowforge.cfg`.
      (SPI-delay / PWM-prescaler dispositions are under Motion polish below.)
-   - **Motion path — DONE (builds clean; runtime needs hardware).** The whole
-     chain forward-ports and compiles on 6.12:
+   - **Motion path — DONE and hardware-validated** (live-fed pulse stream,
+     real gantry motion, laser fire). The whole chain forward-ports and
+     compiles on 6.12:
        - **EPIT API**: `epit_api.c` in `arch/arm/mach-imx` (`CONFIG_MXC_EPIT_API`),
          in vmlinux, symbols exported; `&epit1/&epit2` in the DT.
        - **SDMA-expose**: re-created `dma-imx-sdma.h` + `0003-imx-sdma-*.patch`
@@ -166,16 +169,22 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
      `spi_imx_setupxfer` (write `MX51_ECSPI_PERIODREG` from `t->word_delay`,
      guarded to ECSPI) and verify the wait-states on a scope. pic.c keeps the
      inter-transfer delay meanwhile. `glowforge,imx-pwm-audio` (buzzer) deferred.
-   - **Camera — DONE (builds clean; runtime needs hardware).** The factory
+   - **Camera — DONE and hardware-validated.** The factory
      `ov5648_mipi.c` (NXP's removed `v4l2_int_device`/`mxc_v4l2_capture`) is
      replaced by the mainline `ovti,ov5648` subdev + imx6 `imx-media` (IPU CSI)
      + `imx6-mipi-csi2` receiver. The factory CAM_SEL MIPI switch is modelled
-     with the mainline `video-mux` (gpio-mux on `gpio7 10`): both `ov5648`s →
-     video-mux → `mipi_csi` → IPU CSI. Sensor `xvclk` (25 MHz fixed-clock) +
-     avdd/dovdd/dvdd rails in the DT. All drivers build as modules and
-     `glowforge.dtb` compiles with the full pipeline. **HW bring-up:** confirm
-     the real supply rails, CSI-2 lane count/order and CAM_SEL polarity, then
-     validate with `media-ctl` + a v4l2 capture.
+     with the mainline `video-mux` (gpio-mux on `gpio7 10`): both sensors →
+     video-mux → `mipi_csi` → IPU CSI. Sensor `xvclk` is the board's 24 MHz
+     fixed oscillator (matching the factory DTB); avdd/dovdd/dvdd rails are in
+     the DT. Both cameras stream live through forgectrl (MJPEG at 15 fps with
+     VPU JPEG encode, full-resolution snapshots, mux arbitration).
+     **HD-unit caveat:** the DT lists both `ovti,ov5648` (5 MP) and
+     `ovti,ov8856` (8 MP) at 0x36 so one image covers both, and the driver
+     matching the chip ID wins — but mainline `ov8856` expects a 19.2 MHz
+     xvclk and only warns at 24 MHz, and the capture path is written to
+     ov5648's SBGGR8 2592×1944 format set. 8 MP "HD" modules therefore bind
+     but do not capture; adding 24 MHz PLL modes plus a sensor-aware capture
+     path is the open work.
 3. **u-boot** — **DONE.** The `glowforge` u-boot is
    a standalone `u-boot_2020.01.bb` (Scarthgap's poky has no u-boot 2020.01
    base recipe to extend). It reuses poky's
@@ -186,8 +195,11 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
    `fw_printenv`/`fw_setenv` from `u-boot-fw-utils` to `libubootenv`
    (`PREFERRED_PROVIDER_u-boot-fw-utils` in `glowforge.inc`) when the rootfs needs
    them.
-4. **Device tree** — revalidate the `glowforge` `.dts` against the linux-fslc
-   6.12 DT bindings (paired with the kernel forward-port in #2).
+4. **Device tree — DONE.** The `glowforge` `.dts` is validated against the
+   linux-fslc 6.12 bindings and against the running board (motion, safety
+   readbacks, cameras, sensors all bind and work). Residue: `control_12v`
+   still uses the `reg-userspace-consumer` compatible, which matches no 6.12
+   driver — convert it to `regulator-output` or drop the node.
 5. **Real-time strategy — decided.** The kernel runs
    `CONFIG_PREEMPT=y` (factory behavior; `imx_v6_v7_defconfig` alone gives only
    `PREEMPT_VOLUNTARY`). **PREEMPT_RT is not selectable on arm32 6.12** (no
@@ -200,14 +212,14 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
    the underrun bench ever contradicts this arithmetic. (Bench: 5 s of
    continuous feed at a 1 s buffer depth, zero underruns.)
 
-6. **gfui-client → forgectrl** — the Glowforge **cloud client is excluded**
+6. **gfui-client → forgectrl — DONE.** The stock `gfui-client` is excluded
    from `forgefirm-image` (`IMAGE_INSTALL:remove = "gfui-client"` in
-   `meta-forgefirm/recipes-forgefirm/images/forgefirm-image.bb`) — it connected to
-   Glowforge's servers, the dependency ForgeFIRM exists to cut. Its slot is
-   filled by `forgectrl` (github.com/ScottW514/forgectrl — the ForgeFIRM
-   control daemon; camera MJPEG service today, hardware status/control and
-   GRBL-vs-cloud mode selection planned) plus the `grblhal-glowforge`
-   motion controller (both in the images with boot autostart).
+   `meta-forgefirm/recipes-forgefirm/images/forgefirm-image.bb`). Its slot is
+   filled by `forgectrl` (github.com/ScottW514/forgectrl — the machine-services
+   daemon: web control panel, cameras, telemetry, settings, diagnostics,
+   cooling engine, updates, and controller-mode supervision) plus the two
+   controllers it supervises, `grblhal-glowforge` (Grbl over TCP:23) and
+   `gfcloud` (the optional Glowforge web-service client, off unless selected).
 
 ---
 
@@ -215,6 +227,7 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
 stack and deploys `forgefirm-image-glowforge.rootfs.wic.gz` (+ `zImage`,
 `glowforge.dtb`, `u-boot-glowforge.imx`) under `build/tmp/deploy/images/glowforge/`.
 Build-time prerequisites baked into the config: `ACCEPT_FSL_EULA = "1"` (NXP
-firmware-imx) and the kernel default in `glowforge.conf`. Everything compiles;
-on-hardware bring-up (motion timing, laser/safety chain, camera pipeline) is the
-remaining validation and needs a real board.
+firmware-imx — the image also installs `firmware-imx-lic` so the EULA text
+ships beside the blobs) and the kernel default in `glowforge.conf`. The stack
+is hardware-validated end to end: motion timing, the laser and safety chain,
+the camera pipeline, both controller modes, and the A/B install path.

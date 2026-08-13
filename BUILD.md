@@ -70,6 +70,15 @@ kas lock kas/forgefirm-glowforge.yml
 See [`kas/README.md`](kas/README.md) for details, the container-build option,
 and the Scarthgap migration backlog.
 
+## Third-party firmware licensing
+
+The i.MX6 BSP installs NXP firmware blobs (VPU, EPDC) that are distributed
+under NXP's firmware EULA. The build config accepts it
+(`ACCEPT_FSL_EULA = "1"`), and the image ships the license text alongside the
+blobs at `/usr/share/licenses/firmware-imx/EULA` — keep it there in any
+redistributed image. The SDMA firmware comes from `linux-firmware`, which
+carries its own license package.
+
 ## Write to an SD card
 
 ```console
