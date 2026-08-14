@@ -151,7 +151,11 @@ class Session:
                 return s
             except OSError:
                 time.sleep(0.1)
-        fail("[%s] cannot connect to the controller" % self.name)
+        err = b""
+        if self.proc.poll() is not None:
+            err = self.proc.stderr.read() or b""
+        fail("[%s] cannot connect to the controller (exit=%s)\n%s"
+             % (self.name, self.proc.poll(), err.decode(errors="replace")))
 
     def armed_count(self):
         return "".join(self.log).count(ARMED)

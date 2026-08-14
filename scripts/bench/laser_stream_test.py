@@ -167,7 +167,11 @@ def run_session(name, steps):
             except OSError:
                 time.sleep(0.1)
         if sock is None:
-            fail("[%s] cannot connect to the controller" % name)
+            err = b""
+            if proc.poll() is not None:
+                err = proc.stderr.read() or b""
+            fail("[%s] cannot connect to the controller (exit=%s)\n%s"
+                 % (name, proc.poll(), err.decode(errors="replace")))
 
         log = []
         read_avail(sock, log, 0.5)          # banner / hello
