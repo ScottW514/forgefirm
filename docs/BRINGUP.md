@@ -1,10 +1,45 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-08-14** — **audit remediation Phases 0 through 4
+Last updated: **2026-08-14** — **audit remediation Phases 0 through 5
 landed** (from an independent whole-tree audit dated 2026-08-13; the
 remediation is sequenced behind two gates — GATE A, uncommanded energy,
 before any further live-fire; GATE B, control surface + release, before
 any published release).
+
+**Phase 5 (physical-evidence instrumentation) is code-complete and
+host-verified.** The machine now watches what it *does*, not just what
+it commanded. The cooling engine's 1 Hz tick runs the witnesses:
+`cnc/laser_on_sampled` — the sampled, gated output of the hardware
+AND-gate — is the emission ground truth, and emission sensed with no
+armed window in the recent past stops motion and locks the latch
+(repeating while the evidence persists); laser power-good degradation
+during an armed window warns once per session; `cnc/faults`
+transitions are warned during a run; `pic/hv_current` (the only live
+HV telemetry) is ranged per job (A-1, A-4, A-5). The GRBL controller
+carries its own in-process witness: emission sensed while the armed
+window is closed relocks the latch and raises an alarm (A-1 ctrl
+half). The four `pic/lid_ir_*` channels are polled every tick — each
+job logs baseline and peaks (the characterization dataset), and the
+fire-abort gate (`cool_fire_ir_delta`: sustained rise above run-start
+baseline → motion stopped, latch locked, verdict `FIRE` + hold, smoke
+airflow held) **ships watch-only (delta 0) until the sensors are
+characterized on the bench** (A-2). `/status` exposes the sampled
+evidence, faults, HV, and lid IR; the panel's latch row is relabeled
+*commanded* with sensed emission and power rows beside it. Cloud: a
+failed head capture can no longer leave the measure laser lit — the
+capture runs under try/finally and `_action_cleanup` extinguishes the
+head emitters (C-3). Kernel (rides the pending image flash): the head
+I²C read helpers return signed values with errno propagated, so a bus
+glitch reads as an error instead of `beam_detect_analog=65531` /
+`accel_irq=1` — the witnesses can no longer be spoofed by a failed
+read (K-11). Host verification: forgectrl and the controller build
+clean, stream harness all-PASS byte-identical, cloud client
+byte-compiles. **Bench items:** command a fire window and confirm
+`laser_on_sampled` tracks it (and confirm the idle-state PGOOD
+polarity for the panel row); force a head I²C error and confirm the
+witnesses report error, not a positive; baseline the lid IR channels
+across real jobs and set `cool_fire_ir_delta`; confirm a failed head
+capture leaves the measure laser off.
 
 **Phase 4 (stale-gate cluster) is code-complete and host-verified; all
 of it is hot-deployable (no kernel rows).** The operator-armed window
