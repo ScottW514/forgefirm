@@ -131,6 +131,25 @@ STAMP=$(debugfs -R "cat /etc/forgefirm-version" "$EXT4" 2>/dev/null)
 [ "$STAMP" = "v$VERSION" ] \
   || die "rootfs stamp is '$STAMP', expected 'v$VERSION'"
 
+# Back-door gate: the release image must not ship a passwordless root. A
+# debug-tweaks image sets root's password field empty (root::...); a
+# hardened image leaves it locked (root:*: / root:!:) or hashed. Read the
+# actual built shadow file - this catches the flag however it slipped in
+# (recipe, local.conf, an inherited class).
+ROOT_PW=$(debugfs -R "cat /etc/shadow" "$EXT4" 2>/dev/null \
+          | awk -F: '$1=="root"{print $2; exit}')
+[ -n "$ROOT_PW" ] \
+  || die "release rootfs has a passwordless root (debug-tweaks leaked into forgefirm-image?)"
+echo "root login gate OK (root password field is not empty)"
+
+# Config-level guard: debug-tweaks must not sit in the shared kas config,
+# where it would apply to every target including the release image.
+if ( cd "$REPO" && kas dump kas/forgefirm-glowforge.yml 2>/dev/null ) \
+     | grep -q 'debug-tweaks'; then
+  die "debug-tweaks appears in the resolved kas config - it must live only in forgefirm-image-dev.bb"
+fi
+echo "kas config gate OK (no debug-tweaks in the shared config)"
+
 echo "== pack + sign =="
 STAGE="${RELEASE_STAGING_DIR:-$REPO/release-staging}/v$VERSION"
 mkdir -p "$STAGE"

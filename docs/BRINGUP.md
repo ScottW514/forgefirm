@@ -1,10 +1,52 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-08-14** — **audit remediation Phases 0 + 1 landed**
-(from an independent whole-tree audit dated 2026-08-13; the remediation
-is sequenced behind two gates — GATE A, uncommanded energy, before any
-further live-fire; GATE B, control surface + release, before any
-published release). Phase 0: user-facing laser-safety and
+Last updated: **2026-08-14** — **audit remediation Phases 0, 1, and 2
+landed** (from an independent whole-tree audit dated 2026-08-13; the
+remediation is sequenced behind two gates — GATE A, uncommanded energy,
+before any further live-fire; GATE B, control surface + release, before
+any published release).
+
+**Phase 2 (GATE B, control surface + release) is code-complete and
+host-verified.** forgectrl now has one auth layer applied to every
+endpoint (`src/auth.c`): a first-boot bearer token in `/data`, embedded
+in the panel and required on every state-changing call; a Host
+address-literal check plus `Sec-Fetch-Site`/`Origin` validation that
+refuses cross-site (CSRF) and DNS-rebinding requests; `/cool/state`
+restricted to a loopback peer so a LAN client can no longer spoof a
+thermal stand-down (F-1, F-2). The irrevocable fuse view and
+unsigned-firmware installs additionally require the physical button held
+(F-19, F-1). A native unit test of the real `auth.c` decision logic
+passes all ten cases (authorized POST allowed; CSRF refused even with a
+token; rebinding host refused; missing/wrong token refused; panel
+bootstrap refused over a rebinding host; loopback report allowed, LAN
+spoof refused). Also fixed: the `reply_settings` accumulator overflow
+and its unbounded validators (F-4, F-18); cooling-tunable caps + a
+resume-below-max cross-check + a loud flow-checks-disabled indicator
+(F-5); the upload path is auth+idle+job gated (F-9); the liveness probe
+refuses to move the gantry with a lid/interlock open (F-13);
+`update_job_running()` cross-checks added to the diag and mode-switch
+gates (F-14, partial — targeted checks, not yet a single-lock arbiter);
+`machine_is_idle()` fails **closed** on a read error so a connection
+flood can no longer read as idle mid-cut (X-2); the fd ceiling is raised
+(F-15, partial — the MHD connection cap and moving the camera
+`ensure_engine` `popen()`s out of the HTTP callback are deferred);
+`esc()` and the panel attribute/innerHTML interpolations are escaped
+(F-20); the restore `sh -c` double-shell is gone and the archive name is
+charset-restricted (B-9). Release engineering: `debug-tweaks` moved out
+of the shared kas config into `forgefirm-image-dev.bb` so the release
+`forgefirm-image` is no longer passwordless-root, with a `release.sh`
+gate that reads the built rootfs `/etc/shadow` and fails on an empty
+root password (B-1); the installer copies `ffboot` out of the
+signature-verified new rootfs instead of curl-ing it from a mutable ref
+(B-2); `CONFIG_PANIC_ON_OOPS=y` + `panic=10` route a kernel oops into
+the laser-safing panic handler (B-3, rides the image flash). **GATE B
+requires a bench pass** (a CSRF probe from a second host rejected; a
+spoofed `/cool/state` no longer drops the fans; a 13-max-length
+`POST /settings` does not crash the daemon; a built release image shows
+a non-empty root password), after which — combined with Phase 0's
+safety/regulatory text — the first public `.fw` is allowed.
+
+Phase 0: user-facing laser-safety and
 regulatory text is in place (LIGHTBURN.md "Before you cut", README,
 INSTALL.md "Regulatory and legal" + updater-first update path, a
 persistent panel safety banner), the walkthrough no longer claims the

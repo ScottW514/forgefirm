@@ -115,12 +115,11 @@ local_conf_header:
     PREFERRED_PROVIDER_virtual/kernel = "linux-fslc"
     PREFERRED_VERSION_linux-fslc = "6.12%"
 
-  # Development image features. debug-tweaks gives a passwordless root login for
-  # bench bring-up; kas generates its own local.conf (it does NOT inherit poky's
-  # local.conf.sample), so this must be set explicitly. Drop it (and set a real
-  # root password via extrausers) before any production/field image.
-  image-debug: |
-    EXTRA_IMAGE_FEATURES = "debug-tweaks"
+  # NOTE: debug-tweaks (passwordless root) is deliberately NOT set here. It
+  # would apply to every target built from this config, including the release
+  # forgefirm-image. It lives in forgefirm-image-dev.bb's IMAGE_FEATURES so a
+  # single build yields a hardened release image and a debug dev image.
+  # release.sh gates the release rootfs against a passwordless root entry.
 
   build-tweaks: |
     # Parallelism for the 12-core / 16 GB WSL2 VM. (The earlier mid-build deaths

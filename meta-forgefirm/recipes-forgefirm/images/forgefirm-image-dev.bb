@@ -8,8 +8,12 @@ IMAGE_INSTALL += " \
   forgectrl \
 "
 
+# debug-tweaks (passwordless root, root SSH login) belongs ONLY to the dev
+# image - never the release image. It lives here, not in the shared kas
+# local.conf, so the release forgefirm-image cannot inherit it.
 IMAGE_FEATURES += " \
   tools-debug \
+  debug-tweaks \
 "
 
 # Dev images boot from SD, never from a 200 MiB eMMC slot: lift the slot

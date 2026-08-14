@@ -17,7 +17,6 @@
 #   With no argument the latest release .fw is downloaded from GitHub.
 
 RELEASE_FW_URL="https://github.com/ScottW514/forgefirm/releases/latest/download/forgefirm.fw"
-FFBOOT_URL="https://raw.githubusercontent.com/ScottW514/forgefirm/master/scripts/ffboot"
 ARCHIVE_DIR="/data/forgefirm/archive"
 FW_FILE="/data/forgefirm/forgefirm.fw"
 MIN_DATA_FREE_KB=300000
@@ -281,20 +280,22 @@ mount -o ro -t ext4 "/dev/mmcblk2p$TARGET" "$MP" || die "new rootfs does not mou
 NEWVER=$(cat "$MP/etc/forgefirm-version" 2>/dev/null)
 [ -n "$NEWVER" ] || { umount "$MP"; die "new rootfs has no ForgeFIRM version stamp"; }
 [ -f "$MP/boot/zImage" ] || { umount "$MP"; die "new rootfs has no kernel"; }
+
+# Take ffboot (the factory-side boot-slot tool) from the rootfs we just
+# signature-verified and mounted read-only - never fetch+exec it from a
+# mutable network ref, which would be an unverified code path in an
+# otherwise signature-gated install.
+[ -s "$MP/usr/sbin/ffboot" ] \
+  || { umount "$MP"; die "new rootfs does not contain /usr/sbin/ffboot"; }
+cp "$MP/usr/sbin/ffboot" /data/ffboot.new \
+  || { umount "$MP"; die "cannot copy ffboot out of the new rootfs"; }
+
 umount "$MP"
 rmdir "$MP" 2>/dev/null
 echo -e "${ASTERISK}Slot $TARGET now holds ForgeFIRM $NEWVER"
 
 # --- ffboot for the factory side ----------------------------------------------
-if curl -fL "$FFBOOT_URL" --output /data/ffboot.new 2>/dev/null \
-   && [ -s /data/ffboot.new ]; then
-  mv /data/ffboot.new /data/ffboot
-else
-  rm -f /data/ffboot.new
-  [ -x /data/ffboot ] \
-    || die "ffboot download failed and no /data/ffboot is present"
-  echo -e "${ASTERISK}ffboot download failed; keeping the existing /data/ffboot"
-fi
+mv /data/ffboot.new /data/ffboot
 chmod +x /data/ffboot
 
 # --- flip the boot selection --------------------------------------------------
