@@ -20,6 +20,37 @@ Phase 11 sweep. **Flash this image, then run the consolidated bench
 campaign** — the GATE A drills, GATE B probes, and every phase's bench
 list above validate against it.
 
+**Phase 10 (tests & CI) is code-complete; the safety rules are now
+machine-enforced.** The grblHAL controller repo's CI builds the
+null-sink binary (driver sources under `-Werror`; the core submodule
+is upstream code and exempt) and runs three suites on every push: the
+**laser stream emission harness** (the G-1 class), a new
+**armed-window lifecycle harness** (`scripts/bench/
+laser_lifecycle_test.py`: arm-once-per-job with M5/M3 persistence and
+the M2 close, sender-change re-consent, grace countdown in Hold, and
+blocking-verdict arm refusal — test-the-test proven: a build with the
+job-based window reverted fails the first discriminating assertion),
+and a **switch-map decode truth table** (D-13): the EV_SW mapping is
+extracted into a pure header and asserted, including the inverted
+remote-interlock sense whose flip would read a Pro lockout as
+satisfied-while-open, and the opt-in e-stop gating. forgectrl's CI
+builds with `-Werror` and the tree is warning-free (the remaining
+unused-result and deliberate-truncation warnings are now explicit)
+(D-30). `kernel-module-glowforge` has a CI at all (D-4): it
+cross-compiles the module against linux-fslc 6.12 with the Glowforge
+BSP overlay and config fragment, hardfp toolchain, `KCFLAGS=-Werror`
+— the same bar the recipe holds — with symbol resolution left to the
+image build (a `modules_prepare` tree has no `Module.symvers`). Every
+CI sequence was validated locally before pushing — and CI immediately
+earned its keep: running the harnesses as a non-root user exposed that
+the controller's `mlockall(MCL_FUTURE)` under a finite
+`RLIMIT_MEMLOCK` makes every later thread-stack mmap count against the
+limit, killing the stream threads at startup. Root (the production
+spawn) carries `CAP_IPC_LOCK` and is exempt, so the flashed image is
+unaffected; the lock is now root-only (grblHAL `12977eb`). Not
+host-testable (bench items, documented per phase): the kernel latch
+relock-on-close and dead-man trip, and the motion-liveness gate.
+
 **Phase 9 (build, BSP, and release engineering) is code-complete and
 host-verified** (all shell changes pass bash and POSIX-sh syntax
 checks; forgectrl builds clean). Shutdown order: controllers stop at
