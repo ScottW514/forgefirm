@@ -20,7 +20,10 @@ S = "${WORKDIR}/git"
 inherit cmake update-rc.d
 
 INITSCRIPT_NAME = "grblhal"
-INITSCRIPT_PARAMS = "defaults 92"
+# stop 80 < forgectrl's 90: at runlevel 0/6 the controller goes down
+# BEFORE the daemon that carries the cooling engine, fire gates, and
+# broker - never the other way around.
+INITSCRIPT_PARAMS = "start 92 2 3 4 5 . stop 80 0 1 6 ."
 
 do_install:append() {
     install -d ${D}${sysconfdir}/init.d

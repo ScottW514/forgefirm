@@ -57,11 +57,20 @@ P3_SIZE=$(sfdisk -d "$DISK" 2>/dev/null | sed -n "s|^${P3} .*size=[ ]*\([0-9]*\)
 [ -n "$DISK_SECT" ] && [ -n "$P3_START" ] && [ -n "$P3_SIZE" ] \
   || { log "cannot read disk/p3 geometry"; exit 0; }
 
-if [ $((P3_START + P3_SIZE)) -lt "$DISK_SECT" ]; then
-  log "growing p3 to the end of the disk ($((P3_START + P3_SIZE)) -> $DISK_SECT sectors)"
+# 2048-sector tolerance (mirrors the filesystem branch): on a disk where
+# the grow cannot land exactly on the last sector, an exact comparison
+# would rewrite the MBR at S02 on EVERY boot - and a power loss inside
+# that window costs the partition table and /data.
+if [ $((P3_START + P3_SIZE)) -lt $((DISK_SECT - 2048)) ]; then
+  log "growing p3 toward the end of the disk ($((P3_START + P3_SIZE)) -> $DISK_SECT sectors)"
   echo ", +" | sfdisk --no-reread --force -N 3 "$DISK" >/dev/null 2>&1 \
     || { log "p3 grow FAILED"; exit 0; }
   partx -u --nr 3 "$DISK" 2>/dev/null
+  P3_NEW=$(sfdisk -d "$DISK" 2>/dev/null | sed -n "s|^${P3} .*size=[ ]*\([0-9]*\),.*|\1|p")
+  if [ -n "$P3_NEW" ] && [ "$P3_NEW" = "$P3_SIZE" ]; then
+    log "p3 grow made no progress ($P3_SIZE sectors); leaving the table alone"
+    exit 0
+  fi
 fi
 
 # --- filesystem ----------------------------------------------------------
@@ -71,8 +80,42 @@ FS_BLOCKS=$(tune2fs -l "$P3" 2>/dev/null | sed -n 's/^Block count:[ ]*//p')
 FS_BSIZE=$(tune2fs -l "$P3" 2>/dev/null | sed -n 's/^Block size:[ ]*//p')
 [ -n "$FS_BLOCKS" ] && [ -n "$FS_BSIZE" ] || { log "cannot read p3 filesystem"; exit 0; }
 
+# Bounded retry: a resize that keeps failing must not cost a full
+# e2fsck pass on every boot forever. Nothing else is mounted this
+# early, so the attempt counter lives on p3 itself.
+TRY_FILE=.slotmigrate-resize-tries
+read_tries () {
+  TRIES=0
+  T=$(mktemp -d) || return
+  if mount "$P3" "$T" 2>/dev/null; then
+    TRIES=$(cat "$T/$TRY_FILE" 2>/dev/null)
+    umount "$T" 2>/dev/null
+  fi
+  rmdir "$T" 2>/dev/null
+  case "$TRIES" in
+    ''|*[!0-9]*) TRIES=0 ;;
+  esac
+}
+write_tries () {
+  T=$(mktemp -d) || return
+  if mount "$P3" "$T" 2>/dev/null; then
+    if [ "$1" -gt 0 ]; then
+      echo "$1" > "$T/$TRY_FILE"
+    else
+      rm -f "$T/$TRY_FILE"
+    fi
+    umount "$T" 2>/dev/null
+  fi
+  rmdir "$T" 2>/dev/null
+}
+
 FS_SECT=$((FS_BLOCKS * (FS_BSIZE / 512)))
 if [ "$FS_SECT" -lt $((PART_SECT - 2048)) ]; then
+  read_tries
+  if [ "$TRIES" -ge 3 ]; then
+    log "resize2fs failed $TRIES times; giving up (grow /data manually with resize2fs $P3)"
+    exit 0
+  fi
   log "growing /data filesystem ($FS_SECT -> $PART_SECT sectors)"
   e2fsck -f -p "$P3" >/dev/null 2>&1
   RC=$?
@@ -80,9 +123,13 @@ if [ "$FS_SECT" -lt $((PART_SECT - 2048)) ]; then
     log "e2fsck found errors (rc=$RC), NOT resizing"
     exit 0
   fi
-  resize2fs "$P3" >/dev/null 2>&1 \
-    && log "/data grown to full size" \
-    || log "resize2fs FAILED (will retry next boot)"
+  if resize2fs "$P3" >/dev/null 2>&1; then
+    log "/data grown to full size"
+    write_tries 0
+  else
+    log "resize2fs FAILED (attempt $((TRIES + 1)) of 3)"
+    write_tries $((TRIES + 1))
+  fi
 fi
 
 exit 0

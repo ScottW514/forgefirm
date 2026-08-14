@@ -23,7 +23,9 @@ IMAGE_INSTALL:remove = "gfui-client"
 # to the inactive rootfs slot.
 # ffboot: boot-slot inventory and switching (also ships fw_env.config).
 # slotmigrate: boot-time reclaim of the legacy p4 layout (grows /data).
-IMAGE_INSTALL:append = " grblhal-glowforge forgectrl gfhome gfcloud v4l-utils fwup ffboot slotmigrate"
+# forgefirm-logrotate: size-capped rotation of the /data logs (boot +
+# hourly; a full /data breaks settings, updates, and controller writes).
+IMAGE_INSTALL:append = " grblhal-glowforge forgectrl gfhome gfcloud v4l-utils fwup ffboot slotmigrate forgefirm-logrotate"
 
 # NXP's firmware EULA covers the i.MX VPU/EPDC blobs the BSP installs, so the
 # image ships the license text with them (/usr/share/licenses/firmware-imx).

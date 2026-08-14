@@ -11,21 +11,54 @@
 # The controller lifecycle belongs to the forgectrl supervisor: it
 # spawns the controller selected by controller_mode as a direct child
 # (that relationship carries the pulse-device fd and death detection).
-# This script remains only as a manual emergency stop.
+# This script is the manual emergency lever, routed THROUGH the
+# supervisor: stop asks it to stop the child and hold it down (a bare
+# pkill would be safed and respawned seconds later); start resumes
+# supervision.
+
+DAEMON_BIN=/usr/bin/grblHAL_glowforge
+TOKEN_FILE=/data/forgefirm/panel.token
+CTRL_URL="http://127.0.0.1:${FORGECTRL_PORT:-8080}"
+
+super_post() {
+  [ -r "$TOKEN_FILE" ] || return 1
+  curl -sf -m 20 -X POST \
+    -H "X-ForgeFIRM-Token: $(cat "$TOKEN_FILE")" \
+    "$CTRL_URL/controller/$1" >/dev/null 2>&1
+}
 
 case "$1" in
   start)
-    echo "grblHAL is managed by forgectrl (POST /mode to switch controllers)"
+    if super_post start; then
+      echo "grblHAL supervision resumed (forgectrl spawns the selected controller)"
+    else
+      echo "grblHAL is managed by forgectrl (POST /mode to switch controllers)"
+    fi
     ;;
   stop)
     echo "Stopping grblHAL"
-    pkill -x grblHAL_glowfor 2>/dev/null
+    if ! super_post stop; then
+      # Supervisor unreachable: kill the controller directly. If a
+      # supervisor is alive after all, the child's exit still lands on
+      # its safing path. Match the full executable path, not the
+      # 15-char comm truncation.
+      pkill -f "^$DAEMON_BIN" 2>/dev/null
+    fi
+    ;;
+  status)
+    if pgrep -f "^$DAEMON_BIN" >/dev/null 2>&1; then
+      echo "grblHAL is running"
+      exit 0
+    else
+      echo "grblHAL is not running"
+      exit 3
+    fi
     ;;
   restart)
     $0 stop
     ;;
   *)
-    echo "Usage: $0 {start|stop|restart}"
+    echo "Usage: $0 {start|stop|status|restart}"
     exit 1
     ;;
 esac

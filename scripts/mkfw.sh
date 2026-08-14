@@ -72,10 +72,11 @@ EOF
 if [ -n "$KEY" ]; then
   [ -f "$KEY" ] || { echo "ERROR: key '$KEY' not found" >&2; exit 1; }
   "$FWUP" -S -s "$KEY" -i "$WORK/unsigned.fw" -o "$OUT"
+  # The post-sign self-check is mandatory: packing without it means a
+  # release could ship with a signature nothing ever verified.
   PUB="${KEY%.priv}.pub"
-  if [ -f "$PUB" ]; then
-    "$FWUP" -V -i "$OUT" -p "$PUB" || { echo "ERROR: signature self-check failed" >&2; exit 1; }
-  fi
+  [ -f "$PUB" ] || { echo "ERROR: public key '$PUB' not found - cannot self-check the signature; refusing to pack unverified" >&2; exit 1; }
+  "$FWUP" -V -i "$OUT" -p "$PUB" || { echo "ERROR: signature self-check failed" >&2; exit 1; }
   echo "signed: $OUT"
 else
   cp "$WORK/unsigned.fw" "$OUT"

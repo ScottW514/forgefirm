@@ -52,7 +52,7 @@ stop_gf_services () {
 # dd's exit status is captured via a file so a read failure is not
 # masked by gzip succeeding on truncated input.
 archive_dev () {
-  RC_FILE="/tmp/ffinstall.rc.$$"
+  RC_FILE=$(mktemp /tmp/ffinstall.rc.XXXXXX) || return 1
   rm -f "$RC_FILE"
   ( dd if="$1" bs=1M 2>/dev/null; echo $? > "$RC_FILE" ) | gzip -1 > "$2" &
   GZPID=$!
@@ -83,9 +83,8 @@ slot_probe () {
   else
     RD=$(sed -n "s|^/dev/mmcblk2p$1 \([^ ]*\).*|\1|p" /proc/mounts | head -n 1)
     if [ -z "$RD" ]; then
-      RD="/tmp/ffinstall.probe.$$"
       S_MOUNTED=yes
-      mkdir -p "$RD" || return 1
+      RD=$(mktemp -d /tmp/ffinstall.probe.XXXXXX) || return 1
       mount -o ro -t ext4 "/dev/mmcblk2p$1" "$RD" 2>/dev/null \
         || { rmdir "$RD" 2>/dev/null; S_TYPE=unknown; return 0; }
     fi
@@ -116,6 +115,25 @@ slot_desc () {
   esac
 }
 
+# ver_lt A B: true when semantic version A < B (leading v ignored).
+# Returns false on any non-numeric component (e.g. a dev datetime
+# stamp) - no verdict means no downgrade prompt, never a refusal.
+ver_lt () {
+  VA=${1#v}; VB=${2#v}
+  [ "$VA" = "$VB" ] && return 1
+  VI=1
+  while [ "$VI" -le 3 ]; do
+    A=$(echo "$VA" | cut -d. -f$VI)
+    B=$(echo "$VB" | cut -d. -f$VI)
+    A=${A:-0}; B=${B:-0}
+    case "$A$B" in *[!0-9]*) return 1 ;; esac
+    [ "$A" -lt "$B" ] && return 0
+    [ "$A" -gt "$B" ] && return 1
+    VI=$((VI + 1))
+  done
+  return 1
+}
+
 # Verified atomic env flip (all four variables, classic u-boot-tools script
 # format first - that is what factory firmware ships - then libubootenv
 # format, then per-variable writes; read-back verified in every case).
@@ -136,7 +154,7 @@ env_verify () {
 }
 
 set_env () {
-  SCRIPT="/tmp/ffinstall.env.$$"
+  SCRIPT=$(mktemp /tmp/ffinstall.env.XXXXXX) || return 1
   printf 'mmcdev %s\nmmchwpart %s\nmmcpart %s\nmmcroot %s\n' "$1" "$2" "$3" "$4" > "$SCRIPT"
   fw_setenv -c "$FWCONFIG" -s "$SCRIPT" 2>/dev/null
   if env_verify "$1" "$2" "$3" "$4"; then rm -f "$SCRIPT"; return 0; fi
@@ -257,12 +275,43 @@ else
 fi
 
 # --- verify signature ---------------------------------------------------------
-KEYFILE="/tmp/forgefirm.pub.$$"
+KEYFILE=$(mktemp /tmp/forgefirm.pub.XXXXXX) || die "cannot create temp file"
 printf "$PUBKEY" > "$KEYFILE"
 [ "$(wc -c < "$KEYFILE")" = "32" ] || die "embedded public key corrupt"
 echo -e "${ASTERISK}Verifying firmware signature:"
 fwup -V -i "$FW_FILE" -p "$KEYFILE" || { rm -f "$KEYFILE"; die "signature verification FAILED - refusing to install"; }
-fwup -m -i "$FW_FILE" | grep meta-version
+
+# --- archive identity + downgrade gate ----------------------------------------
+META=$(fwup -m -i "$FW_FILE")
+M_PRODUCT=$(echo "$META" | sed -n 's/^meta-product="\(.*\)"$/\1/p')
+M_PLATFORM=$(echo "$META" | sed -n 's/^meta-platform="\(.*\)"$/\1/p')
+M_VERSION=$(echo "$META" | sed -n 's/^meta-version="\(.*\)"$/\1/p')
+[ "$M_PRODUCT" = "ForgeFIRM firmware" ] \
+  || { rm -f "$KEYFILE"; die "archive product is '$M_PRODUCT', not ForgeFIRM firmware - wrong archive"; }
+[ "$M_PLATFORM" = "glowforge" ] \
+  || { rm -f "$KEYFILE"; die "archive platform is '$M_PLATFORM', not glowforge - wrong archive"; }
+echo -e "${ASTERISK}Archive: $M_PRODUCT $M_VERSION ($M_PLATFORM)"
+
+# A validly signed OLDER release must never install silently; downgrades
+# need an explicit yes (rollback stays possible, just deliberate).
+INSTALLED=""
+for S in 1 2; do
+  slot_probe "$S"
+  if [ "$S_TYPE" = "forgefirm" ] && [ -n "$S_VER" ]; then
+    if [ -z "$INSTALLED" ] || ver_lt "$INSTALLED" "$S_VER"; then
+      INSTALLED="$S_VER"
+    fi
+  fi
+done
+if [ -n "$INSTALLED" ] && ver_lt "$M_VERSION" "$INSTALLED"; then
+  echo -e "${ASTERISK}This archive ($M_VERSION) is OLDER than the installed ForgeFIRM ($INSTALLED)."
+  read -n1 -p "Install the downgrade anyway? [y/N] " YN
+  echo
+  case "$YN" in
+    y|Y) ;;
+    *) rm -f "$KEYFILE"; die "downgrade declined" ;;
+  esac
+fi
 
 # --- apply to the inactive slot -----------------------------------------------
 echo -e "${ASTERISK}Writing ForgeFIRM to slot $TARGET (/dev/mmcblk2p$TARGET):"
@@ -274,8 +323,7 @@ fwup -a -d "/dev/mmcblk2p$TARGET" -i "$FW_FILE" -t "$TASK" -p "$KEYFILE" \
 rm -f "$KEYFILE"
 
 # --- post-write verify --------------------------------------------------------
-MP="/tmp/ffinstall.verify.$$"
-mkdir -p "$MP"
+MP=$(mktemp -d /tmp/ffinstall.verify.XXXXXX) || die "cannot create temp dir"
 mount -o ro -t ext4 "/dev/mmcblk2p$TARGET" "$MP" || die "new rootfs does not mount"
 NEWVER=$(cat "$MP/etc/forgefirm-version" 2>/dev/null)
 [ -n "$NEWVER" ] || { umount "$MP"; die "new rootfs has no ForgeFIRM version stamp"; }

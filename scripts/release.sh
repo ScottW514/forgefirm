@@ -46,7 +46,11 @@ for ARG in "$@"; do
     --dev) MODE=dev ;;
     --publish) PUBLISH=1 ;;
     -*) die "unknown option $ARG" ;;
-    *) VERSION="$ARG" ;;
+    *)
+      [ -z "$VERSION" ] \
+        || die "multiple versions given ('$VERSION' and '$ARG')"
+      VERSION="$ARG"
+      ;;
   esac
 done
 
@@ -163,6 +167,10 @@ if [ -n "${FWUP_COMPAT:-}" ]; then
     || { rm -f "$RAW"; die "factory-era fwup rejects the archive"; }
   rm -f "$RAW"
   echo "factory-era fwup verification OK"
+elif [ "$MODE" = release ] && [ -z "${FWUP_COMPAT_SKIP:-}" ]; then
+  # The factory-compat guarantee is a release property: a public release
+  # must not skip it silently. FWUP_COMPAT_SKIP=1 bypasses deliberately.
+  die "FWUP_COMPAT not set - factory-era verification is required for a release (set FWUP_COMPAT_SKIP=1 to bypass deliberately)"
 else
   warn "FWUP_COMPAT not set - factory-era verification skipped"
 fi

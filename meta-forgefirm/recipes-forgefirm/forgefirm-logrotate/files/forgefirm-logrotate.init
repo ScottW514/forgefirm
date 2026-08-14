@@ -1,0 +1,43 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          forgefirm-logrotate
+# Required-Start:    $local_fs
+# Required-Stop:
+# Default-Start:     2 3 4 5
+# Default-Stop:
+# Short-Description: rotate the /data logs at boot and hourly
+### END INIT INFO
+
+# The image runs no cron daemon, so rotation is driven here: once at
+# every boot (bounds carry-over bloat), then hourly from a small
+# background loop (bounds growth across long uptimes - a full /data
+# breaks settings, update staging, and the controllers' own writes).
+
+LOGROTATE=/usr/sbin/logrotate
+CONF=/etc/logrotate.conf
+PIDFILE=/var/run/forgefirm-logrotate.pid
+
+case "$1" in
+  start)
+    [ -x "$LOGROTATE" ] || exit 0
+    "$LOGROTATE" "$CONF" 2>/dev/null
+    ( while :; do
+        sleep 3600
+        "$LOGROTATE" "$CONF" 2>/dev/null
+      done ) &
+    echo $! > "$PIDFILE"
+    ;;
+  stop)
+    [ -r "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null
+    rm -f "$PIDFILE"
+    ;;
+  restart)
+    $0 stop
+    $0 start
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+    ;;
+esac
+exit 0

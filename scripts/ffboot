@@ -61,9 +61,8 @@ probe_part () {
     # each foreign-type claim against an already-mounted device.
     ROOT_DIR=$(sed -n "s|^$1 \([^ ]*\).*|\1|p" /proc/mounts | head -n 1)
     if [ -z "$ROOT_DIR" ]; then
-      ROOT_DIR="/tmp/ffboot.probe.$$"
       P_MOUNTED=yes
-      mkdir -p "$ROOT_DIR"
+      ROOT_DIR=$(mktemp -d /tmp/ffboot.probe.XXXXXX) || return 1
       if ! mount -o ro -t ext4 "$1" "$ROOT_DIR" 2>/dev/null; then
         rmdir "$ROOT_DIR" 2>/dev/null
         return 1
@@ -132,7 +131,7 @@ env_verify () {
 }
 
 set_env () {
-  SCRIPT="/tmp/ffboot.env.$$"
+  SCRIPT=$(mktemp /tmp/ffboot.env.XXXXXX) || return 1
   # libubootenv format
   printf 'mmcdev=%s\nmmchwpart=%s\nmmcpart=%s\nmmcroot=%s\n' "$1" "$2" "$3" "$4" > "$SCRIPT"
   fw_setenv -c "$FWCONFIG" -s "$SCRIPT" 2>/dev/null
