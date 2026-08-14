@@ -1,10 +1,41 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-08-14** — **audit remediation Phases 0 through 7
+Last updated: **2026-08-14** — **audit remediation Phases 0 through 8
 landed** (from an independent whole-tree audit dated 2026-08-13; the
 remediation is sequenced behind two gates — GATE A, uncommanded energy,
 before any further live-fire; GATE B, control surface + release, before
-any published release).
+any published release). **Phase 8 completes the kernel rows: every
+kernel/image fix from Phases 1, 2 (B-3), 3, 5, 6, and 8 — plus the
+platform-hygiene batch and the gap-refire kernel half — is now
+code-complete and waiting on the ONE image build + flash.**
+
+**Phase 8 (kernel-module hardening) is code-complete; rides the image
+flash.** Probe: `/dev/glowforge` registers last so the error unwind can
+never deregister a device userspace already opened; the unwind clears
+the SDMA interrupt callback (previously dangling into devm-freed driver
+data across an `-EPROBE_DEFER` cycle) and releases the state dirent
+(K-7). Remove: every userspace surface comes down before the hardware —
+a concurrent attribute read can no longer reach `gpio_get_value` on
+freed descriptors — and the dirent is `sysfs_put`, not leaked (K-8).
+The fan-tach spinlock is initialized and taken in the IRQ handler (the
+cooling engine's fan verdicts ride these two 64-bit timestamps, which
+tear on arm32 unlocked) (K-9); tach IRQ setup cleans up after itself
+and records only actually-requested IRQs, with idempotent teardown
+(K-10). The LED trigger removes its attributes before the sync timer
+delete and serializes the simulation step against its store handlers
+(K-15). The kernel dead-man now **halts instead of disabling** — no
+40 V rail drop, so a crash recovery is never left in the exact state
+that wedges the DRV8825 drivers (K-18). Bounds: the safing-path
+pin-change off-by-one (K-14); `ignored_faults` capped to the documented
+0–7 with the probe fault state decided on the masked value (K-16);
+`PIN_LASER_ON_HEAD` joins the SDMA pin set and the stop/shutdown
+change sets (K-19); the run-start no-data gate refuses the run on a
+failed head fetch (K-20); PIC single-register writes reject values
+above the documented 10-bit range instead of wrapping (K-21).
+**Bench (on the flashed image):** module load/unload clean under
+`CONFIG_DEBUG_MUTEXES`; forced `-EPROBE_DEFER` unwinds without a
+dangling callback; concurrent `cat` during remove does not fault; the
+Phase 1/3/5/6 kernel drills all re-run green on this one image.
 
 **Phase 6 (motion integrity) is code-complete and host-verified.** A
 mid-run underrun or stepper fault is no longer silently absorbed: the
