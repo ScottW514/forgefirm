@@ -1,13 +1,50 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-08-14** — **audit remediation Phases 0 through 8
+Last updated: **2026-08-14** — **audit remediation Phases 0 through 9
 landed** (from an independent whole-tree audit dated 2026-08-13; the
 remediation is sequenced behind two gates — GATE A, uncommanded energy,
 before any further live-fire; GATE B, control surface + release, before
-any published release). **Phase 8 completes the kernel rows: every
-kernel/image fix from Phases 1, 2 (B-3), 3, 5, 6, and 8 — plus the
-platform-hygiene batch and the gap-refire kernel half — is now
-code-complete and waiting on the ONE image build + flash.**
+any published release). **Every kernel/image row across all phases —
+including Phase 9's BSP rows — is now code-complete: the image can be
+built and flashed once, carrying everything.**
+
+**Phase 9 (build, BSP, and release engineering) is code-complete and
+host-verified** (all shell changes pass bash and POSIX-sh syntax
+checks; forgectrl builds clean). Shutdown order: controllers stop at
+K80, before forgectrl at K90, so runlevel 0/6 never tears down the
+cooling engine, fire gates, and broker under a running controller
+(B-4). The grblhal/gfcloud init scripts are real emergency levers
+routed through new authenticated `POST /controller/stop|start`
+endpoints — stop halts the child and holds supervision suspended, not
+idle-gated — with `status` verbs and path-anchored pkill fallbacks
+(B-6); the forgectrl `restart` self-kill guard matches
+`/proc/pid/exe` (B-5). `slotmigrate` gets the 2048-sector grow
+tolerance (no more MBR rewrite every boot on disks where the grow
+cannot land exactly), progress verification, and a three-attempt
+`resize2fs` bound with the counter on p3 (B-7). `CONFIG_IMX2_WDT` is
+pinned and the unconfigured watchdog daemon is deliberately dropped —
+the hardware watchdog is a boot/system watchdog, and a userspace
+petter only added the mid-job-reset failure mode (B-8). The
+booted-slot write guard compares device numbers and fails closed under
+any `root=` spelling (F-8); settings writes fsync before rename and
+never rewrite a file they could not read in full (F-11); the /data
+logs rotate size-capped at boot and hourly, and the camera stats spam
+dropped ~100× (F-16). Release path: `release.sh` rejects multiple
+versions and requires factory-era verification (explicit bypass only);
+`mkfw.sh` refuses to pack without the post-sign self-check; the
+installer verifies archive product/platform and prompts on a signed
+downgrade instead of installing it silently; installer/ffboot temp
+paths are `mktemp` (B-13, B-18, B-19, B-20). DTS: the bootargs
+fallback is console-only (no `quiet`, no hardcoded SD root) and the
+stale 128 MiB ring comment reads 16 MiB (B-11, B-12); wlconf data
+files are 0644 (B-16); the U-Boot v2020.01 pin's security posture is
+recorded in the recipe (B-17); the bench build scripts carry no
+machine-local paths (B-14) and the SSH banner escape is fixed (B-15).
+**Bench items:** runlevel 6 teardown order observed; `forgectrl
+restart` actually restarts; the routed emergency stop holds the
+controller down; a boot on a disk that cannot grow-to-last-sector does
+not rewrite the MBR; a `PARTUUID=` cmdline still refuses a write into
+the running slot.
 
 **Phase 8 (kernel-module hardening) is code-complete; rides the image
 flash.** Probe: `/dev/glowforge` registers last so the error unwind can
