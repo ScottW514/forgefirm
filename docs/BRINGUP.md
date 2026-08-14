@@ -1,10 +1,45 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-08-14** — **audit remediation Phases 0 through 3
+Last updated: **2026-08-14** — **audit remediation Phases 0 through 4
 landed** (from an independent whole-tree audit dated 2026-08-13; the
 remediation is sequenced behind two gates — GATE A, uncommanded energy,
 before any further live-fire; GATE B, control surface + release, before
 any published release).
+
+**Phase 4 (stale-gate cluster) is code-complete and host-verified; all
+of it is hot-deployable (no kernel rows).** The operator-armed window
+is now **job-based**, not 60-second-idle-based: it closes at program
+end (`M2`/`M30`/`%`, through the kernel-idle-guarded relock so a queue
+tail is never severed), whenever the sender connection changes (the
+serial layer exposes a client-session generation; the press that armed
+the window belongs to the displaced session), and after the disarm
+grace — which now counts down in Hold, Door, and Tool Change too, so a
+job abandoned in Hold no longer sits armed for hours (X-3, G-10). The
+coolant fire gate is re-checked after the button wait, immediately
+before the window opens (G-4), and the wait budget is clamped to
+1–3600 s — garbage or zero can no longer mean wait-forever with the
+latch unlocked (G-18). Cloud mode's `_button_wait` gets the same
+treatment: bounded by the shared `laser_button_timeout_s`, lid
+re-checked every pass, and timeout/lid/cancel all relock the latch and
+disarm (C-7). The cloud cancel-drop is fixed: a settings action
+rejected mid-print no longer wipes the running action's id, so a
+subsequent cancel actually stops the cut (C-1). forgectrl: a
+controller stop that times out restores supervision instead of leaving
+the machine permanently controller-less (F-7); settings mutations are
+lock-serialized and a multi-key POST lands as one atomic replace
+(F-10); graceful shutdown is busy-aware — fans hold their duty and the
+verdict ages out instead of being unlinked, so `forgectrl restart` no
+longer feed-holds a live cut and drops exhaust (F-12; the flow-check
+heater still goes off unconditionally, as this engine's own heat
+source). Host verification: forgectrl and the controller build clean,
+the null-sink stream harness passes all emission rules byte-identical
+to the recorded baseline, and both Python clients byte-compile.
+**Bench items:** finish a job and confirm disarm at Idle within the
+cycle (not at +60 s); abandon a job in Hold and confirm it disarms;
+kill the pump during the button wait and confirm arming refuses;
+cancel a cloud print with a settings action in flight and confirm
+motion stops; `forgectrl restart` mid-(dry)-cut holds exhaust. These
+are dry/no-fire drills except where GATE A already applies.
 
 **Phase 3 (broker ownership / dead-man second pass) is code-complete
 and host-verified.** The "broker changed who owns safing" theme is

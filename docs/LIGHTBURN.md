@@ -33,9 +33,12 @@ The laser fires only inside an operator-armed window:
   runs. If nobody presses within `laser_button_timeout_s` (default
   300 s) the job aborts with alarm 3. Stop in LightBurn (soft reset)
   cancels the wait at any time.
-- One press covers the whole job — power changes and M5/M3 toggles do
-  not re-prompt. The window relocks after `laser_disarm_s` (default
-  60 s) of idle with the spindle off; the next job prompts again.
+- One press covers one job — power changes and M5/M3 toggles do not
+  re-prompt. The window relocks when the job ends (program end
+  `M2`/`M30`), when the sender connection changes, or after
+  `laser_disarm_s` (default 60 s) with the spindle off — counting even
+  while a job sits paused in Hold or with the lid open; the next job
+  prompts again.
 - S-value scale: `$30` defaults to 1000, so set LightBurn's S-max to
   1000. 100 % power = S1000. Use M4 (variable/dynamic) mode for cuts
   and engraves.
