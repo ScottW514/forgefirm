@@ -5,8 +5,20 @@ landed** (from an independent whole-tree audit dated 2026-08-13; the
 remediation is sequenced behind two gates — GATE A, uncommanded energy,
 before any further live-fire; GATE B, control surface + release, before
 any published release). **Every kernel/image row across all phases —
-including Phase 9's BSP rows — is now code-complete: the image can be
-built and flashed once, carrying everything.**
+including Phase 9's BSP rows — is now code-complete, and the image
+carrying all of it is built: `20260814223300` (forgefirm-image +
+forgefirm-image-dev), all source pins pushed, bumped, and
+fetch-verified.** Built-image checks pass: the release rootfs has root
+locked (`*` in `/etc/shadow`), no watchdog daemon, forgefirm-logrotate
+installed, and `K80grblhal`/`K80gfcloud` ahead of `K90forgectrl` at
+runlevel 6; the kernel config carries `CONFIG_IMX2_WDT`,
+`CONFIG_PANIC_ON_OOPS`, and `CONFIG_PREEMPT`; the DTB fallback
+bootargs is console-only; `glowforge.ko` (the full hardening batch) is
+in `/lib/modules`. One cosmetic QA warning (a buildpaths reference in
+the grblHAL binary from the debug-info prefix maps) is noted for the
+Phase 11 sweep. **Flash this image, then run the consolidated bench
+campaign** — the GATE A drills, GATE B probes, and every phase's bench
+list above validate against it.
 
 **Phase 9 (build, BSP, and release engineering) is code-complete and
 host-verified** (all shell changes pass bash and POSIX-sh syntax
