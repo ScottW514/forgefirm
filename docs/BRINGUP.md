@@ -1,10 +1,56 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-08-14** — **audit remediation Phases 0, 1, and 2
+Last updated: **2026-08-14** — **audit remediation Phases 0 through 3
 landed** (from an independent whole-tree audit dated 2026-08-13; the
 remediation is sequenced behind two gates — GATE A, uncommanded energy,
 before any further live-fire; GATE B, control surface + release, before
 any published release).
+
+**Phase 3 (broker ownership / dead-man second pass) is code-complete
+and host-verified.** The "broker changed who owns safing" theme is
+closed on the code side. The supervisor writes the two safing lines
+(`cnc/stop`, `cnc/laser_latch=1`) on **every** transition out of a
+running child — mode switch, diagnostics suspend, shutdown, not just
+unexpected death — and again immediately after a SIGKILL escalation
+(F-3). The cooling engine is the dead-man for **hangs**: a controller
+silent past the 5 s report timeout with the armed window open — or with
+`cnc/state` still reading `running` (a preloaded cloud ring can play
+for minutes with no live feeder) — gets the same two writes from the
+engine itself, and exhaust/intake never drop below cooldown duty while
+the kernel still reports a run in progress (X-1). The broker fd is now
+`O_CLOEXEC` with only the controller spawn clearing the flag, so
+`curl`/`fwup`/`media-ctl` children can no longer pin the pulse device,
+defeat the final-close backstop, or EBUSY-storm a respawn (F-6). The
+GRBL stream shutdown relocks the latch explicitly, since under the
+broker its close is not the final close (G-6); the cloud `_shutdown`
+hook stops motion, locks the latch, and files a final disarmed/idle
+report in **all** modes — gfcloud and gfhome share the hook (C-5).
+OOM/RT hardening: `oom_score_adj` respawn wrapper −1000 / daemon −900 /
+controllers −500, and the controller `mlockall`s so the SCHED_FIFO
+shipper cannot take a major page fault (X-6; the MHD connection cap
+remains the deferred half of F-15). Kernel rows **ride the pending
+image flash**: pulse-device exclusivity is an atomic in-use bit instead
+of a mutex locked in `open()` and unlocked in `release()` — cross-task
+release is the *normal* case under the broker (K-4); a fresh open
+starts with the flock dead-man disarmed and shared locks are rejected
+(K-17); `thermal_make_safe()` de-energizes only the heat sources
+(heater, TEC) — the coolant pump and exhaust/intake stay with the
+cooling engine, so a dead-man trip no longer stops circulation and
+airflow over a hot tube or airlocks the pump, and the heater soft-PWM
+duty is zeroed so its timer holds the pin low (X-4). SERVICES.md now
+records the watchdog scope — the hardware watchdog is a boot/system
+watchdog, not a laser-safety watchdog; the fast beam stop is the
+ring-drain chain, and the cloud-ring-depth residual is covered by the
+engine's hang dead-man (X-7) — plus the full dead-man ownership map.
+Host verification: forgectrl and the controller build clean
+(`-Wall -Wextra`), the null-sink stream harness passes all emission
+rules on the changed controller, and the cloud client byte-compiles.
+**Bench drills pend the image flash**: SIGSTOP a controller
+mid-(dry)-run — motion stopped and latch locked within the silence
+window, airflow held at ≥ cooldown duty; kill forgectrl during an
+update download — no pinned device, no EBUSY respawn storm; re-run the
+armed kill drill on the *expected*-stop path; a kernel dead-man trip
+leaves pump and airflow running.
 
 **Phase 2 (GATE B, control surface + release) is code-complete and
 host-verified.** forgectrl now has one auth layer applied to every
