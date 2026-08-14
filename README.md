@@ -55,6 +55,17 @@ The control board is common to Glowforge Basic, Plus, and Pro. The 5 MP
 * Cloud mode: stream jobs into the motion ring during the run, lifting the
   job-length cap that buffering the whole job imposes.
 
+## Safety
+
+**This machine contains a Class 4 CO₂ laser: it burns, blinds, and starts
+fires.** Never defeat the lid switches or interlock, always vent the exhaust
+outdoors, and never cut PVC or other chlorinated plastics. Never leave a
+running job unattended — keep a fire extinguisher within reach. Read
+[Before you cut — safety](docs/LIGHTBURN.md#before-you-cut--safety-read-this-first)
+before your first job, and the
+[Regulatory and legal](INSTALL.md#regulatory-and-legal) section before
+installing.
+
 **A very important warning: this is experimental software. Use of this software
 could seriously maim or kill you or others, and voids your warranty. It is not
 affiliated with or endorsed by Glowforge. Use it at your own risk.**

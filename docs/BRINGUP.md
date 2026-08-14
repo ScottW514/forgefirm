@@ -1,7 +1,42 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-08-13** — **shared machine services complete and
-closed out.** forgectrl is the one machine-services daemon behind both
+Last updated: **2026-08-14** — **audit remediation Phases 0 + 1 landed**
+(from an independent whole-tree audit dated 2026-08-13; the remediation
+is sequenced behind two gates — GATE A, uncommanded energy, before any
+further live-fire; GATE B, control surface + release, before any
+published release). Phase 0: user-facing laser-safety and
+regulatory text is in place (LIGHTBURN.md "Before you cut", README,
+INSTALL.md "Regulatory and legal" + updater-first update path, a
+persistent panel safety banner), the walkthrough no longer claims the
+laser cannot fire, bench-machine identity and the signing-key location
+are scrubbed from tracked files (bench scripts take `GF_HOST`), and
+every repo has a commit-msg hook enforcing commit attribution. Phase 1
+(GATE A, uncommanded energy) is **code-complete and host-verified**:
+the stream engine records the cycle-end laser-off so idle-gap pads ship
+dark and every stream terminates FIRE-clear (G-1), latch writes are
+serialized against the shipper's relight (G-5) with the arm-state and
+verdict caches made properly atomic (G-19/G-20/G-21), the cooling
+report path moved to a bounded-connect reporter thread off the protocol
+thread (A-3/G-7), and gf.lock is priority-inheriting with PIC-SPI and
+rail-settle work moved outside it (G-8). Kernel fixes K-1 (saturating
+decel ramp + EPIT divisor clamp), K-2 (resume-waypoint latch guard) and
+K-3 (latch writes under status_lock; FIRE drive never restored mid-run
+or mid-ramp) are code-complete and **ride the pending full-image
+flash** with the platform-hygiene batch. `scripts/bench/
+laser_stream_test.py` now asserts the termination and zero-step-gap
+rules across M4, M3-to-stream-end, and cycle-churn sessions (with a
+hermetic cooling-verdict publisher): all PASS on the fixed controller
+(the M4 session reproduces the recorded baseline byte-for-byte:
+28 354 fire ticks, X peak 533 net 0, 534 dark return steps), and a
+build with only the G-1 hunks reverted FAILS on the M3 termination
+rule — the harness catches the defect class. **GATE A stays open — no
+live-fire — until the flashed image passes the bench drills**
+(controlled stop decelerates at the default cloud tick, resume with the
+latch locked stays laser-less, mid-ramp latch writes do not re-arm
+FIRE) and the harness is wired into CI.
+
+Previously — **shared machine services complete and
+closed out (2026-08-13).** forgectrl is the one machine-services daemon behind both
 controller modes: the cooling engine (single owner of the thermal
 hardware), controller-mode supervision, the pulse-device broker, and
 the motion-liveness gate. Both controllers are cooling-engine clients
@@ -121,9 +156,8 @@ item 8.
 
 ## The bench
 
-- **Board**: SSH `root@172.16.1.97` (fixed DHCP lease since 2026-08-02;
-  was .130), empty password
-  (`ssh -o PreferredAuthentications=none` logs straight in). The bench
+- **Board**: SSH `root@<machine-ip>` (dev images permit passwordless
+  root login). The bench
   machine is a **Basic/Plus** (the control board is common to
   Basic/Plus/Pro). Dev image
   (`forgefirm-image-dev`) on SD; BusyBox userland + python3 + gdb/strace.
@@ -167,11 +201,9 @@ item 8.
   proven both ways (modern-packed signed archives apply with 0.14.2;
   modern fwup verifies+applies the factory .fw — signer key
   2017-05-001.pub). The production signing-key ceremony
-  (UPDATE-SYSTEM.md gate 8) was executed 2026-08-08.
-  **The production release key lives at
-  `~/forgefirm-release-key/fwup-key.priv`** (0600; `fwup-key.pub` +
-  `fwup-key-raw.pub` beside it; offline backups held by the operator) —
-  the installer embeds its pubkey, so releases sign with THIS key only.
+  (UPDATE-SYSTEM.md gate 8) was executed 2026-08-08. **The production
+  release key is held offline by the operator** — the installer embeds
+  its public key, so releases sign with that key only.
   Pack releases with `scripts/mkfw.sh`; the full pipeline is
   `scripts/release.sh`, invoked on this host as:
   `FWUP=~/fwup-lab/bin/fwup-v1.16.0 FWUP_COMPAT=~/fwup-lab/bin/fwup-0.14.2
@@ -235,7 +267,7 @@ hardware I/O — host testing).
    since the last run, `$RST=$` once (stored settings win). Each motion
    run logs a producer-stats line to stderr (callbacks, µs/call,
    max-behind, clamped) — clamped should stay 0.
-4. Connect LightBurn/UGS to `172.16.1.97:23`, or jog raw:
+4. Connect LightBurn/UGS to `<machine-ip>:23`, or jog raw:
    `$J=G91X40F1200`. `^X` mid-motion aborts via kernel `cnc/stop`
    (controlled decel) and raises an alarm; TCP disconnects never kill the
    process (the deadman fd stays held).
@@ -1412,8 +1444,8 @@ accordingly ("Automatic — AP country, else World").
    needs `-f` from factory). The **bench board now runs ForgeFIRM
    v0.1.0 from eMMC slot 2** (factory 2024 in slot 1, archives in
    /data/forgefirm/archive, dev image still on SD via `ffboot -s`).
-   Remaining Phase 2 nicety: the installer's embedded pubkey is the
-   DEV key until the production ceremony.
+   The installer's embedded pubkey is the **production release key**
+   (ceremony executed 2026-08-08; `release.sh` enforces the match).
    **Post-test: the bench rests on the SD dev image again** (`ffboot
    -s`; slot 1 = factory 2024, slot 2 = ForgeFIRM v0.1.0, archives in
    /data/forgefirm/archive). Platform fact pinned by experiment while
@@ -1513,3 +1545,18 @@ accordingly ("Automatic — AP country, else World").
    - The uniprocessor locking assumption and the panic/dead-man safe
      states are documented in `kernel-module-glowforge/UAPI.md`; no
      bench item.
+   - **GATE A kernel fixes added to the same flash (2026-08-14):**
+     the controlled-deceleration ramp now floors at the minimum step
+     frequency with a saturating decrement, and `epit_hz_to_divisor()`
+     can no longer return the degenerate divisor 0 (a 0 Hz request maps
+     to the slowest achievable tick); the resume waypoint re-enables
+     the FIRE drive only when the laser latch is unlocked; and
+     `laser_latch` writes run under `status_lock`, restoring the FIRE
+     output drive only when no run or ramp is in flight.
+     **Bench (GATE A stays open — no live-fire — until these pass):**
+     a controlled-stop drill at the default cloud tick (10 kHz, ramp
+     125000) shows a decelerating tail rather than a max-rate burst;
+     feed-hold, jog-cancel and `^X` each land in a controlled stop with
+     position preserved; a resume waypoint with the latch locked stays
+     laser-less; `laser_latch=0` written mid-ramp does not re-arm FIRE
+     (probe the PSU-connector LASER_ON line as in `fire_test.py`).

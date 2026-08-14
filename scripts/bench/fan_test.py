@@ -1,6 +1,9 @@
 import socket, subprocess, time
+import os
 
-HOST = '172.16.1.97'
+HOST = os.environ.get('GF_HOST')
+if not HOST:
+    raise SystemExit('set GF_HOST to the machine IP address')
 
 def board(cmd):
     r = subprocess.run(['wsl', '-d', 'forge-yocto', '--', 'ssh',

@@ -15,11 +15,14 @@ driver only writes the heater on M8/M9 transitions, so an idle driver
 leaves this alone.
 """
 import math
+import os
 import subprocess
 import sys
 import time
 
-HOST = '172.16.1.97'
+HOST = os.environ.get('GF_HOST')
+if not HOST:
+    raise SystemExit('set GF_HOST to the machine IP address')
 
 # Factory B-equation conversion (see kernel-module-glowforge/UAPI.md).
 F = 1024.0 * 1.3

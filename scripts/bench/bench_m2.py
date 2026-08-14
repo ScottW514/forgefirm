@@ -2,7 +2,7 @@
 """Milestone-2 motion-quality bench: factory-true rates/accels over TCP.
 
 Runs a bounded, return-to-start jog sequence against grblHAL on the board
-(default 172.16.1.97:23) and reports peak feed reached, state transitions,
+(argv[1] or GF_HOST, port 23) and reports peak feed reached, state transitions,
 and final position drift. Every move is relative and round-trip, so the
 head ends where it started; the laser stays latched (motion-only backend).
 
@@ -10,11 +10,14 @@ Sequence: sanity jogs (X, Y, 40 mm out/back at 2400 mm/min), max-rate X
 out/back (60 mm at F12000 - peaks ~200 mm/s mid-move), diagonal out/back,
 then a G1 move with a feed-hold/resume in the middle.
 """
+import os
 import socket
 import sys
 import time
 
-HOST = sys.argv[1] if len(sys.argv) > 1 else '172.16.1.97'
+HOST = sys.argv[1] if len(sys.argv) > 1 else os.environ.get('GF_HOST')
+if not HOST:
+    raise SystemExit('pass the machine IP as argv[1] or set GF_HOST')
 PORT = 23
 
 

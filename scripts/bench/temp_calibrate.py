@@ -25,7 +25,9 @@ import subprocess
 import sys
 import time
 
-HOST = '172.16.1.97'
+HOST = os.environ.get('GF_HOST')
+if not HOST:
+    raise SystemExit('set GF_HOST to the machine IP address')
 STORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_calibration.json')
 
 

@@ -9,13 +9,16 @@ cut-profile fans, logging bulk coolant temperature and every verdict.
 Usage: flow_sustained.py [minutes]   (default 30)
 """
 import math
+import os
 import re
 import socket
 import subprocess
 import sys
 import time
 
-HOST = '172.16.1.97'
+HOST = os.environ.get('GF_HOST')
+if not HOST:
+    raise SystemExit('set GF_HOST to the machine IP address')
 F = 1024.0 * 1.3
 RD, BETA = 10000.0, 3380.0
 RINF = 10000.0 * math.exp(-3380.0 / 298.15)

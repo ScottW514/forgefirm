@@ -30,6 +30,28 @@ software could seriously maim or kill you or others, and voids your
 warranty. It is not affiliated with or endorsed by Glowforge. Use it at
 your own risk.**
 
+## Regulatory and legal
+
+Installing ForgeFIRM replaces the firmware of a certified laser product.
+This is disclosure, not legal advice — but understand the categories
+before you install:
+
+- **Laser product certification (US).** The factory machine is
+  certified under FDA/CDRH 21 CFR 1040.10 and 1040.11. Modifying it
+  makes **you** the manufacturer of a modified laser product for
+  regulatory purposes; the original accession no longer describes the
+  article you operate.
+- **CE/UKCA (EU/UK).** The manufacturer's declaration of conformity no
+  longer covers the modified machine.
+- **Safety listing.** Any UL/ETL or equivalent listing applies to the
+  product as shipped, not as modified.
+- **Insurance.** Property and liability policies commonly exclude fire
+  loss involving modified equipment. Check yours before running jobs.
+
+The hardware safety interlocks (lid switches, interlock, power-fault
+chain) remain active under ForgeFIRM — but the regulatory status of the
+machine is yours to own once you flash it.
+
 ## Install
 
 Log in at the factory console and run:
@@ -75,9 +97,12 @@ Switch targets are probed first — `ffboot` refuses to select a slot
 that does not look bootable (`-f` overrides). Reverting to factory
 firmware and back requires no reinstall.
 
-To reinstall or update ForgeFIRM before the built-in updater ships:
-switch to factory firmware and run the installer again — it skips
-archives it already has and simply rewrites the ForgeFIRM slot.
+**Routine updates do not use the installer.** Update from the web
+control panel's System page, which downloads (or accepts an upload of)
+a signed `forgefirm.fw` release, verifies it, and applies it to the
+inactive slot. Rerunning the installer is only for recovering a broken
+ForgeFIRM install: switch to factory firmware and run it again — it
+skips archives it already has and simply rewrites the ForgeFIRM slot.
 
 ## Upgrading from a legacy dual-partition install
 
