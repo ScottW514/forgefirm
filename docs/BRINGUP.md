@@ -1,10 +1,64 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-08-14** — **audit remediation Phases 0 through 5
+Last updated: **2026-08-14** — **audit remediation Phases 0 through 7
 landed** (from an independent whole-tree audit dated 2026-08-13; the
 remediation is sequenced behind two gates — GATE A, uncommanded energy,
 before any further live-fire; GATE B, control surface + release, before
 any published release).
+
+**Phase 6 (motion integrity) is code-complete and host-verified.** A
+mid-run underrun or stepper fault is no longer silently absorbed: the
+shipper polls `cnc/state` at its own cadence while a kernel run is in
+flight and raises the stream fault path — disarm, homing-anchor
+invalidation, alarm — the moment it happens (G-2), and the sanctioned
+one-shot underrun retry now invalidates the anchor and logs
+position-untrusted instead of leaving `homed:true` standing (G-3). The
+supervisor unlinks `/run/grblhal.homed` on every controller transition,
+so a homed GRBL anchor cannot survive into cloud mode, which re-zeros
+the counters it anchors (X-5). Kernel rows (**ride the pending image
+flash**): backtrack is bounded by what is physically intact in the ring
+and refused outright once the ring has been live-streamed since the
+last clear (K-5); `resume` range-checks against the 28-bit waypoint
+field instead of silently truncating — 268 435 457 no longer becomes a
+waypoint of 1 (K-12); `pulsebuf_total_bytes` is 64-bit with a
+saturating 32-bit position ABI, so a long stream cannot wrap it
+mid-soak (K-5); ring mutators are mutex-serialized — concurrent
+writers on the inherited fd, the clear-vs-run TOCTOU, and the
+run-start scratch publish (K-13); and `STATE_FAULT` is recoverable via
+`enable` once every non-ignored fault line physically reads clear, so
+an edge glitch no longer bricks motion until module reload (K-6).
+UAPI.md documents all the contract changes.
+
+**Phase 7 (cloud-mode robustness) is code-complete and host-verified;
+all hot-deployable.** Cloud now fails toward stopped-and-safe: the
+service loop survives malformed frames with safing in a `finally`, and
+a dead WS client thread ends the session cleanly for the supervisor to
+respawn (C-2); network exceptions no longer kill the reconnect thread —
+an hourly reconnect during a DNS blip cannot take the machine offline
+permanently (C-4); the in-run safety poll cannot be raised out of
+(`cnc.state` degrades to FAULT, the verdict reader covers `TypeError`
+and future-dated timestamps) and `_action_cleanup` stops motion, not
+just the beam (C-6, C-24); an accepted action is never dropped and a
+crashed one emits a terminal `:failed` (C-11, C-12); the cooling
+reporter is exception-proof with a parting report (C-13); Z homing is
+bounded (C-15). Input clamps: pulse-header values clamp to their
+now-live min/max bounds before touching motion hardware (C-9);
+`load_motion` validates the header before the first byte reaches the
+ring and its failure return is handled (C-10); the −273.15 dead-sensor
+sentinel no longer passes the start-temp gate (C-16); the dead
+`firmware_download()` is deleted (C-19); `EMULATOR.BYPASS_HOMING` keys
+on a code-set emulator marker (C-21). Hygiene: tokens no longer reach
+the logs — no forced DEBUG, no sign-in dump, owner-only log files
+(C-8); the homing accelerometer witness samples at ~100 Hz instead of
+saturating the head I²C bus (C-14; re-verify the motion-window counts
+against the characterized thresholds on the next live homing); one
+hostname derivation, fuzz-verified over 200 k serials with the
+short-serial trailing dash fixed (C-18); bounded TX queue + locked
+`response_id` (C-20); plus C-17/C-22/C-23. **Bench items:** null-sink
+starve drill (sender alarms, `homed` invalidated, armed job refuses at
+the stale origin); `STATE_FAULT` glitch recovery without a module
+reload; malformed-frame and DNS-blip injections against a live
+session; oversize/bad-header job rejected before the ring loads.
 
 **Phase 5 (physical-evidence instrumentation) is code-complete and
 host-verified.** The machine now watches what it *does*, not just what
