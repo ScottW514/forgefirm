@@ -1412,7 +1412,8 @@ fake bench tool), the tree manifest generated from the recipe pins with
 grblHAL core), the coverage lint reporting on it, and the gate refusing an
 empty artifact cleanly; `.github/workflows/forgetest-ci.yml` runs the
 same and **enforces the coverage lint** (every manifest path is covered:
-0 uncovered on both the built manifest and the tree manifest). **Catalog
+0 uncovered on both the built manifest and the tree manifest) - **green
+on GitHub for the pushed tree (2026-08-15).** **Catalog
 v1 is complete: 24 tests**, every one a port of a proven bench drill or
 of a bench-verified check, with the recorded pass criteria: the core
 `image.health`, `kernel.latch-locked-idle`, `kernel.k1-k2`,
