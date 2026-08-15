@@ -22,6 +22,23 @@ Drills (pass a name):
             underrun (position no longer trusted), a subsequent armed
             job must refuse to cut at the stale origin - the sender
             alarms and re-home is required. Reads homed via /status.
+  ircut     Lid-IR fire characterization at cutting power: a 30 mm
+            square at S<power> (default 1000 = full) and F<feed>
+            (default 300) on scrap, sampled like `witness`. Prints the
+            per-channel peak delta over the ambient baseline and the
+            engine's own "run telemetry" line is the record. Run it
+            >= 3 times on representative material; the highest peak
+            delta sizes cool_fire_ir_delta.
+              ircut [host] [S] [F]      e.g. ircut 192.0.2.1 1000 300
+  expstop   Armed kill on the EXPECTED-stop path: start a mark job,
+            then mid-burn POST /controller/stop (the supervisor stops
+            the controller: SIGTERM, reap, exit safing). PASS: emission
+            drops to 0 within a few samples of the stop and stays 0,
+            the kernel is not running, and POST /controller/start
+            is a SEPARATE step (`ctrlstart`, run after the operator has
+            judged the stop). Needs the panel token in GF_TOKEN
+            (cat /data/forgefirm/panel.token on the board).
+  ctrlstart POST /controller/start after an expstop; no motion, no laser.
 
 The G-4 arm-refuses-when-a-fire-gate-is-active drill is operator-manual
 (kill the pump during the button wait); this harness prints the cue.
@@ -339,13 +356,144 @@ def drill_faultpos(g):
     g.cmd('M5', timeout=1)
 
 
+def drill_ircut(g):
+    power = int(sys.argv[3]) if len(sys.argv) > 3 else 1000
+    feed = int(sys.argv[4]) if len(sys.argv) > 4 else 300
+    print('=== lid-IR characterization: S%d F%d 30 mm square ===' % (power, feed))
+    print('connect: %s' % prepare(g))
+    base = sample_forgectrl()
+    print('pre-fire: %s' % base)
+    arm_cue()
+    job = [
+        'G91', 'G21', 'M4', 'S%d' % power,
+        'G1 X30 F%d' % feed, 'G1 Y30 F%d' % feed,
+        'G1 X-30 F%d' % feed, 'G1 Y-30 F%d' % feed,
+        'M5', 'G90', 'M2',
+    ]
+    samples = run_and_sample(g, job, overall_timeout=400)
+    ir_peak = [0, 0, 0, 0]
+    ir_min = [10 ** 6] * 4
+    hv_vals = []
+    emis = []
+    fw = set()
+    for s in samples:
+        if s['ir'] and len(s['ir']) == 4:
+            for i in range(4):
+                ir_peak[i] = max(ir_peak[i], s['ir'][i])
+                ir_min[i] = min(ir_min[i], s['ir'][i])
+        if s['hv'] is not None:
+            hv_vals.append(s['hv'])
+        if s['emission'] is not None:
+            emis.append(s['emission'])
+        if s['fire_watch']:
+            fw.add(s['fire_watch'])
+    print('\n--- results ---')
+    print('samples: %d  emission peak=%s  fire_watch states=%s'
+          % (len(samples), max(emis) if emis else '-', sorted(fw)))
+    delta = [round(ir_peak[i] - IR_BASELINE[i], 1) for i in range(4)]
+    print('lid_ir min=%s peak=%s baseline=%s  peak delta=%s'
+          % (ir_min, ir_peak, IR_BASELINE, delta))
+    print('hv_current range: %s..%s' % (min(hv_vals) if hv_vals else '-',
+                                        max(hv_vals) if hv_vals else '-'))
+    worst = max(delta)
+    print('worst peak delta this job: %s counts -> cool_fire_ir_delta must sit '
+          'above the worst across ALL jobs (>= 2x it, never < 15)' % worst)
+    print('the engine logged its own "run telemetry: lid IR ..." line for this job')
+    return samples
+
+
+def post_ctrl(action):
+    # http.client preserves the header-name case exactly as given.
+    import http.client
+    tok = os.environ.get('GF_TOKEN', '')
+    c = http.client.HTTPConnection(HOST, 8080, timeout=8)
+    c.putrequest('POST', '/controller/' + action)
+    c.putheader('X-ForgeFIRM-Token', tok)
+    c.putheader('Content-Length', '0')
+    c.endheaders()
+    r = c.getresponse()
+    body = r.read().decode()
+    c.close()
+    return r.status, body
+
+
+def drill_expstop(g):
+    print('=== armed kill on the expected-stop path (POST /controller/stop) ===')
+    if not os.environ.get('GF_TOKEN'):
+        raise SystemExit('set GF_TOKEN to the panel token first')
+    print('connect: %s' % prepare(g))
+    arm_cue()
+    job = ['G91', 'G21', 'M4', 'S400',
+           'G1 X40 F200', 'G1 Y40 F200', 'G1 X-40 F200', 'G1 Y-40 F200',
+           'M5', 'G90', 'M2']
+    for ln in job:
+        g.s.sendall(ln.encode() + b'\n')
+    # Wait for the burn to be under way (emission > 0), then stop.
+    t0 = time.time()
+    seen = False
+    while time.time() - t0 < 240:
+        smp = sample_forgectrl()
+        if smp and smp['emission'] and smp['emission'] > 0:
+            seen = True
+            break
+        time.sleep(0.15)
+    if not seen:
+        print('no emission seen within the wait - operator did not arm? ABORT')
+        return []
+    print('emission live (%s) - stopping the controller NOW' % smp['emission'])
+    t_stop = time.time()
+    code, body = post_ctrl('stop')
+    print('POST /controller/stop -> %s %s (%.2f s)' % (code, body.strip(), time.time() - t_stop))
+    trail = []
+    for _ in range(40):                     # ~5 s at 8 Hz
+        smp = sample_forgectrl()
+        if smp:
+            trail.append((round(time.time() - t_stop, 2), smp['emission'], smp['kstate'], smp['armed']))
+        time.sleep(0.12)
+    print('post-stop trail (t, emission_samples, kstate, armed):')
+    for t in trail:
+        print('  %s' % (t,))
+    zero_at = next((t for t, e, _, _ in trail if e == 0), None)
+    tail_zero = all(e == 0 for _, e, _, _ in trail[-16:])
+    not_running = all(k != 'running' for _, _, k, _ in trail[-16:])
+    print('emission first 0 at +%s s; last 2 s all zero: %s; kernel not running: %s'
+          % (zero_at, tail_zero, not_running))
+    try:
+        mode = get_json('/mode')
+    except Exception as e:
+        mode = str(e)
+    print('/mode after stop: %s' % mode)
+    ok = zero_at is not None and zero_at < 2.5 and tail_zero and not_running
+    print('EXPSTOP %s' % ('PASS' if ok else 'REVIEW'))
+    print('the controller is left STOPPED (supervision held); resume it with '
+          'the ctrlstart step once the operator has judged the stop')
+    return trail
+
+
+def drill_ctrlstart(g):
+    """Resume supervision after expstop: POST /controller/start, then
+    report /mode. No motion, no laser."""
+    code, body = post_ctrl('start')
+    print('POST /controller/start -> %s %s' % (code, body.strip()))
+    time.sleep(6)
+    try:
+        print('/mode after start: %s' % get_json('/mode'))
+    except Exception as e:
+        print('/mode after start: %s' % e)
+    return []
+
+
 def main():
     drill = sys.argv[1] if len(sys.argv) > 1 else ''
     drills = {'witness': drill_witness, 'hold': drill_hold,
-              'faultpos': drill_faultpos}
+              'faultpos': drill_faultpos, 'ircut': drill_ircut,
+              'expstop': drill_expstop, 'ctrlstart': drill_ctrlstart}
     if drill not in drills:
         print(__doc__)
         return 2
+    if drill == 'ctrlstart':
+        drills[drill](None)
+        return 0
     g = Grbl(HOST, PORT)
     try:
         drills[drill](g)

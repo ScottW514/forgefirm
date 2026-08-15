@@ -274,6 +274,53 @@ def test_verdict_blocks_arm():
         s.close()
 
 
+def test_sigterm_mid_job():
+    """Rule 5: a termination signal during an armed job is a STOP, not a
+    "finish the job first". The supervisor's expected-stop path (mode
+    switch, diagnostics, the emergency lever) delivers SIGTERM; the
+    controller must bring motion to a controlled stop, close the armed
+    window (latch relocked) and exit promptly - long before the job
+    would have ended and inside the supervisor's SIGKILL grace."""
+    s = Session("sigterm-mid-job", disarm_s=60)
+    try:
+        send_line(s.sock, "M4 S100", s.log)
+        send_line(s.sock, "G1 X300 F60", s.log)          # a 5-minute move
+        if not wait_for(s.log, ARMED, 5, s.sock):
+            fail("[sigterm-mid-job] the job did not arm")
+        # Let the run get under way.
+        deadline = time.time() + 5
+        running = False
+        while time.time() < deadline and not running:
+            s.sock.sendall(b"?")
+            read_avail(s.sock, s.log, 0.3)
+            running = "<Run" in "".join(s.log[-5:])
+        if not running:
+            fail("[sigterm-mid-job] the job never reported Run")
+        t0 = time.time()
+        s.proc.send_signal(signal.SIGTERM)
+        # Keep draining the sender socket so the disarm report is captured.
+        exited = False
+        while time.time() - t0 < 10:
+            read_avail(s.sock, s.log, 0.2)
+            if s.proc.poll() is not None:
+                exited = True
+                break
+        dt = time.time() - t0
+        if not exited:
+            fail("[sigterm-mid-job] the controller did not exit within 10 s of "
+                 "SIGTERM during a job (it must stop, not finish the job)")
+        if dt > 3.0:
+            fail("[sigterm-mid-job] exit took %.1f s after SIGTERM (want < 3 s)" % dt)
+        if s.disarmed_count() < 1:
+            fail("[sigterm-mid-job] no disarm (latch relock) reported before exit")
+        if s.proc.returncode != 0:
+            fail("[sigterm-mid-job] exit status %s (want a clean 0)" % s.proc.returncode)
+        print("PASS [sigterm-mid-job]: SIGTERM during a job stopped it, relocked "
+              "the latch and exited in %.2f s" % dt)
+    finally:
+        s.close()
+
+
 def main():
     if not os.path.isfile(BIN):
         fail("controller binary not found at %s" % BIN)
@@ -281,6 +328,7 @@ def main():
     test_sender_change()
     test_hold_grace()
     test_verdict_blocks_arm()
+    test_sigterm_mid_job()
     print("PASS: the armed-window lifecycle holds")
 
 
