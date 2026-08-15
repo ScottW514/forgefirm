@@ -2754,6 +2754,22 @@ motion, cooling, camera, cloud, then the live tests from the page.
       separately drilled: a Python traceback through the relay — there
       is no external trigger for that; the relay pipe is the same one the
       `logger` probes and the wrapper's `exited (137)` line went through.
+      Acceptance catalog: `logs.tree-tail-export` (list, tail, sanitized
+      export with the token-leak check), `logs.routing` (one logger
+      daemon, rendered rules and effective record consistent with
+      `/logs`, the tree, the daemon's own emitter line, `logger` relay
+      probes routed by name in the ff_line format, a stray program only
+      in system/, kernel lines, relay processes, nothing outside the
+      tree) and `logs.level-settings` (bad level/port/proto/server
+      refused, a level change configured-not-effective with
+      `pending_reboot`, restored) — all three PASS on the bench
+      2026-08-15 through the real Runner against an isolated results log
+      (the image's forgetest still carries the older catalog until the
+      next dev image). Finding from that run, fixed: the sanitized export
+      took 13.9 s on the target (0.95 s unsanitized) and tripped the hw
+      client's 10 s default — the export call now has its own timeout
+      and the sanitizer skips a pattern pass when the line cannot match
+      it (4x faster on the host; forgectrl 4d19e9d, next image).
 
 15. **Release acceptance tool (forgetest) - CODE-COMPLETE 2026-08-15,
     host- and build-verified; bench validation pending, ships with the
