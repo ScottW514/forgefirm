@@ -112,13 +112,79 @@ MOTION and re-probed rather than false-passed, and the second probe
 returned MOTION OK (p2p x=3919, y=1636) — the DRV8825s are not wedged
 after the drill session's rail cycles.
 
-**Still pending — operator-present:** the connection-flood
-`machine_is_idle` fail-closed check under motion (X-2); the stale-gate
-/ motion-integrity armed drills across Phases 4 and 6 (physical
-button); and the Phase 5 live-fire work — emission-witness live check
-and lid-IR fire characterization to set `cool_fire_ir_delta` from the
-ambient baseline below. Live fire only with the operator armed: eye
-protection, fire watch, exhaust running.
+**X-2 connection-flood robustness exercised (dry):** a 500-connection
+slow-drip flood from a second LAN host drove forgectrl from 7 to a peak
+of 379 open fds, where it plateaued — MHD's own connection handling
+caps concurrency far below the raised 4096 `RLIMIT_NOFILE`, so the
+flood could not manufacture the EMFILE that the X-2 fix guards against.
+The daemon never crashed, the kernel `cnc/state` stayed readable
+throughout (two local `/status` probes timed out at the peak and
+recovered within a second), and it returned to 7 fds with `/status`
+`200` after the flood drained. The fail-closed branch itself
+(`machine_is_idle()` returns busy on any `rd_attr` failure) is present
+in `status.c` and covered by the `-Werror` CI build; distinctly
+exercising the EMFILE→busy path wants a host unit test that injects the
+read failure (the clean X-2 closure — the runtime flood cannot reach it
+while MHD caps connections below the fd limit). Note for F-15/X-6: the
+absence of an explicit `MHD_OPTION_CONNECTION_LIMIT` + per-IP cap is
+still the deferred half; the default ceiling held here but a per-IP cap
+remains the right hardening.
+
+**Live-fire drills PASS (operator armed, S400/40% vector marks on
+scrap, `scripts/bench/live_fire_drills.py`):**
+
+- **Phase 5 A-1 emission witness — PASS.** On a commanded fire window
+  `cnc/laser_on_sampled` (surfaced as `/status` `laser.emission_samples`)
+  goes to its full 255 count and returns to 0 at Idle, across two
+  separate burns. This is the reliable live-emission witness.
+- **Phase 5 A-5 HV telemetry — PASS.** `pic/hv_current` (`hv_current_raw`)
+  tracks the cut: 0 at idle, 0→1023/661/482 raw during the three burns
+  (the tube draws real current). The only HV witness on this PSU —
+  `hv_voltage` is grounded, as the audit noted.
+- **Phase 5 A-2 lid IR — characterized, gate left watch-only.** A 40 %
+  vector cut lifts the four `pic/lid_ir` channels only ~+3 counts over
+  the ambient baseline (37/36/40/40 → peaks ~40/39/42/43) — barely above
+  the ±3-count ambient noise, i.e. a weak fire signal at this power.
+  `cool_fire_ir_delta` therefore stays 0 (watch-only) until a
+  representative high-power job is characterized; a real ignition flare
+  is far brighter than a cut, so the eventual threshold sits well above
+  both the cut delta and the noise (a floor near 15 counts is the
+  working target, not yet committed). forgectrl's per-job telemetry line
+  logs baseline/peak for all four channels.
+- **pgood is not a usable witness on this PSU.** `cnc/laser_pgood_sampled`
+  stayed 0 (forgectrl reads <128 as "not good") through every burn even
+  while `hv_current` rail'd and the tube cut — so A-1's "surface
+  laser_pgood loss" warning is a false alarm on this hardware and must
+  be gated/suppressed here (or documented as expected); the emission and
+  HV witnesses are the trustworthy ones. Recorded for the A-1 follow-up.
+- **Phase 4 X-3 job-based disarm — PASS.** A job ending in `M2`
+  (program end, as LightBurn sends) disarms in **0.1 s** at Idle; a job
+  with no program end falls back to the ~60 s `laser_disarm_s` idle
+  grace (measured 56.8 s). The window is job-based, not 60-s-idle-based.
+- **Phase 4 G-10 disarm-in-Hold — PASS.** Armed, fired a +X move,
+  feed-held mid-move (`Hold:1`); the disarm grace counts down while held
+  and closes the window at 61.3 s (the bug left a job abandoned in Hold
+  armed for hours).
+
+**Live defect caught and fixed by the campaign:** the liveness probe's
+enclosure guard read the combined-doors EV_SW bit with inverted sense
+(bit 3 set = *closed*, per the switch map; the guard treated set as
+*open*), so the wedge probe skipped on every spawn with the lid closed
+and would have moved the gantry with it open. Fixed in forgectrl
+`424f185`, hot-deployed; the probe then ran for real and behaved as
+designed — a gray-zone first read (head-accel p2p x=455, below the ≥500
+threshold) was retried rather than false-passed, and the retry returned
+MOTION OK (p2p x=3919, y=1636).
+
+**Deferred (fiddly or config-dependent, not blocking):** G-4 (arm
+re-checks the coolant fire gate after the button wait) wants the pump
+killed in the instant after the press — cleanest as a host unit test;
+the code re-check is in place. Phase 6's "armed job refuses at the stale
+origin after an underrun" is config-dependent (GRBL mode permits
+unhomed cutting), and the core underrun behavior — `pulse data
+underrun; position no longer trusted` with the homing anchor unlinked —
+is already logged in the dry dead-man drills above. Live fire only with
+the operator armed: eye protection, fire watch, exhaust running.
 
 The lid-IR **ambient baseline** for the fire-watch characterization is
 captured on this image (600 samples over 5.6 min at 2 Hz, lid closed,
