@@ -47,7 +47,7 @@ away kills emission in hardware, not in software.
 
 | Ref | Part | Role |
 |---|---|---|
-| U1 | SN74AHC123A dual retriggerable monostable, R ≈ 499 kΩ / C ≈ 1 µF (t_w ≈ 0.45–0.5 s) | Charge-pump watchdog: Q stays high only while CHG_PUMP keeps arriving; times out ~0.5 s after the last pulse |
+| U1 | SN74AHC123A dual retriggerable monostable, R ≈ 499 kΩ / C ≈ 1 µF (t_w ≈ 0.45 s, bench-measured) | Charge-pump watchdog: Q stays high only while CHG_PUMP keeps arriving; times out ≈0.45 s after the last pulse |
 | U5, U6 | SN74AHC14 hex Schmitt-trigger inverters | Level inversion / conditioning for every switch line and SoC readback |
 | U17 | SN74AHC08 quad 2-input AND | The four gates: DOORS, HV_ENABLE, and the two-stage LASER_ON gate |
 | U23 | CD4043B quad R/S latch (NOR type, active-high S/R, output enable tied high) | Latch 1 = button latch, latch 2 = interlock latch |
@@ -75,7 +75,7 @@ away kills emission in hardware, not in software.
 
 | Net | SoC pin | Driven by | Effect |
 |---|---|---|---|
-| CHG_PUMP | GPIO3_24 (F22, `charge-pump-gpio`) | `glowforge.ko`: one 0→1→0 pulse at run start, then every 200 ms from a soft hrtimer **only while `state == running`**; forced low on stop, disable, unload and kernel panic | Retriggers U1-1 (t_w ≈ 0.45–0.5 s, so a 200 ms feed holds Q solidly high). No edges → Q falls within ~0.5 s → HV_ENABLE drops |
+| CHG_PUMP | GPIO3_24 (F22, `charge-pump-gpio`) | `glowforge.ko`: one 0→1→0 pulse at run start, then every 200 ms from a soft hrtimer **only while `state == running`**; forced low on stop, disable, unload and kernel panic | Retriggers U1-1 (t_w ≈ 0.45 s, so a 200 ms feed holds Q solidly high). No edges → Q falls ≈0.45 s after the last pulse → HV_ENABLE drops |
 | LATCH_RESET | GPIO1_07 (R3, `latch-reset-gpio`, init HIGH) | `cnc/laser_latch` (1 = lock). Also drives the FIRE line to high impedance while locked | Into U32 with lid-open; SETs the button latch → LASER_ON blocked until the next button press |
 | INTERLOCK_RESET | GPIO4_05 (P5, `interlock-latch-reset-gpio`, init HIGH) | `glowforge.ko`: high whenever the remote-interlock loop reads open, or until a switch device reporting the loop has attached; low only while an attached device reports it closed (in-kernel input handler on the gpio-keys switch, EV_SW code 5). Read back as `interlock_latch_reset` / `interlock_circuit` bit 4 | SET input of the interlock latch → LASER_ON blocked in hardware while the loop is open |
 | FIRE (LASER_ENABLE) | GPIO2_30 (E22, `laser-enable-gpio`) | The SDMA script, from bit 4 of each pulse byte; Hi-Z whenever the latch is locked or no run is in flight | One input of the final LASER_ON AND gate |
@@ -195,8 +195,10 @@ would not allow.
   from the cooling engine (flow verification, over-temperature, lid-IR
   emission witness); a stale or failed verdict relocks in-process.
 - **Safety door.** `doors` (lid) and `interlock` (loop open) are the core's
-  safety-door signal: a running job parks and resumes on close. This is a
-  motion/UX gate; the lid is *also* cut in hardware by the button latch.
+  safety-door signal: a running job parks; once the door/loop closes the
+  controller reports `Door:0` and a cycle start resumes it. This is a
+  motion/UX gate; the lid is *also* cut in hardware by the button latch,
+  and the interlock by the interlock latch (§3.1).
 - **Head/motion witnesses.** Position counters are not proof of motion (the
   step-stream drives are open loop); the head accelerometer is the motion
   witness, and `beam_detect_analog` on the head is the live emission witness.
@@ -241,7 +243,14 @@ kernel readbacks (the runbook `BRINGUP.md` holds the drill records):
 - Armed kill mid-FIRE: emission tail equals the ring in-flight only
   (15–171 ms), the latch relocks, the burn line ends abruptly.
 - Switch bits 0–3, 5, 6 verified against physical state; bit 4 (`estop`)
-  characterized live: high at idle, low through any run.
+  characterized live: high at idle, low through any run, and it flips
+  together with `charge_pump_alive` on both edges (HV_ENABLE = DOORS_OK ·
+  WDOG_ALIVE observed).
+- Interlock latch drive: with the connector unjumpered, `interlock`,
+  `interlock_latch_reset` and `interlock_latch` all assert within one 50 ms
+  sample and all clear when the loop is closed again.
+- Watchdog period: `charge_pump_alive` falls ≈0.45 s after the last
+  charge-pump pulse (two runs, 0.44/0.46 s), matching the measured R·C.
 
 ---
 
@@ -251,17 +260,9 @@ Present gaps in the hardware picture. None of them changes the safety
 argument (every gap is on the readback/sense side or is a "which part" question),
 but each is worth closing:
 
-- **`estop` toggles seen inside motion windows.** With the one-shot's
-  measured R/C (≈ 499 kΩ, ≈ 1 µF → t_w ≈ 0.45–0.5 s against a 200 ms feed)
-  the one-shot cannot gap during a healthy run, so those toggles are most
-  likely run boundaries (homing and jogs are several short runs) or a feed
-  late by more than ~250 ms; `charge_pump_alive` sampled through a run
-  settles it.
-- **Interlock latch drive: bench validation pending.** The board itself has
-  no trip path from the loop to the latch's SET input (bench-verified with the
-  connector unjumpered: `interlock` open, `interlock_latch` clear while
-  INTERLOCK_RESET was held low). The kernel drive described in §3.1 closes
-  that gap; its host test is green and it ships with the next image, where the
-  expected reading with the loop open is `interlock_latch` set,
-  `interlock_circuit` bit 4 set, clearing after the loop is closed.
+- **`estop` toggles seen inside motion windows** are run boundaries: `estop`
+  follows the watchdog exactly (low from the first pulse of a run, high
+  ≈0.45 s after its last), and homing and jogs are several short runs. A
+  feed late by more than ~250 ms would look the same and has not been
+  observed.
 - **`laser_pgood` (HV_OK, J1_14) semantics** are not fully characterized.

@@ -2386,9 +2386,24 @@ accordingly ("Automatic — AP country, else World").
     Ships with the next image flash (kernel changes are never hot-swapped);
     bench re-run of this exact reading then expects `interlock_latch`=1 /
     `interlock_circuit` b4=1 with the loop open, both clearing after it is
-    closed. Same batch: the charge-pump watchdog readback (`cnc/charge_pump_alive`,
+    closed. **BENCH-VALIDATED 2026-08-15 on image 20260815150546:** loop
+    pulled → `interlock`=1, `interlock_latch_reset`=1, `interlock_latch`=1,
+    `interlock_circuit` 45→61 (b4 set), all within one 50 ms sample;
+    reinserted → all clear the same way. Side effect to know: the pull is
+    a grblHAL safety-door hold — the controller sits in `Door:0` after the
+    loop closes until a cycle start (`~`) returns it to Idle (a client
+    connecting then sees Door, not a dead link). Same batch: the charge-pump
+    watchdog readback (`cnc/charge_pump_alive`,
     `interlock_circuit` b5; GPIO1_08 = inverted one-shot Q, new
     `charge-pump-alive-gpio` + GPIO_8 pad in the linux-fslc DTS — kernel
     module and DTB must ship together, the pin is required at probe; DTB
-    compile-checked with cpp+dtc against the staged kernel). Full write-up
-    of the chain: `docs/SAFETY.md` (+ `docs/img/safety-chain.svg`).
+    compile-checked with cpp+dtc against the staged kernel) — **also
+    bench-validated 2026-08-15:** two X jogs sampled at 50 Hz: `state`
+    running → `charge_pump_alive` 1 and `estop` 0 in the same 20 ms sample;
+    after each run `charge_pump_alive` fell 0.325 s / 0.326 s after `idle`,
+    which with the 200 ms feed phase (last pulse 0.136 s / 0.118 s before
+    the run end) is a one-shot period of **0.46 s / 0.44 s** — matching
+    the measured R·C (≈500 kΩ × ≈900 nF = 0.45 s); `estop` re-asserted
+    with the drop both times, i.e. HV_ENABLE = DOORS_OK · WDOG_ALIVE
+    observed live. Full write-up of the chain: `docs/SAFETY.md`
+    (+ `docs/img/safety-chain.svg`).
