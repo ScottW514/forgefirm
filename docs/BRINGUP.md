@@ -2685,6 +2685,10 @@ motion, cooling, camera, cloud, then the live tests from the page.
       `/data/log/gfcloud` and `/data/log/gfhome` gone, the factory's
       `/data/glowforge.log*` untouched; the forgectrl fifo relay and the
       grblhal relay both running (`logger` ×2, `/var/run/forgectrl.stderr`).
+      The swept legacy files (10.6 MB) were deleted from the bench on
+      2026-08-15 once the new tree had proven itself; the sweep itself
+      stays in the init script for any board upgrading from before the
+      syslog tree.
     - ~~routing~~ **DONE 2026-08-15** for GRBL mode: forgectrl lines
       (`super: liveness probe: MOTION OK …`, `NOTICE super: started grbl
       controller`) in `forgectrl/forgectrl.log`; grblHAL's (`gfstream:
