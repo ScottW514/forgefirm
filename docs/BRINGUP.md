@@ -249,6 +249,46 @@ FIRE drive — each with software witnesses (`laser_enable`, `laser_on`,
 `laser_on_sampled`, interlock bit 3) plus the PSU-connector LASER_ON
 scope point, run with forgectrl stopped so the pulse device is free.
 
+**Bench session 2026-08-15 (image `20260815105250`, operator present) —
+two live-fire findings closed, one real defect found and fixed.**
+Lid-IR characterization at cutting power: three 30 mm squares on scrap
+(S1000 F300, S1000 F150, S800 F600); the engine's per-job telemetry read
+run-start baseline → peak `58/59/64/63 → 62/60/66/66`, `56/56/61/62 →
+60/61/66/68`, `56/55/61/63 → 61/60/65/66` — a worst normal-cut rise of
+**+6 counts** on any channel, against ±3 counts of ambient noise. Ambient
+that day read ~57–64 vs 37–40 on 08-14 (day-to-day drift ≈ +22 counts),
+which is why the gate keys off the run-start baseline and never off an
+absolute level. `cool_fire_ir_delta = 15` is the sized gate (≥ 2× the
+worst cut rise, at the ~15-count floor); it is a hand-edited
+`/data/forgefirm.conf` key and takes effect at the next run start. A
+flame-signature measurement (tea light in the closed bed, idle) was not
+made; the gate stands on the cut data alone until one is. **Armed kill on
+the expected-stop path — first run FAILED, defect fixed, re-run PASS.**
+With emission live, `POST /controller/stop` returned only after 5.30 s
+and the operator saw ~17 mm / ~5 s of continued cutting before a
+decelerated stop: the supervisor's SIGTERM was honored by the controller
+as "exit once motion is done" (`driver.c` exited only outside
+CYCLE/JOG/HOMING), so the job ran on until the 5 s SIGKILL escalation
+and the exit safing (`escalating to SIGKILL`, exit status 0x9). Fixed on
+both sides and bench-proven the same session: forgectrl `3edb7bd` writes
+`cnc/stop` + `cnc/laser_latch=1` **before** the SIGTERM (kernel-level,
+instantaneous, no-op when idle); grblHAL `5960f05` treats SIGINT/SIGTERM
+during motion as `^X` (controlled decel, latch relocked, alarm) and exits
+on the next pass, with the handler kept installed so the supervisor's
+second SIGTERM cannot hard-kill it mid-cleanup — CI case
+`sigterm-mid-job` (exit in 0.10 s; the old logic fails it). Re-run with
+the new binaries installed: POST returned in 0.46 s, `grbl controller
+exited (status 0x0)` with no SIGKILL, kernel `idle` and `armed:false` at
+the first post-stop sample, emission gone within the counter's ~1 s
+window; the operator saw ~1 s / a few mm of cut, then the stop. Also
+found and fixed: `auth.c` read `X-ForgeFIRM-Token`/`Host`/`Origin`/
+`Sec-Fetch-Site` case-sensitively (a title-casing client was refused);
+now `u_map_get_case`. Bench tooling for the session is committed
+(`scripts/bench/platform_drills.py`, `live_fire_drills.py` `ircut` /
+`expstop` / `ctrlstart`). Session rules, now standing: one live-laser run
+per turn with the operator's confirmation before the next; only
+observations, never inferences, in live-fire reporting.
+
 **Phase 11 (licensing, legal, and documentation hygiene — the last
 phase) is code-complete and host-verified, 2026-08-15.** Licensing:
 `python3-gfhardware` declares the libdc1394 Bayer decoder it compiles
@@ -2217,12 +2257,13 @@ accordingly ("Automatic — AP country, else World").
     emission witness, A-5 HV telemetry, X-3 job-based disarm, G-10
     grace-in-Hold, A-2 lid-IR first look). What has **not** been run on
     hardware, none of it gating, in rough priority order:
-    - **Lid-IR fire characterization at cutting power** — ≥3
-      representative jobs at real power, read the per-job baseline/peak
-      log lines, set `cool_fire_ir_delta` well above the worst normal-cut
-      peak (never below ~15 counts), keep watch-only until several jobs
-      show no false trip, then enable the fire-abort gate. The 40 % cut
-      moved the channels only ~+3 counts, so the gate ships 0.
+    - ~~**Lid-IR fire characterization at cutting power**~~ — **DONE
+      2026-08-15** (three cutting-power jobs, worst rise +6 counts,
+      `cool_fire_ir_delta = 15` set by hand in `/data/forgefirm.conf`).
+      Still open from it: watch the next several real jobs for a false
+      trip before calling the gate proven, and measure an actual flame
+      signature (a tea light in the closed bed, machine idle) so the 15
+      is anchored on both sides.
     - **Kernel platform-hygiene batch (item 9), on the flashed image:**
       panic mid-motion with motors locked and the laser latched (motion
       stops, safety lines read safe); decay mode set/readback per axis;
@@ -2235,9 +2276,11 @@ accordingly ("Automatic — AP country, else World").
       during `rmmod`.
     - **Dead-man collateral:** a kernel dead-man trip leaves the pump and
       airflow running (heat sources only go off); kill forgectrl during
-      an update download (no pinned device, no EBUSY respawn storm);
-      re-run the armed kill drill on the *expected*-stop path (mode
-      switch / diag suspend) on the current image.
+      an update download (no pinned device, no EBUSY respawn storm).
+      ~~Re-run the armed kill drill on the *expected*-stop path~~ —
+      **DONE 2026-08-15**: it failed first (5 s of continued fire), the
+      defect is fixed on both sides, and the re-run passed (see the
+      session record above).
     - **Physical-evidence negatives:** force a head I²C error and confirm
       the witnesses report an error, not a plausible value; confirm a
       failed head capture leaves the measure laser off.
