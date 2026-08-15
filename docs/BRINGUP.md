@@ -1379,6 +1379,51 @@ overrides the IE (DE applied while associated to the US AP), and
 clearing reverts to the 00 hint. The UI labels the default
 accordingly ("Automatic — AP country, else World").
 
+## Release acceptance (forgetest, port 8090)
+
+The release acceptance tool - the catalog, campaigns, domain
+fingerprints, inheritance, the always-required core, invalidate-all,
+the release gate, and the coverage currency rule - is specified in
+`docs/ACCEPTANCE.md`; the tool lives in `forgetest/` and ships only on
+the dev image (`forgetest` recipe, `/etc/init.d/forgetest`, HTTP :8090).
+Status: **code landed 2026-08-15, host-verified and build-verified;
+bench validation pending - ships with the next full image flash** (the
+image manifest is an image change: `forgefirm-manifest.bbclass` entries
+from every component recipe, the kernel and the module through
+`do_deploy`, assembled by `forgefirm-image-manifest.bbclass` into
+`/etc/forgefirm-manifest.json`, also deployed next to the image as
+`*.forgefirm-manifest.json`). Build proof (dev image `20260815191634`,
+built with the classes): the manifest carries all eight components
+(forgectrl, grblhal-glowforge with the core submodule's files,
+forgefirm-app merged from its three recipes, python3-gfhardware,
+python3-gfutilities, kernel-module-glowforge and linux-fslc through the
+deploy path, forgetest through the file mode), the DTB hashes and the
+modules directory, and layer content hashes that are **byte-identical to
+what `scripts/manifest-from-tree.py` computes on the workstation** - the
+identity is content-defined, independent of the checkout's commit or
+dirty state; forgetest is installed at S95 with the bench scripts. Host
+proof: 44 unit tests (campaign
+rules, fingerprints, artifact build + gate verification incl. the
+negative fixtures - tampered artifact, covered-file change, platform
+change, core inherited, stale invalidate, catalog change, implementation
+change - and the runner + HTTP API end to end with a fake catalog and a
+fake bench tool), the tree manifest generated from the recipe pins with
+`scripts/manifest-from-tree.py` (submodule recursion verified on the
+grblHAL core), the coverage lint reporting on it, and the gate refusing an
+empty artifact cleanly; `.github/workflows/forgetest-ci.yml` runs the
+same. Catalog v1 on the tool: the core `image.health`,
+`kernel.latch-locked-idle`, `kernel.k1-k2`, `kernel.k3-unlock` and
+`kernel.fire-abu` (the last three are the GATE A drills
+`gate_a_kernel_drills.py` / `fire_test.py` ported as takeover tests with
+their sequences intact and the software-witness pass criteria from the
+2026-08-14 bench run; K3 and fire B/U prompt for the lid when
+`laser_pgood` reports HV good), plus `forgectrl.auth`,
+`forgectrl.settings-bounds`, `forgectrl.panel-serves`; the bench tab
+lists every `scripts/bench` tool with `check-pwm`, `pacing-test`,
+`bench-m2`, `flow-sampler` runnable, and `motion.pacing` +
+`motion.jog-roundtrip` (ports of `pacing_test.py` / `bench_m2.py`). The
+rest of the catalog and the bench ports are Next work item 15.
+
 ## Hardware facts bank (measured)
 
 - **DRV8825 stepper drivers wedge on 40 V rail glitches** (factory board;
@@ -2590,22 +2635,36 @@ accordingly ("Automatic — AP country, else World").
     check both pass; `/logs`, `/logs/tail` (full + incremental follow),
     and both export variants exercised over HTTP on a host build and
     the panel's Logs tab driven in a browser (levels table, viewer,
-    follow, export). **Bench, on the flashed image:**
-    - boot: `S19forgefirm-logging` ran (`/data/forgefirm/rsyslog-forgefirm.conf`
-      present, `/var/run/forgefirm-loglevels` present, six directories
-      under `/data/log/forgefirm`), `rsyslogd` up and no busybox
-      `syslogd`/`klogd`; `/var/log/messages` gone (nothing writes it);
-      the legacy files moved to `/data/forgefirm/legacy-logs/` and
-      `/data/forgectrl.log`, `/data/gfcloud.log`, `/data/log/gfcloud`,
-      `/data/log/gfhome` no longer exist; the factory's
-      `/data/glowforge.log*` untouched and no longer growing.
-    - routing: forgectrl lines in `forgectrl/forgectrl.log`, the grbl
-      controller's in `grblhal/grblhal.log` (a `$H` shows the gfhome
-      lines in `gfhome/gfhome.log`), kernel `glowforge_cnc` lines in
-      `kernel/kernel.log` with correlated RFC 3339 timestamps, sshd in
-      `system/system.log`; a mode switch to cloud puts gfcloud's lines
-      in `gfcloud/gfcloud.log` and a deliberate Python traceback (or a
-      `print`) shows up there via the relay tagged `gfcloud`.
+    follow, export). **Bench, on the flashed image (dev image
+    `20260815191634`, flashed and booted by the operator 2026-08-15):**
+    - ~~boot~~ **DONE 2026-08-15**: `S19forgefirm-logging` → `S20syslog`
+      → `S90forgectrl`, `K80`/`K90`/`K95syslog`; `rsyslogd` up, no
+      busybox `syslogd`/`klogd`; rules and `/var/run/forgefirm-loglevels`
+      rendered (all defaults); six directories under
+      `/data/log/forgefirm`; `/var/log/messages` gone; legacy files
+      moved to `/data/forgefirm/legacy-logs/` (`forgectrl.log`,
+      `forgectrl.log.old`, `gfcloud.log`, `gfcloud/`, `gfhome/`),
+      `/data/log/gfcloud` and `/data/log/gfhome` gone, the factory's
+      `/data/glowforge.log*` untouched; the forgectrl fifo relay and the
+      grblhal relay both running (`logger` ×2, `/var/run/forgectrl.stderr`).
+    - ~~routing~~ **DONE 2026-08-15** for GRBL mode: forgectrl lines
+      (`super: liveness probe: MOTION OK …`, `NOTICE super: started grbl
+      controller`) in `forgectrl/forgectrl.log`; grblHAL's (`gfstream:
+      pulse device inherited from the broker`) in `grblhal/grblhal.log`;
+      the whole boot ring (350 lines, `glowforge_cnc cnc: 40V on` …) in
+      `kernel/kernel.log` with correlated timestamps; sshd/rsyslogd in
+      `system/system.log`; `logger -t grblhal` / `-t gfhome` probes land
+      in the right files tagged `grblhal[-]` / `gfhome[-]` (the relay
+      path). `/logs`, `/logs/tail` and the sanitized export served over
+      the LAN: the bundle carried `<SERIAL>` ×2, `<IP-1>` for the LAN
+      peer (sshd `Accepted … from <IP-1>`), MACs and e-mails redacted,
+      no LAN address anywhere in it. Still open: cloud-mode routing
+      (`gfcloud/gfcloud.log` + a Python traceback via the relay) and a
+      `$H` for the gfhome lines. Found and fixed the same day: rsyslogd
+      warned at start that the fallback rule after the include was
+      unreachable (the rendered rules end in `stop`) — the default rules
+      now come from the init script when the render leaves none
+      (forgefirm 7487f90, next image).
     - levels: set `grblhal` disk to `debug` in the panel → the pending
       marker and banner appear; after reboot the per-run
       `gfstream: run:` stats appear; set it to `warning` → they stop;
@@ -2628,3 +2687,22 @@ accordingly ("Automatic — AP country, else World").
     - `/etc/init.d/forgectrl stop`/`start` — the fifo relay comes and
       goes with the wrapper; a forced daemon crash logs the wrapper's
       `exited (N) - respawning in 5 s` line under `forgectrl`.
+
+15. **Release acceptance tool (forgetest) - CODE LANDED 2026-08-15,
+    host-verified; bench validation pending, ships with the next full
+    image flash.** Contract: `docs/ACCEPTANCE.md`. Remaining, in order:
+    (a) bench: boot the dev image (the manifest itself is
+    build-verified), run the v1 catalog from the page (the takeover
+    drills and the two motion tests are ports of proven bench scripts and
+    need their first run on the machine), export, and drive one UI-only
+    pin bump to prove the inherited/required split; (b) the
+    catalog: motion (liveness, hold/resume/cancel/abort, dead-man;
+    pacing and jog round-trip are in), cooling (flow-verify, confirm/escalate, fans quiet, fire
+    gate blocks arm), the live laser tests (emission witness = core,
+    disarm in hold, faultpos, kill-mid-fire, expected-stop), camera,
+    update/boot, cloud home-and-back, mode switch - each ported from its
+    `scripts/bench` drill; (c) flip the coverage lint to `--enforce` in
+    CI when the catalog covers every manifest path, and land the coverage
+    currency rule in `CLAUDE.md`; (d) port the remaining bench tools to
+    the `#bench` tab by safety class; (e) the first release runs the full
+    campaign and commits `releases/v<version>/acceptance.json`.
