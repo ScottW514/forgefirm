@@ -26,20 +26,21 @@ Do not build as root (the Yocto sanity checks refuse it).
 
 ## Get the sources
 
-Clone the repos as siblings (the kas config references `meta-openglow` at
-`../meta-openglow` while it is under active Scarthgap migration):
+Clone the two repos as siblings (the kas config references `meta-openglow`,
+branch `scarthgap`, at `../meta-openglow`; kas fetches the upstream Yocto
+layers itself, and every ForgeFIRM source repo — the kernel module, the
+controller, the daemon, the cloud apps — is fetched by its recipe at a pinned
+revision):
 
 ```console
 git clone https://github.com/ScottW514/forgefirm.git
-git clone https://github.com/ScottW514/meta-openglow.git
-git clone https://github.com/ScottW514/kernel-module-glowforge.git
+git clone -b scarthgap https://github.com/ScottW514/meta-openglow.git
 ```
 
 ```
 openglow-forgefirm/
 ├── forgefirm/                 ← base repo, build runs here
-├── meta-openglow/
-└── kernel-module-glowforge/
+└── meta-openglow/
 ```
 
 ## Build the image
@@ -86,5 +87,6 @@ cd build/tmp/deploy/images/glowforge
 sudo zcat forgefirm-image-glowforge.rootfs.wic.gz | dd of=/dev/sdX bs=1M
 ```
 
-To install onto the factory eMMC (dual-boot with the Glowforge firmware), see
+To install onto the factory eMMC (into the unused A/B slot, with the factory
+firmware archived first — one OS runs at a time), see
 [`INSTALL.md`](INSTALL.md).

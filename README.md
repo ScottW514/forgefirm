@@ -24,7 +24,9 @@ machine is idle:**
   for each job.
 * **Cloud mode** — the machine presents itself as a stock Glowforge to the
   Glowforge web service, so the phone and web apps work as they always did.
-  Optional, and off by default; nothing about GRBL mode needs it.
+  Optional, and off by default. GRBL mode jogs and cuts without it; the one
+  GRBL-mode function that still reaches the Glowforge service is
+  camera-referenced homing (below), until limit-switch homing lands.
 
 **Around both modes:**
 
@@ -34,8 +36,9 @@ machine is idle:**
 * Both **cameras** as MJPEG streams and full-resolution snapshots — the lid
   camera feeds LightBurn's camera overlay directly.
 * **Camera-referenced homing**: `$H` from any sender runs the factory-style
-  camera homing cycle through the Glowforge service, and the machine records
-  where it is.
+  camera homing cycle through the Glowforge service (a Glowforge account and a
+  live service session are required for `$H`; everything else in GRBL mode
+  runs without them), and the machine records where it is.
 * **Installs alongside the factory firmware** in the unused A/B rootfs slot,
   archiving every factory version first, so the machine can be switched back
   to stock at any time without the Glowforge cloud.

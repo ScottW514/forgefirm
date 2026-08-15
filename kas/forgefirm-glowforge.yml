@@ -73,11 +73,10 @@ repos:
       .:
 
   # --- meta-openglow — Glowforge BSP layers ---------------------------------
-  # ACTIVE DEVELOPMENT: referenced as a local sibling checkout (no url => kas
-  # performs no git ops, so the scarthgap-migration edits we're making are what
-  # gets built). The kernel-module-glowforge sources are NOT a layer; they are
-  # pulled by the kernel-module-glowforge.bb recipe's SRC_URI, so kas does not
-  # manage them here.
+  # Referenced as a local sibling checkout (no url => kas performs no git ops,
+  # so in-place BSP edits are what gets built). The kernel-module-glowforge
+  # sources are NOT a layer; the kernel-module-glowforge.bb recipe fetches them
+  # by pinned SRCREV, so kas does not manage them here.
   meta-openglow:
     path: ../meta-openglow
     layers:
@@ -85,11 +84,8 @@ repos:
       meta-glowforge-bsp:
       # meta-openglow-bsp (separate OpenGlow_std board) intentionally excluded.
   #
-  # FUTURE — flip to this pinned-remote block at release time (gated on
-  # active BSP development settling — see kas/README.md "Push & release order".
-  # When flipping, also drop meta-openglow's kernel-module-glowforge.bbappend
-  # (externalsrc to the local sibling) so a fresh clone is self-contained; its
-  # perl-native DEPENDS is already carried in the base recipe):
+  # Pinned-remote alternative for a fully self-contained clone (see
+  # kas/README.md "Push & release order"):
   #   meta-openglow:
   #     url: https://github.com/ScottW514/meta-openglow.git
   #     branch: scarthgap          # pin via kas lock / a tag at release
@@ -122,9 +118,7 @@ local_conf_header:
   # release.sh gates the release rootfs against a passwordless root entry.
 
   build-tweaks: |
-    # Parallelism for the 12-core / 16 GB WSL2 VM. (The earlier mid-build deaths
-    # were the mirrored-networking vsock relay, not memory — see .wslconfig — so
-    # this can comfortably use more of the VM.)
+    # Parallelism sized for a 12-core / 16 GB build VM; raise on larger hosts.
     BB_NUMBER_THREADS = "8"
     PARALLEL_MAKE     = "-j 8"
     # Caches kept inside the forgefirm repo (gitignored):

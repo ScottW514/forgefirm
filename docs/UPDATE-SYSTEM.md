@@ -1,11 +1,12 @@
-# ForgeFIRM install, update & recovery system — implementation plan
+# ForgeFIRM install, update & recovery system
 
-Phased plan for moving ForgeFIRM from the legacy carve-out-a-partition
-install to the factory's own A/B slot scheme, with signed `.fw`
-packaging, a GUI update manager, factory restore, and a refreshed
-recovery image. The measured ground truth this builds on (eMMC layout,
-boot0/boot1 maps, saved-env location, factory `.fw`/updater internals)
-is in `BRINGUP.md` → "eMMC boot & recovery architecture".
+Design and contracts of the ForgeFIRM install/update/recovery system:
+the factory's own A/B slot scheme, signed `.fw` packaging, the GUI
+update manager, factory restore, and the recovery image. The system is
+described in the implementation units ("phases") it is built from; the
+bench status of each lives in `BRINGUP.md`, as does the measured ground
+truth this rests on (eMMC layout, boot0/boot1 maps, saved-env location,
+factory `.fw`/updater internals — "eMMC boot & recovery architecture").
 
 ## Settled decisions
 
@@ -152,15 +153,14 @@ demonstrably untouched.*
 - One version source: `FORGEFIRM_RELEASE` = git tag =
   `/etc/forgefirm-version` = `.fw` meta-version; the script enforces
   agreement.
-- `tested_against_gf`: pinned release metadata naming the Glowforge
-  service/firmware version this release validated optional cloud mode
-  against. `release.sh` sets it beside `FORGEFIRM_RELEASE` and writes
-  it into the `/etc/forgefirm-version` companion and the `.fw` fwup
-  meta. It is deliberately distinct from the version cloud mode
-  advertises to the service; forgectrl reads it to warn when the live
-  Glowforge service has advanced past the tested version (cloud mode
-  may break), and falls back to the advertised version on images that
-  predate the field.
+- Cloud-mode compatibility baseline: the cloud client's connect-time
+  probe records `{latest_gf_version, tested_against_gf}` to
+  `/data/forgefirm/gf-latest.json`, and forgectrl's panel warns when
+  the live Glowforge service has moved past the tested version (cloud
+  mode may break). `tested_against_gf` is the cloud client's configured
+  firmware version (`FACTORY_FIRMWARE.FW_VERSION`, the same value it
+  advertises to the service); it is **not** release metadata — neither
+  `release.sh` nor the `.fw` meta carries such a field.
 - `release.sh --dev` packs a **dev-key-signed** `forgefirm-dev.fw`
   from the release rootfs for the GUI upload path (decides open
   question 4: dev archives are signed with the dev key, never
@@ -170,7 +170,7 @@ demonstrably untouched.*
   forgectrl (minutes, no Yocto); optional `workflow_dispatch`
   cold-Yocto reproducibility build whose only product is a checksum.
 
-## Phase 4 — forgectrl update manager (GUI) — IMPLEMENTED
+## Phase 4 — forgectrl update manager (GUI)
 
 Endpoints in `forgectrl/src/update.c`, driven from the panel's System
 tab; trust anchors in `/etc/forgefirm/keys` (`forgefirm-keys` recipe:
@@ -183,17 +183,11 @@ refuse the booted root slot, verify signature before writing, and
 re-verify the written filesystem. `GET /slots` inventory, `POST /boot`
 (probe-gated), `POST /update/{check,download,apply,upload}`,
 `POST /restore/factory` (archive md5 checked), `POST /system/reboot`.
-**Bench-verified end-to-end 2026-08-08** (slot b as scratch, no
-reboots): production-signed upload classified `forgefirm` and applied
-(`signed:true`); dev-signed classified `unsigned`, apply refused until
-`confirm_unsigned=1`; factory-2022 restore md5-verified and written;
-boot-select flipped and reverted without reboot; path-traversal /
-bogus-target / booted-root-slot writes all refused; `/slots` inventory
-matched the physical layout. Original design notes below.
+Every state-changing call is behind forgectrl's auth layer (bearer
+token + origin checks; unsigned installs additionally require the
+physical button held).
 
-
-
-Backend endpoints + a panel page (OpenGlow visual identity):
+Functions of the panel page:
 
 - **Inventory**: slot contents (Phase 1 probe), current/next boot
   selection, archive presence/version.
@@ -218,7 +212,7 @@ Backend endpoints + a panel page (OpenGlow visual identity):
 *Exit: full loop on the bench — GUI upgrade, rollback via boot
 selector, factory restore and return — without touching a shell.*
 
-## Phase 5 — recovery refresh (reserved; build after 0–4 land)
+## Phase 5 — recovery refresh (not yet built)
 
 - **v1 scope**: replace only the boot0 recovery squashfs (boot1 `/usr`
   only if needed). Never write below offset 0xC0000 in boot0 — U-Boot
@@ -252,42 +246,38 @@ selector, factory restore and return — without touching a shell.*
   `factory-rootfs-<ver>.img.gz`, `boot0.img`, `boot1.img`,
   `manifest` (slot versions, dates, checksums).
 
-## Open questions / decision gates
+## Decisions
 
-1. **RESOLVED** (Phase 0): uEnv.txt keeps its `mmcargs` override with
-   `root=${mmcroot}` — slot-agnostic, hardware-verified.
-2. **RESOLVED** (Phase 0): modern-fwup-packed signed archives apply
-   with the factory 0.14.2 binary (raw 32-byte pubkey form); no
-   shipped fwup needed on the factory side.
-3. **RESOLVED** (Phase 3): size gates live in two layers — bitbake
-   fails past the 200 MiB slot; release.sh warns ≥ 170 MiB and fails
-   ≥ 195 MiB.
-4. **RESOLVED** (Phase 3): dev archives are always signed with the
-   dedicated dev key (`release.sh --dev`), never unsigned.
-8. **RESOLVED** — production signing-key ceremony executed: key
-   generated on the build host (never in the repo, CI, or
-   cloud-synced plaintext; the build-host copy is the only online
-   copy, offline backups held by the operator), public key embedded
-   in the installer, and the chain verified: production-signed
-   archives verify with fwup 1.16 and the factory's 0.14.2 (raw
-   pubkey form); dev-signed archives are rejected. Custody optimizes
-   against compromise over loss: loss means users re-run a fresh
-   installer; compromise means attacker-signed firmware on fielded
-   machines.
-5. Periodic GUI update check default-on vs opt-in (it pings the GitHub
-   API; proposal: on by default, apply always manual, config switch to
-   disable).
-6. Recovery kernel modules: carried from the factory image vs rebuilt
-   from GPL source (Phase 5 gate).
-7. U-Boot bootcount/auto-revert: **out of scope** — the recovery
-   ladder covers bad flips; revisit only if field incidents say
-   otherwise.
+- uEnv.txt keeps its `mmcargs` override with `root=${mmcroot}` — the
+  image is slot-agnostic, steered only by the saved env.
+- Modern-fwup-packed signed archives apply with the factory 0.14.2
+  binary (raw 32-byte pubkey form); no shipped fwup is needed on the
+  factory side.
+- Size gates live in two layers: bitbake fails past the 200 MiB slot;
+  `release.sh` warns ≥ 170 MiB and fails ≥ 195 MiB.
+- Dev archives are always signed with the dedicated dev key
+  (`release.sh --dev`), never unsigned.
+- Production signing key: held offline by the operator (never in the
+  repo, CI, or cloud-synced plaintext), public key embedded in the
+  installer. Production-signed archives verify with fwup 1.16 and the
+  factory's 0.14.2 (raw pubkey form); dev-signed archives are rejected.
+  Custody optimizes against compromise over loss: loss means users
+  re-run a fresh installer; compromise means attacker-signed firmware
+  on fielded machines.
+- U-Boot bootcount/auto-revert is out of scope — the recovery ladder
+  covers bad flips.
 
-## Sequencing
+## Open items
 
-0 → 1 → 2 + 2b → 3 → 4 → 5, strictly: everything after Phase 0 assumes
+- Periodic GUI update check default-on vs opt-in (it pings GitHub;
+  proposal: on by default, apply always manual, config switch to
+  disable).
+- Recovery kernel modules: carried from the factory image vs rebuilt
+  from GPL source (Phase 5 gate).
+
+## Dependencies between the phases
+
+0 → 1 → 2 + 2b → 3 → 4 → 5: everything after Phase 0 assumes
 slot-agnostic images and working `.fw` round-trips; the GUI (4) reuses
 the probe (1) and pipeline (3); recovery (5) is an independent
-mini-project once the slot scheme is provenly stable. First
-user-visible milestone is after Phase 2: a converted machine with
-instant offline factory switchback.
+mini-project on top of the stable slot scheme.

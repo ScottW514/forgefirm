@@ -30,22 +30,16 @@ jobs:
         with:
           path: forgefirm
 
-      # The kas config references meta-openglow as a local sibling, and
-      # meta-openglow's kernel-module bbappend uses an externalsrc sibling
-      # (both by design during active BSP development - kas/README.md
-      # "Push & release order" step 4 flips these at release time).
+      # The kas config references meta-openglow as a local sibling
+      # (kas/README.md "Push & release order" step 4 flips it to the
+      # pinned-remote block at release time). Every source repo the recipes
+      # build is fetched by pinned SRCREV; no other sibling is needed.
       - name: Checkout meta-openglow (sibling)
         uses: actions/checkout@v4
         with:
           repository: ScottW514/meta-openglow
           ref: scarthgap
           path: meta-openglow
-
-      - name: Checkout kernel-module-glowforge (sibling)
-        uses: actions/checkout@v4
-        with:
-          repository: ScottW514/kernel-module-glowforge
-          path: kernel-module-glowforge
 
       - name: Host dependencies
         run: |

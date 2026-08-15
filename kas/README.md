@@ -29,15 +29,15 @@ openglow-forgefirm/
 │   ├── build/                 ← bitbake output incl. images (gitignored)
 │   ├── downloads/ sstate-cache/       ← caches (gitignored)
 │   └── .gitignore
-├── meta-openglow/             ← Glowforge BSP layers (local sibling, under migration)
-└── kernel-module-glowforge/   ← glowforge.ko sources (pulled by recipe SRC_URI)
+└── meta-openglow/             ← Glowforge BSP layers (local sibling checkout)
 ```
 
-`meta-openglow` is referenced as a **local sibling** (`../meta-openglow`) while
-we migrate it to Scarthgap, so its in-place edits are what gets built. Once that
-migration is committed/pushed, flip it to a kas-cloned + pinned repo (commented
-block in `forgefirm-glowforge.yml`) and the forgefirm repo becomes fully
-self-contained.
+`meta-openglow` is referenced as a **local sibling** (`../meta-openglow`), so
+its in-place edits are what gets built. The commented pinned-remote block in
+`forgefirm-glowforge.yml` makes the forgefirm repo fully self-contained when
+flipped on. The source repos the recipes build (`kernel-module-glowforge`,
+`grblHAL-glowforge`, `forgectrl`, `python3-gfhardware`, `Glowforge-Utilities`)
+are fetched by pinned `SRCREV` and are not needed as local checkouts.
 
 ## Prerequisites
 
@@ -122,7 +122,7 @@ config move in the right order. The sequence, with current status:
 All recipes fetch their pinned revision from GitHub, so an image build is
 reproducible from the repos alone. For fast iteration on a source repo, bump
 its pin per iteration, or add a **local, untracked** `externalsrc` bbappend
-pointing at the sibling checkout — never commit one, or released images stop
+pointing at a working checkout — never commit one, or released images stop
 matching the pins.
 
 ## Scarthgap migration backlog
@@ -158,8 +158,8 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
        - **`glowforge.ko`**: ported across many 6.12 API changes
          (`tasklet_hrtimer`→soft hrtimer, `timer_setup`, LED-trigger API,
          `pwm_get`, `spi_delay`/`controller`, `filelock.h`, void `.remove`,
-         1-arg i2c probe). Compiles + links, 0 undefined symbols. Built from the
-         local sibling via an `externalsrc` bbappend during migration.
+         1-arg i2c probe). Compiles + links, 0 undefined symbols; the recipe
+         fetches the module by pinned `SRCREV`.
        - **DT**: `glowforge,cnc/thermal/pic/head` re-added with `pwms`/`pwm-names`
          phandles; `glowforge.dtb` compiles with all motion nodes.
      Motion polish: PWM prescaler (factory 1001) is **obsolete** — 6.12
@@ -173,7 +173,7 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
    - **Camera — DONE and hardware-validated.** The factory
      `ov5648_mipi.c` (NXP's removed `v4l2_int_device`/`mxc_v4l2_capture`) is
      replaced by the mainline `ovti,ov5648` subdev + imx6 `imx-media` (IPU CSI)
-     + `imx6-mipi-csi2` receiver. The factory CAM_SEL MIPI switch is modelled
+     + `imx6-mipi-csi2` receiver. The factory CAM_SEL MIPI switch is modeled
      with the mainline `video-mux` (gpio-mux on `gpio7 10`): both sensors →
      video-mux → `mipi_csi` → IPU CSI. Sensor `xvclk` is the board's 24 MHz
      fixed oscillator (matching the factory DTB); avdd/dovdd/dvdd rails are in
@@ -202,14 +202,19 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
 5. **Real-time strategy — decided.** The kernel runs
    `CONFIG_PREEMPT=y` (factory behavior; `imx_v6_v7_defconfig` alone gives only
    `PREEMPT_VOLUNTARY`). **PREEMPT_RT is not selectable on arm32 6.12** (no
-   `ARCH_SUPPORTS_RT`) and is **not needed for the pulse feeder**: the SDMA
-   ring is 128 MiB draining at 1 byte per EPIT tick — ≤200–400 KB/s even at
-   the 200 kHz ceiling — so a full ring holds **~5–11 minutes** of stream and
-   a modest 1 MiB of queued data already rides out ~3–5 s of scheduling
-   latency, orders of magnitude beyond anything PREEMPT exhibits. Deep
-   buffering + `SCHED_FIFO` for the feeder is the design; revisit RT only if
-   the underrun bench ever contradicts this arithmetic. (Bench: 5 s of
-   continuous feed at a 1 s buffer depth, zero underruns.)
+   `ARCH_SUPPORTS_RT`) and is **not needed for the pulse feeder**. The
+   argument is about queue depth, not ring size: the ring drains at 1 byte
+   per EPIT tick (≤200 KB/s even at the 200 kHz ceiling), so the live
+   feeder's bounded queue depth of ~150 ms — a few KB in flight — already
+   rides out worst-case scheduling latency with orders of magnitude to spare
+   (measured: 0.2 ms worst write latency under full CPU + I/O load; the
+   underrun bench ran 100 kHz for 120 s with zero underruns). The ring
+   itself is 16 MiB (the `ring_mb` module parameter, backed by the 16 MiB
+   reserved pool): ~84 s of stream at 200 kHz, ~28 min at the 10 kHz
+   cloud-mode tick — a capacity that matters for the whole-job preload of
+   cloud mode, not for latency. Bounded queue depth + `SCHED_FIFO` for the
+   feeder is the design; revisit RT only if the underrun bench ever
+   contradicts this arithmetic.
 
 6. **gfui-client → forgectrl — DONE.** The stock `gfui-client` is excluded
    from `forgefirm-image` (`IMAGE_INSTALL:remove = "gfui-client"` in

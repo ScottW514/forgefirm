@@ -728,16 +728,16 @@ item 8.
   at startup regardless), and `vs-supply = <&reg_3p3v>` on the lm75
   node (was the last queued cosmetic "dummy regulator" probe line
   besides the two SoC USB PHYs). Nothing else queued.
-- **Build host**: WSL2 distro `forge-yocto`, tree at
-  `~/dev/openglow-forgefirm`. `~/src-sync.sh` rsyncs the Windows repos in
-  (includes `python3-gfhardware` and `grblHAL-glowforge`). Build:
-  `cd ~/dev/openglow-forgefirm/forgefirm && kas shell
-  kas/forgefirm-glowforge.yml -c 'bitbake forgefirm-image
-  forgefirm-image-dev'`. Artifacts:
+- **Build host**: a Linux build environment (a WSL2 distro works)
+  holding the `forgefirm` + `meta-openglow` sibling checkout (`BUILD.md`);
+  the ForgeFIRM source repos are fetched by pinned `SRCREV`. Build:
+  `cd forgefirm && kas shell kas/forgefirm-glowforge.yml -c 'bitbake
+  forgefirm-image forgefirm-image-dev'`. Artifacts:
   `forgefirm/build/tmp/deploy/images/glowforge/`.
-- **fwup lab (host)**: `~/fwup-lab/bin/` holds host-built `fwup-0.14.2`
-  (factory-era) and `fwup-v1.16.0`; `~/fwup-lab/devkeys/fwup-key.{priv,pub}`
-  is the DEV signing keypair (`fwup-key-raw.pub` = raw 32-byte form —
+- **fwup lab (host)**: a host directory (`<fwup-lab>` below) holds
+  host-built `fwup-0.14.2` (factory-era) and `fwup-v1.16.0` under `bin/`
+  and the DEV signing keypair `devkeys/fwup-key.{priv,pub}`
+  (`fwup-key-raw.pub` = raw 32-byte form —
   what fwup 0.14.2 expects; 1.x reads both). Cross-version compat is
   proven both ways (modern-packed signed archives apply with 0.14.2;
   modern fwup verifies+applies the factory .fw — signer key
@@ -746,12 +746,12 @@ item 8.
   release key is held offline by the operator** — the installer embeds
   its public key, so releases sign with that key only.
   Pack releases with `scripts/mkfw.sh`; the full pipeline is
-  `scripts/release.sh`, invoked on this host as:
-  `FWUP=~/fwup-lab/bin/fwup-v1.16.0 FWUP_COMPAT=~/fwup-lab/bin/fwup-0.14.2
-  FORGEFIRM_DEV_KEY=~/fwup-lab/devkeys/fwup-key.priv
+  `scripts/release.sh`, invoked as:
+  `FWUP=<fwup-lab>/bin/fwup-v1.16.0 FWUP_COMPAT=<fwup-lab>/bin/fwup-0.14.2
+  FORGEFIRM_DEV_KEY=<fwup-lab>/devkeys/fwup-key.priv
   FORGEFIRM_SIGNING_KEY=<release key> RELEASE_STAGING_DIR=<dir>
-  ./scripts/release.sh <version>` (gh for the publish step lives on the
-  Windows side; release.sh prints the exact command).
+  ./scripts/release.sh <version>` (the publish step needs an
+  authenticated `gh`; release.sh prints the exact command).
 - **Shell gotchas** (cost real time): PowerShell mangles embedded double
   quotes in git-commit here-strings (avoid `"` in messages); `wsl -- bash
   -c '...'` eats `$VAR` expansions (use script files run via PowerShell,
@@ -759,7 +759,7 @@ item 8.
 
 ## Running the controller (grblHAL-glowforge on the board)
 
-Source: `C:\dev\openglow-forgefirm\grblHAL-glowforge` — the **canonical
+Source: the `grblHAL-glowforge` sibling repo — the **canonical
 grblHAL driver repo** (github.com/ScottW514/grblHAL-glowforge, branch
 `main`): core as a submodule at `src/grbl` (→ ScottW514/core fork, branch
 `forgefirm` = **upstream master + the step_us_min buffer fix pending
@@ -783,9 +783,11 @@ and maps step events to pulse bytes; a SCHED_FIFO shipper feeds
 for interrupt masking. `GFSINK` unset = null-sink mode (full engine, no
 hardware I/O — host testing).
 
-1. Build: `wsl -d forge-yocto -- bash <repo>/forgefirm/scripts/bench/build-glowforge.sh`
-   (from PowerShell). Produces `build-arm/grblHAL_glowforge` in the WSL
-   tree (`-O1 -g`; machine constants live in `src/boards/glowforge.h`,
+1. Build: `bash <repo>/forgefirm/scripts/bench/build-glowforge.sh` in
+   the build environment (from Windows, launch it through the WSL
+   distro from PowerShell — Git Bash mangles `/mnt/c` paths). Produces
+   `build-arm/grblHAL_glowforge` in the checkout (`-O1 -g`; machine
+   constants live in `src/boards/glowforge.h`,
    force-included into the core: 53.333 µsteps/mm XY @ ×8, 2.832
    half-steps/mm Z, 0.417" Z travel, 12000 mm/min max, 700/590 mm/s²
    accel — factory-derived, see `puls_profile.py`).
@@ -843,7 +845,7 @@ jogs, $0 min 35.5 intact, $H rejected ($22=0); forgectrl streams
 
 ## The machine-services daemon (forgectrl, port 8080)
 
-Source: `C:\dev\openglow-forgefirm\forgectrl` — the **canonical repo**
+Source: the `forgectrl` sibling repo — the **canonical repo**
 (github.com/ScottW514/forgectrl, branch `main`, MIT). forgectrl is the
 ForgeFIRM machine-services daemon: **controller-mode supervision** (it
 spawns exactly one of grblHAL / gfcloud as a direct child, respawns on
@@ -872,7 +874,9 @@ serves it all, including both OV5648 cameras as MJPEG over the
 mainline imx-media pipeline:
 
 - `GET /` — the tabbed machine control panel (Status / Machine /
-  GF Cloud / GRBL / Diagnostics; ui.c): status page with the
+  GF Cloud / GRBL / Diagnostics / System; ui.c — System carries the
+  A/B slot selection, ForgeFIRM updates, image install/restore, the
+  wireless regulatory region, and reboot): status page with the
   controller-mode selector (live switch through the supervisor; the
   setting persists for boot), the operational dashboard, a scaled lid snapshot +
   on-demand live stream, and the settings forms for display units,
@@ -1389,7 +1393,11 @@ accordingly ("Automatic — AP country, else World").
        insertions), and 534 dark steps after the last fire bit = the
        entire G0 return.
      - **On-board no-fire verification 15/15 PASS** (chain unarmed,
-       nobody at the button; `laser_arm_test.py` drill): latch locked
+       nobody at the button; the drill script was a bench one-off and
+       is not retained — the arm-window state machine is reproduced
+       host-side by `scripts/bench/laser_lifecycle_test.py` and grblHAL's
+       `tests/laser_arm_test.c`, and the latch readbacks on hardware by
+       `gate_a_kernel_drills.py` and `live_fire_drills.py`): latch locked
        at idle and through jogs (interlock_circuit 13), M4 → prompt +
        latch unlocked (5) + button LED white + run fans forced +
        status served during the wait, soft-reset abort relocks + LED
@@ -1590,7 +1598,7 @@ accordingly ("Automatic — AP country, else World").
        equilibrates near ambient and the heater cannot reach a
        cutting-session loop temperature — 100 % duty drives the
        downstream sensor past 50 °C in 30 s while the bulk barely
-       moves). Behaviour at 27–32 °C baselines, and under real laser
+       moves). Behavior at 27–32 °C baselines, and under real laser
        heating, must be characterized at first light. Physics argues
        the dependence is weak — with forced flow ΔT = P/(ṁ·c), which
        carries no absolute-temperature term — but that is reasoning,

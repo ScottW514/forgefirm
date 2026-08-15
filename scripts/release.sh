@@ -186,7 +186,7 @@ cat <<EOF
 
 Pre-publish checklist (kas/README.md "Push & release order" step 4):
   - meta-openglow pushed; kas config flipped to the pinned-remote block
-  - externalsrc bbappend dropped; kas lock refreshed
+  - kas lock refreshed
   - self-containment proven from a fresh clone
 
 Publish (from a directory with an authenticated gh):

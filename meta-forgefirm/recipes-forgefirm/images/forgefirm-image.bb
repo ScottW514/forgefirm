@@ -5,13 +5,14 @@ DESCRIPTION = "OpenGlow/ForgeFIRM image for Glowforge"
 # ForgeFIRM cuts the cloud dependency: drop the Glowforge cloud client
 # (gfui-client connects to Glowforge's servers). Removing it here (override
 # only; the shared glowforge-image base is untouched) also sidesteps its
-# do_package failure. Its slot is filled locally by forgectrl (camera MJPEG
-# service; the grblHAL controller recipe is tracked in kas/README.md
-# backlog #5).
+# do_package failure. Its role is filled locally by forgectrl and the
+# controllers below (kas/README.md backlog #6).
 IMAGE_INSTALL:remove = "gfui-client"
 
 # grblhal-glowforge: the grblHAL motion controller (Grbl over TCP:23).
-# forgectrl: the ForgeFIRM control daemon (camera MJPEG service on :8080).
+# forgectrl: the ForgeFIRM machine-services daemon (HTTP :8080): controller
+# supervisor, pulse-device broker, cooling engine, cameras, telemetry,
+# settings, diagnostics, web control panel, and A/B updates.
 # gfhome: one-shot Glowforge web-service homing, invoked by the controller
 # for $H when homing_mode = gfcloud (/data/forgefirm.conf).
 # gfcloud: full Glowforge web-service controller daemon (the factory cloud

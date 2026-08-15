@@ -38,7 +38,9 @@ The laser fires only inside an operator-armed window:
   `M2`/`M30`), when the sender connection changes, or after
   `laser_disarm_s` (default 60 s) with the spindle off — counting even
   while a job sits paused in Hold or with the lid open; the next job
-  prompts again.
+  prompts again. Both timeouts are machine settings (keys in
+  `/data/forgefirm.conf`, set through the control panel's settings API);
+  the defaults suit normal use.
 - S-value scale: `$30` defaults to 1000, so set LightBurn's S-max to
   1000. 100 % power = S1000. Use M4 (variable/dynamic) mode for cuts
   and engraves.
