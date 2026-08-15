@@ -1,24 +1,22 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-08-14** — **audit remediation Phases 0 through 9
-landed** (from an independent whole-tree audit dated 2026-08-13; the
-remediation is sequenced behind two gates — GATE A, uncommanded energy,
-before any further live-fire; GATE B, control surface + release, before
-any published release). **Every kernel/image row across all phases —
-including Phase 9's BSP rows — is now code-complete, and the image
-carrying all of it is built: `20260814223300` (forgefirm-image +
-forgefirm-image-dev), all source pins pushed, bumped, and
-fetch-verified.** Built-image checks pass: the release rootfs has root
-locked (`*` in `/etc/shadow`), no watchdog daemon, forgefirm-logrotate
-installed, and `K80grblhal`/`K80gfcloud` ahead of `K90forgectrl` at
-runlevel 6; the kernel config carries `CONFIG_IMX2_WDT`,
-`CONFIG_PANIC_ON_OOPS`, and `CONFIG_PREEMPT`; the DTB fallback
-bootargs is console-only; `glowforge.ko` (the full hardening batch) is
-in `/lib/modules`. One cosmetic QA warning (a buildpaths reference in
-the grblHAL binary from the debug-info prefix maps) is noted for the
-Phase 11 sweep. **Flash this image, then run the consolidated bench
-campaign** — the GATE A drills, GATE B probes, and every phase's bench
-list above validate against it.
+Last updated: **2026-08-15** — **audit remediation Phases 0 through 11
+landed: every one of the 159 findings from the independent whole-tree
+audit dated 2026-08-13 has its fix committed** (the remediation was
+sequenced behind two gates — GATE A, uncommanded energy, before any
+further live-fire; GATE B, control surface + release, before any
+published release — and both are bench-closed, see the campaign record
+below). Image `20260814223300` (forgefirm-image + forgefirm-image-dev)
+carries every kernel/image row through Phase 9 and is flashed on the
+bench; built-image checks pass: the release rootfs has root locked (`*`
+in `/etc/shadow`), no watchdog daemon, forgefirm-logrotate installed,
+and `K80grblhal`/`K80gfcloud` ahead of `K90forgectrl` at runlevel 6;
+the kernel config carries `CONFIG_IMX2_WDT`, `CONFIG_PANIC_ON_OOPS`,
+and `CONFIG_PREEMPT`; the DTB fallback bootargs is console-only;
+`glowforge.ko` (the full hardening batch) is in `/lib/modules`. The
+Phase 11 sweep (below) is host-verified and pinned; its controller and
+daemon halves are hot-deployable, its kernel half is doc/SPDX-only, and
+its recipe half (license declarations, pins) rides the next image build.
 
 **Bench campaign — opened 2026-08-14; image `20260814223300` flashed and
 booted.** Post-flash health check passes on the board: it reports
@@ -48,8 +46,9 @@ F-18). On-board build facts re-confirmed on the running image:
 controllers stop at `K80` before forgectrl at `K90` (rc0/rc6, B-4); the
 forgefirm logrotate config and init lever are installed (F-16); there is
 no `/etc/watchdog.conf` or watchdog init (B-8); the wlconf data files are
-0644 (B-16); the panel token is stored 0600. Deferred to Phase 11: the
-settings file is still 0644 (F-23). **GATE A dry motion drills pass
+0644 (B-16); the panel token is stored 0600 (the settings file's 0600
+creation is Phase 11's F-23, host-verified there). **GATE A dry motion
+drills pass
 (latch locked, no emission, operator watching):** bounded relative jogs
 move the gantry (operator-witnessed) and the grblHAL position counter
 tracks the commanded moves exactly, returning to rest; a
@@ -237,6 +236,81 @@ FIRE window, and K3 proves a mid-ramp latch unlock never re-arms the
 FIRE drive — each with software witnesses (`laser_enable`, `laser_on`,
 `laser_on_sampled`, interlock bit 3) plus the PSU-connector LASER_ON
 scope point, run with forgectrl stopped so the pulse device is free.
+
+**Phase 11 (licensing, legal, and documentation hygiene — the last
+phase) is code-complete and host-verified, 2026-08-15.** Licensing:
+`python3-gfhardware` declares the libdc1394 Bayer decoder it compiles
+into `gfhardware._cam` (`MIT AND LGPL-2.1-or-later` in `setup.py`, SPDX
+lines on `bayer.c`/`.h`, the LGPL text shipped, the rebuild/relink offer
+stated in its README) and the BSP recipe carries `MIT & LGPL-2.1-or-later`
+with checksums on both license texts and the decoder header; the `wlconf`
+recipe declares the three regimes its vendored TI tarball actually
+contains (`GPL-2.0-only & BSD-3-Clause & TI-TSPA`, checksums on the
+GPL notice, `COPYING`, and the TSPA `LICENCE`; the packaged output is the
+GPL-2.0-only `wlconf/` subtree — nothing from `hw/firmware/` is
+installed; provenance recorded as TI WiLink8 R8.7 SP3 with its sha256;
+the TSPA text lives in the layer's `custom-licenses`); `python-gfutilities`
+anchors its checksum to the upstream repo's own `LICENSE`; the dead
+`meta-openglow-bsp` layer is removed; SPDX identifiers now sit on every
+grblHAL driver source, every kernel-module source and header, and the
+cloud-mode app files; the kernel module credits both authors and the
+third-party SDMA assembler tools. `bitbake -c populate_lic` on
+`python3-gfhardware`, `wlconf`, and `python3-gfutilities` succeeds against
+the bumped pins and deploys the expected license files. Controller
+robustness (grblHAL `da4c8eb`, CI green host-side): the pulse write
+treats `-ENOMEM`/`-EAGAIN` as bounded back-off (the UAPI's backpressure
+semantics), retries `EINTR`, and completes partial writes; the verdict
+parser trusts only a complete document (closing brace, 1 KiB buffer)
+and defaults a missing `hold` to true; the listen socket and accepted
+clients are close-on-exec so the homing runner can never keep port 23
+bound; a missing or unwritable settings file falls back to a RAM-backed
+NVS with a diagnostic instead of a crash-respawn loop; `-e`/`-p`
+argument walks, the `serial_wait` ≥1 s busy spin, `GFSINK_RATE`/
+`GFSINK_DEPTH_MS` ranges, the blocking delay's `sys.abort` test, and
+`gfio_wr_attr` short-write/`EINTR`/missing-attr semantics are all fixed;
+messages from the SCHED_FIFO shipper and from under the stream lock go
+through a raw `write(2)` (no stdio lock convoy); the `--version` C-flags
+string no longer carries toolchain path-remapping flags (the buildpaths
+QA warning). Daemon robustness (forgectrl `ed2934b`, `-Werror` build +
+unit test green): the controller environment is built before `fork()`
+and passed to `execle()` (no `setenv` in the child of a multithreaded
+parent), a SIGKILL escalation is never aimed at a pid the supervisor
+thread already reaped, the settings file is created 0600 (the cloud
+password lives there; the Python side matches), the verdict publisher
+refuses an over-long document, and the release download carries
+`curl --max-filesize`. `laser_button_timeout_s`, `laser_disarm_s`, and
+`rail_settle_s` are accepted by `POST /settings` (bounded like the
+controller's clamps) and have a home on the panel's GRBL tab. Docs:
+`kas/README.md` #5 states the real 16 MiB ring arithmetic (~84 s at
+200 kHz; the PREEMPT_RT decision stands on the bounded-queue-depth
+argument), the deleted `kernel-module-glowforge.bbappend`/externalsrc
+references are gone from kas, `release.sh`, and the cold-build workflow,
+`BUILD.md` clones only what a builder needs, `README.md` states the
+homing dependency honestly (GRBL mode jogs and cuts cloud-free; `$H` is
+camera-referenced homing that needs a Glowforge session until switch
+homing lands), `CLOUD.md` and `SERVICES.md` agree that the supervisor
+starts controllers, `UAPI.md`'s sysfs tree lists `free`/`streaming`/
+`underruns` (with `free` stated as advisory — the `-ENOMEM` write return
+is the backpressure primitive) and the `position` counter wrap/saturate
+behavior, `SERVICES.md` carries a monotonic-clock rule (no RTC on the
+board), the `COOL_FLOW_RISE_C` derivation is documented for a third party
+to re-run (`scripts/bench/README.md`; the bench tools take `GF_HOST` and
+`GF_SSH`), the pre-first-light no-fire drill's citation names the retained
+reproductions (its one-off script was never committed), British spellings
+are corrected (the wire-protocol literal `cancelled` untouched),
+`3d-models/` is a git repo, dev-machine paths and the build-distro name are
+out of every tracked file, and the doc-nit bundle (dual-boot wording,
+`tested_against_gf` described as it is wired, the image recipe comment,
+the bench README tool list, the panel's System tab) is closed. Pins:
+forgectrl `ed2934b`, grblHAL `da4c8eb`, kernel module `1862ad3`,
+gfhardware `6c7534a`, gfutilities `6d309ae` — all pushed, bumped, and
+`bitbake -c fetch`-verified. **Bench:** the new controller and daemon
+binaries are built for the board and staged in its `/tmp`; installing them
+(mv over `/usr/bin/grblHAL_glowforge` + kill the controller for the
+respawn; mv over `/usr/bin/forgectrl` + `/etc/init.d/forgectrl restart`
+while idle) and confirming the GRBL-tab tunables round-trip through the
+panel is the one Phase 11 item that still wants an operator at the
+machine.
 
 **Phase 10 (tests & CI) is code-complete; the safety rules are now
 machine-enforced.** The grblHAL controller repo's CI builds the
