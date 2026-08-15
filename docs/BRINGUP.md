@@ -15,8 +15,18 @@ the kernel config carries `CONFIG_IMX2_WDT`, `CONFIG_PANIC_ON_OOPS`,
 and `CONFIG_PREEMPT`; the DTB fallback bootargs is console-only;
 `glowforge.ko` (the full hardening batch) is in `/lib/modules`. The
 Phase 11 sweep (below) is host-verified, pinned, and its controller and
-daemon halves are installed on the bench; its kernel half is doc/SPDX-only,
-and its recipe half (license declarations, pins) rides the next image build.
+daemon halves are installed on the bench; its kernel half is doc/SPDX-only.
+**Image `20260815105250` (forgefirm-image + forgefirm-image-dev) is built
+on the Phase 11 pins** — the first image whose license manifest declares
+`python3-gfhardware` as `MIT & LGPL-2.1-or-later` and `wlconf` as
+`GPL-2.0-only` (packaged output) — with the same built-image checks passing
+(root locked, no watchdog daemon, K80/K90 order, `glowforge.ko` and both
+controller binaries present) and the buildpaths QA warning gone (the shipped
+grblHAL `--version` flags string carries no host paths). Its only build
+warning is a stamp-taint note from an earlier forced `do_compile`. Not yet
+flashed: the bench runs `20260814223300` plus the hot-installed Phase 11
+binaries, which is functionally the same userspace; flash this one when the
+next kernel/BSP change lands or before publishing.
 
 **Bench campaign — opened 2026-08-14; image `20260814223300` flashed and
 booted.** Post-flash health check passes on the board: it reports
