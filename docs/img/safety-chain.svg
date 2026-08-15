@@ -75,13 +75,13 @@
   <path class="wire-out" d="M824 146 H1300"/>
   <circle cx="880" cy="146" r="3.5" class="dot"/>
   <text x="900" y="166" class="net">HV_ENABLE</text>
-  <!-- U24 inverter -> estop -->
+  <!-- U24 inverter -> hv_enable readback (factory net name E-STOP) -->
   <path class="wire" d="M880 146 V88 H930"/>
   <rect x="930" y="70" width="64" height="36" rx="6" class="gate"/>
   <text x="962" y="86" class="gate-l">NOT</text><text x="962" y="99" class="gate-s">U24</text>
   <path class="wire" d="M994 88 H1010"/>
-  <rect x="1010" y="76" width="236" height="24" rx="5" class="rb-tag"/>
-  <text x="1018" y="92" class="tag-t">estop</text><text x="1060" y="92" class="tag-s">EV_SW 4 · GPIO4_06 · = ¬HV_ENABLE</text>
+  <rect x="1010" y="76" width="262" height="24" rx="5" class="rb-tag"/>
+  <text x="1018" y="92" class="tag-t">hv_enable</text><text x="1092" y="92" class="tag-s">EV_SW 4 · GPIO4_06 · readback</text>
   <!-- PSU tag HV_ENABLE -->
   <rect x="1300" y="132" width="172" height="28" rx="5" class="psu-tag"/>
   <text x="1308" y="151" class="tag-t">J1_16</text><text x="1354" y="151" class="tag-s">HV_ENABLE</text>

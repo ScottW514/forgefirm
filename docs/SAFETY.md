@@ -52,7 +52,7 @@ away kills emission in hardware, not in software.
 | U17 | SN74AHC08 quad 2-input AND | The four gates: DOORS, HV_ENABLE, and the two-stage LASER_ON gate |
 | U23 | CD4043B quad R/S latch (NOR type, active-high S/R, output enable tied high) | Latch 1 = button latch, latch 2 = interlock latch |
 | U32 | 74AHC1G32 single 2-input OR | Lid-open OR SoC lock → button latch SET |
-| U24 | 74AHC1G04 single inverter | E-STOP sense line = ¬HV_ENABLE |
+| U24 | 74AHC1G04 single inverter | HV_ENABLE readback to the SoC (the pin carries ¬HV_ENABLE; the factory design labels this net **E-STOP**) |
 | U18 | i.MX6 Solo | The SoC: drives CHG_PUMP, LATCH_RESET, INTERLOCK_RESET, FIRE; reads everything else |
 
 ### 2.2 Inputs
@@ -68,7 +68,7 @@ away kills emission in hardware, not in software.
 | Button latch state | U23-1 Q → U5-6 → U6-1 | double inversion | GPIO1_03 (R7) | `cnc/button_latch`, `interlock_circuit` bit 2 | 1 = latch SET (fire blocked / not armed), 0 = armed |
 | Interlock latch state | U23-2 Q → U6-3 → U6-4 | double inversion | GPIO1_02 (T1) | code 6 `interlock_latch`, active high → **active = latch SET** | 1 = interlock latch blocking |
 | LASER_ON readback | J1_12 net (U17-3 output) | U6-5 inverts | GPIO1_05 (R4) | `cnc/laser_on`, `laser_on_sampled`, `interlock_circuit` bit 0 (raw, active low) | The gated output — the only software-visible proof of emission permission |
-| E-STOP | U24 = ¬HV_ENABLE | — | GPIO4_06 (W5) | code 4 `estop`, active high | Sense line, **not** an input: high whenever HV_ENABLE is low (idle), low while HV_ENABLE is alive |
+| HV_ENABLE readback (factory net name E-STOP) | U24 = ¬HV_ENABLE | — | GPIO4_06 (W5) | code 4 `hv_enable`, active low → **active = HV_ENABLE asserted** | Readback of the chain's own output, **not** an input: inactive at idle, active only while a run feeds the watchdog with the lid closed |
 | LASER_PGOOD | J1_14 (the supply's HV_OK line) | — | GPIO4_21 (P24) | `cnc/laser_pgood`, `laser_pgood_sampled` (active low) | Read as "power good" from the laser supply; what the supply actually signals on it is not fully characterized |
 
 ### 2.3 SoC outputs into the chain
@@ -91,7 +91,7 @@ on end-of-data or underrun.
 DOORS_OK      = DOOR_SW1 · DOOR_SW2                              (U17-1)
 WDOG_ALIVE    = U1-1 Q, retriggered by every CHG_PUMP rising edge
 HV_ENABLE     = DOORS_OK · WDOG_ALIVE                            (U17-4)  → J1_16
-E_STOP        = ¬HV_ENABLE                                        (U24 inverter) → GPIO4_06
+                ¬HV_ENABLE                                        (U24 inverter) → GPIO4_06, read back as `hv_enable`
 
 Button latch (U23-1):
   SET   = ¬DOORS_OK + LATCH_RESET                                 (U32 OR)
@@ -124,11 +124,13 @@ machine when the lid is closed *and* the SoC has already released its lock.
 | Remote-interlock loop opens (Pro) | unchanged | blocked: the kernel drives INTERLOCK_RESET high on the switch edge, setting the interlock latch. Opening the loop by itself only releases the latch's RESET — the board has no direct trip path — so this SoC drive is what makes the interlock a hardware cut (see §3.1); software additionally parks the job on `interlock` | close the loop: the kernel releases INTERLOCK_RESET and the closed loop resets the latch |
 | Interlock latch already SET | unchanged | blocked | closing the loop clears it |
 
-Note the *E-STOP* line: despite the factory name it is an output of this
-chain — the inverse of HV_ENABLE. It reads active on a healthy idle machine and
-drops for the whole duration of any kernel run, the window in which the charge
-pump is fed and HV_ENABLE is alive. Nothing in ForgeFIRM gates on it unless a
-machine settings key opts in for a retrofitted circuit.
+`hv_enable` (GPIO4_06) is a readback of this chain's own output, not an
+input: it is inactive on an idle machine and active for the duration of any
+kernel run — the window in which the charge pump is fed and HV_ENABLE is
+alive. Nothing in ForgeFIRM gates on it; it is telemetry. (The factory design
+labels the net E-STOP; no Glowforge model has an e-stop input, and a
+retrofitted one belongs in the lid-switch chain, where the hardware enforces
+it.)
 
 ---
 
@@ -247,10 +249,10 @@ kernel readbacks (the runbook `BRINGUP.md` holds the drill records):
   for the in-flight run; a locked latch survives a stop + resume replay.
 - Armed kill mid-FIRE: emission tail equals the ring in-flight only
   (15–171 ms), the latch relocks, the burn line ends abruptly.
-- Switch bits 0–3, 5, 6 verified against physical state; bit 4 (`estop`)
-  characterized live: high at idle, low through any run, and it flips
-  together with `charge_pump_alive` on both edges (HV_ENABLE = DOORS_OK ·
-  WDOG_ALIVE observed).
+- Switch bits 0–3, 5, 6 verified against physical state; bit 4
+  (`hv_enable`) characterized live: inactive at idle, active through any run,
+  and it flips together with `charge_pump_alive` on both edges (HV_ENABLE =
+  DOORS_OK · WDOG_ALIVE observed).
 - Interlock latch drive: with the connector unjumpered, `interlock`,
   `interlock_latch_reset` and `interlock_latch` all assert within one 50 ms
   sample and all clear when the loop is closed again.
@@ -265,9 +267,9 @@ Present gaps in the hardware picture. None of them changes the safety
 argument (every gap is on the readback/sense side or is a "which part" question),
 but each is worth closing:
 
-- **`estop` toggles seen inside motion windows** are run boundaries: `estop`
-  follows the watchdog exactly (low from the first pulse of a run, high
-  ≈0.45 s after its last), and homing and jogs are several short runs. A
-  feed late by more than ~250 ms would look the same and has not been
-  observed.
+- **`hv_enable` toggles seen inside motion windows** are run boundaries:
+  `hv_enable` follows the watchdog exactly (active from the first pulse of a
+  run, inactive ≈0.45 s after its last), and homing and jogs are several
+  short runs. A feed late by more than ~250 ms would look the same and has
+  not been observed.
 - **`laser_pgood` (HV_OK, J1_14) semantics** are not fully characterized.

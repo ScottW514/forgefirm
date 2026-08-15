@@ -1436,11 +1436,25 @@ accordingly ("Automatic — AP country, else World").
   the bit reads 0 = satisfied/good-to-go; Pro brings it out for an
   external lockout chain. Must NOT gate motion (beam is
   hardware-gated).
-  **SW_ESTOP reads LOW during ANY motion** (measured 2026-08-07:
-  polled at 20 ms through X and Z jogs — low for the whole run, ~70/75
-  samples, recovers instantly at idle; True at idle) — must NOT gate
-  motion on the factory board either (it false-tripped every legacy
-  cloud motion ~0.1 s in). Doors/door1/door2 stay stable during motion.
+  **`hv_enable` (EV_SW bit 4, GPIO4_06) is the readback of the safety
+  chain's HV_ENABLE output** through the U24 inverter — not an input.
+  Active for the whole duration of any run (the window in which the
+  charge pump is fed and HV_ENABLE is alive), inactive at idle, and it
+  drops ≈0.45 s after the last charge-pump pulse (measured 2026-08-07 at
+  20 ms through X and Z jogs, ~70/75 samples; watchdog period measured
+  2026-08-15). It gates nothing anywhere — it is telemetry (`/status`
+  `switches.hv_enable`, control-panel "HV enable"). Naming note: the
+  factory design labels this net **E-STOP**, and dated entries below
+  written before 2026-08-15 call it `estop`/`SW_ESTOP` with the
+  pre-rename polarity (the device tree then declared the pin active-high,
+  so the bit read HIGH at idle and LOW through a run — the same physical
+  behavior, inverted); the DTS now declares it active-low so the bit
+  reads as HV_ENABLE itself. The former `estop_halts_motion` /
+  `MOTION.ESTOP_HALTS_MOTION` opt-in (gate motion on this line, for a
+  hypothetical retrofit) is removed: it only ever made sense while the
+  line was misread as an e-stop input, and a real e-stop belongs in the
+  lid-switch chain (`docs/SAFETY.md`). Doors/door1/door2 stay stable
+  during motion.
 - Machine identity from OCOTP nvmem: HW_OCOTP_MAC0 is the serial,
   base-23-encoded to the factory hostname — fuse-verified on the bench
   against the factory label. The bench machine's actual values are
@@ -2083,14 +2097,11 @@ accordingly ("Automatic — AP country, else World").
      hardware chain already does to the beam. Bit 3 is the series
      combination the safety chain itself uses, not the individual door
      switches.
-   - **e-stop (bit 4): opt-in only.** The line rests ACTIVE on a
-     healthy machine and drops for the duration of any stepper motion
-     on this board, so gating on it would abort every job. Set
-     `estop_halts_motion` in `/data/forgefirm.conf` (hand-edited; it is
-     not in forgectrl's settings whitelist, and unknown keys survive
-     forgectrl's writes) for a machine retrofitted with a real e-stop
-     circuit. Same escape hatch as the cloud client's
-     `MOTION.ESTOP_HALTS_MOTION`.
+   - **hv_enable (bit 4): never gated on.** It is the readback of the
+     chain's HV_ENABLE output (facts bank above), telemetry only; the
+     core's `e_stop` capability is not advertised. (The `estop_halts_motion`
+     opt-in that existed until 2026-08-15 is gone, together with the
+     name — see the facts bank.)
    - **interlock latch (bit 6): deliberately not gated on.** Its
      resting state on a healthy machine is not characterized and a
      false assertion would wedge every job; the hardware chain enforces
@@ -2315,6 +2326,18 @@ accordingly ("Automatic — AP country, else World").
    - The uniprocessor locking assumption and the panic/dead-man safe
      states are documented in `kernel-module-glowforge/UAPI.md`; no
      bench item.
+   - **`hv_enable` rename + polarity flip (2026-08-15) rides the same
+     flash.** The gpio-keys node for GPIO4_06 is now `hv_enable`,
+     declared active-low, so EV_SW bit 4 reads as the HV_ENABLE output
+     itself (inactive at idle, active through a run). forgectrl
+     (`/status` key `switches.hv_enable`, panel "HV enable"), the grblHAL
+     driver (`SW_BIT_HV_ENABLE`, no gating) and gfhardware
+     (`InputSwitch.SW_HV_ENABLE`, no gating) all ship in the same image
+     and read the new polarity; the DTS and that userspace must not be
+     mixed across the flash (a mismatch only inverts the telemetry — nothing
+     gates on the bit — but the dashboard would lie). **Bench:** `/status`
+     shows `hv_enable:false` at idle, `true` during a jog, back to `false`
+     ≈0.45 s after the run ends, in lockstep with `charge_pump_alive`.
    - **GATE A kernel fixes added to the same flash (2026-08-14):**
      the controlled-deceleration ramp now floors at the minimum step
      frequency with a saturating decrement, and `epit_hz_to_divisor()`

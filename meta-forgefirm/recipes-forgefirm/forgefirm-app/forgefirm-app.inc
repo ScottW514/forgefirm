@@ -11,11 +11,11 @@ LIC_FILES_CHKSUM = "file://LICENSE;md5=62f8bb455fcc4bf177ecab380f71cd5d"
 
 SRC_URI = "git://github.com/ScottW514/python3-gfhardware.git;protocol=https;branch=master"
 # Pinned; bump deliberately (AUTOREV is not reproducible).
-SRCREV = "6c7534a050f61e1f205743f34a9d2743a1a7b96f"
+SRCREV = "c3d1790e6cd8f11eee7b386b5314d53454a1c2db"
 
 # Bump PV with every SRCREV move: the hash-derived package version is not
 # monotonic on its own and buildhistory QA fails the build when it sorts
 # backwards.
-PV = "0.1.4+git"
+PV = "0.1.5+git"
 
 S = "${WORKDIR}/git"
