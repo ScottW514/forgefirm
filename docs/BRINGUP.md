@@ -121,11 +121,13 @@ The daemon never crashed, the kernel `cnc/state` stayed readable
 throughout (two local `/status` probes timed out at the peak and
 recovered within a second), and it returned to 7 fds with `/status`
 `200` after the flood drained. The fail-closed branch itself
-(`machine_is_idle()` returns busy on any `rd_attr` failure) is present
-in `status.c` and covered by the `-Werror` CI build; distinctly
-exercising the EMFILE→busy path wants a host unit test that injects the
-read failure (the clean X-2 closure — the runtime flood cannot reach it
-while MHD caps connections below the fd limit). Note for F-15/X-6: the
+(`machine_is_idle()` returns busy on any `rd_attr` failure) is now
+covered by a host unit test in forgectrl CI
+(`tests/status_idle_test.c`, X-2): it points the sysfs reader at a temp
+tree via a `GF_SYSFS_ROOT` seam and asserts not-idle on a missing state
+file and under real fd exhaustion (`EMFILE`) — the connection-flood
+trigger the runtime flood cannot reach while MHD caps connections below
+the fd limit. Test-the-test verified: a fail-open revert fails it. Note for F-15/X-6: the
 absence of an explicit `MHD_OPTION_CONNECTION_LIMIT` + per-IP cap is
 still the deferred half; the default ceiling held here but a per-IP cap
 remains the right hardening.
@@ -178,14 +180,20 @@ MOTION OK (p2p x=3919, y=1636). The forgectrl pin is bumped to
 `424f185` (fetch-verified) so the fix also rides the next image, not
 only the hot-deploy.
 
-**Deferred (fiddly or config-dependent, not blocking):** G-4 (arm
-re-checks the coolant fire gate after the button wait) wants the pump
-killed in the instant after the press — cleanest as a host unit test;
-the code re-check is in place. Phase 6's "armed job refuses at the stale
-origin after an underrun" is config-dependent (GRBL mode permits
-unhomed cutting), and the core underrun behavior — `pulse data
-underrun; position no longer trusted` with the homing anchor unlinked —
-is already logged in the dry dead-man drills above. Live fire only with
+**Closed by host unit test instead of a bench drill:** G-4 (the arm
+must re-check `gfcool_fire_ok()` after the button wait — the verdict can
+go bad during a wait that runs for minutes) now has a grblHAL CI test
+(`tests/laser_arm_test.c`) that includes the driver source, stubs the
+core, and drives the real `gflaser_arm()` with a good-then-bad verdict
+sequence, asserting the arm refuses at the post-wait re-check (latch
+locked, window never opened, alarm raised). Test-the-test verified:
+removing the re-check fails it. This is cleaner than the bench drill,
+which needed the pump killed in the instant after the press. **Still
+config-dependent, left as-is:** Phase 6's "armed job refuses at the
+stale origin after an underrun" (GRBL mode permits unhomed cutting), and
+the core underrun behavior — `pulse data underrun; position no longer
+trusted` with the homing anchor unlinked — is already logged in the dry
+dead-man drills above. Live fire only with
 the operator armed: eye protection, fire watch, exhaust running.
 
 The lid-IR **ambient baseline** for the fire-watch characterization is
