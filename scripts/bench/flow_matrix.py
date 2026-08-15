@@ -30,6 +30,7 @@ are still usable) and a summary table at the end.
 import json
 import math
 import os
+import shlex
 import statistics
 import subprocess
 import sys
@@ -38,6 +39,9 @@ import time
 HOST = os.environ.get('GF_HOST')
 if not HOST:
     raise SystemExit('set GF_HOST to the machine IP address')
+# ssh client used to reach the board; override for a wrapper, e.g.
+# GF_SSH='wsl -d <distro> -- ssh'.
+SSH = shlex.split(os.environ.get('GF_SSH', 'ssh'))
 HERE = os.path.dirname(os.path.abspath(__file__))
 RESULTS = os.path.join(HERE, os.environ.get('FM_RESULTS', 'flow_matrix_results.json'))
 
@@ -69,9 +73,8 @@ def degc(raw):
 
 
 def board(cmd, timeout=120):
-    r = subprocess.run(['wsl', '-d', 'forge-yocto', '--', 'ssh',
-                        '-o', 'PreferredAuthentications=none',
-                        'root@' + HOST, cmd],
+    r = subprocess.run(SSH + ['-o', 'PreferredAuthentications=none',
+                              'root@' + HOST, cmd],
                        capture_output=True, text=True, timeout=timeout)
     return r.stdout
 

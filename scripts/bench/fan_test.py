@@ -1,14 +1,16 @@
-import socket, subprocess, time
+import shlex, socket, subprocess, time
 import os
 
 HOST = os.environ.get('GF_HOST')
 if not HOST:
     raise SystemExit('set GF_HOST to the machine IP address')
+# ssh client used to reach the board; override for a wrapper, e.g.
+# GF_SSH='wsl -d <distro> -- ssh'.
+SSH = shlex.split(os.environ.get('GF_SSH', 'ssh'))
 
 def board(cmd):
-    r = subprocess.run(['wsl', '-d', 'forge-yocto', '--', 'ssh',
-                        '-o', 'PreferredAuthentications=none',
-                        'root@' + HOST, cmd],
+    r = subprocess.run(SSH + ['-o', 'PreferredAuthentications=none',
+                              'root@' + HOST, cmd],
                        capture_output=True, text=True, timeout=30)
     return r.stdout.strip().replace('\n', ' ')
 

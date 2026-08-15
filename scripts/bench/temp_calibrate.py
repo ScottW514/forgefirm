@@ -21,6 +21,7 @@ heater on).
 import json
 import math
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -28,6 +29,9 @@ import time
 HOST = os.environ.get('GF_HOST')
 if not HOST:
     raise SystemExit('set GF_HOST to the machine IP address')
+# ssh client used to reach the board; override for a wrapper, e.g.
+# GF_SSH='wsl -d <distro> -- ssh'.
+SSH = shlex.split(os.environ.get('GF_SSH', 'ssh'))
 STORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_calibration.json')
 
 
@@ -42,9 +46,8 @@ def uapi_c(raw):
 
 
 def board(cmd):
-    r = subprocess.run(['wsl', '-d', 'forge-yocto', '--', 'ssh',
-                        '-o', 'PreferredAuthentications=none',
-                        'root@' + HOST, cmd],
+    r = subprocess.run(SSH + ['-o', 'PreferredAuthentications=none',
+                              'root@' + HOST, cmd],
                        capture_output=True, text=True, timeout=30)
     return r.stdout.strip()
 
