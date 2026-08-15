@@ -1454,8 +1454,8 @@ accordingly ("Automatic — AP country, else World").
   Z jogs, ~70/75 samples). It gates nothing anywhere — it is telemetry (`/status`
   `switches.hv_enable`, control-panel "HV enable"). Naming note: the
   factory design labels this net **E-STOP**, and dated entries below
-  written before 2026-08-15 call it `estop`/`SW_ESTOP` with the
-  pre-rename polarity (the device tree then declared the pin active-high,
+  written before the rename (through the earlier 2026-08-15 records)
+  call it `estop`/`SW_ESTOP` with the pre-rename polarity (the device tree then declared the pin active-high,
   so the bit read HIGH at idle and LOW through a run — the same physical
   behavior, inverted); the DTS now declares it active-low so the bit
   reads as HV_ENABLE itself. The former `estop_halts_motion` /
@@ -2493,7 +2493,8 @@ accordingly ("Automatic — AP country, else World").
     module and DTB must ship together, the pin is required at probe; DTB
     compile-checked with cpp+dtc against the staged kernel) — **also
     bench-validated 2026-08-15:** two X jogs sampled at 50 Hz: `state`
-    running → `charge_pump_alive` 1 and `estop` 0 in the same 20 ms sample;
+    running → `charge_pump_alive` 1 and `estop` 0 (pre-rename name and
+    polarity of today's `hv_enable`) in the same 20 ms sample;
     after each run `charge_pump_alive` fell 0.325 s / 0.326 s after `idle`,
     which with the 200 ms feed phase (last pulse 0.136 s / 0.118 s before
     the run end) is a one-shot period of **0.46 s / 0.44 s** — matching
