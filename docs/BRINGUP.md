@@ -1447,9 +1447,11 @@ accordingly ("Automatic — AP country, else World").
   chain's HV_ENABLE output** through the U24 inverter — not an input.
   Active for the whole duration of any run (the window in which the
   charge pump is fed and HV_ENABLE is alive), inactive at idle, and it
-  drops ≈0.45 s after the last charge-pump pulse (measured 2026-08-07 at
-  20 ms through X and Z jogs, ~70/75 samples; watchdog period measured
-  2026-08-15). It gates nothing anywhere — it is telemetry (`/status`
+  drops 454 ± 3 ms after the last charge-pump pulse (one-shot t_w measured
+  pulse-to-drop 2026-08-15 with `scripts/bench/cp_watchdog_timing.py`:
+  451.8 / 455.6 ms; feed period 199.98 ms; the pad-level jog
+  characterization dates from 2026-08-07, sampled at 20 ms through X and
+  Z jogs, ~70/75 samples). It gates nothing anywhere — it is telemetry (`/status`
   `switches.hv_enable`, control-panel "HV enable"). Naming note: the
   factory design labels this net **E-STOP**, and dated entries below
   written before 2026-08-15 call it `estop`/`SW_ESTOP` with the

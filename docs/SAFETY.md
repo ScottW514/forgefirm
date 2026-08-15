@@ -47,7 +47,7 @@ away kills emission in hardware, not in software.
 
 | Ref | Part | Role |
 |---|---|---|
-| U1 | SN74AHC123A dual retriggerable monostable, R ≈ 499 kΩ / C ≈ 1 µF (t_w ≈ 0.45 s, bench-measured) | Charge-pump watchdog: Q stays high only while CHG_PUMP keeps arriving; times out ≈0.45 s after the last pulse |
+| U1 | SN74AHC123A dual retriggerable monostable, R ≈ 499 kΩ / C ≈ 1 µF (t_w = 454 ± 3 ms, measured pulse-to-drop) | Charge-pump watchdog: Q stays high only while CHG_PUMP keeps arriving; times out 0.45 s after the last pulse |
 | U5, U6 | SN74AHC14 hex Schmitt-trigger inverters | Level inversion / conditioning for every switch line and SoC readback |
 | U17 | SN74AHC08 quad 2-input AND | The four gates: DOORS, HV_ENABLE, and the two-stage LASER_ON gate |
 | U23 | CD4043B quad R/S latch (NOR type, active-high S/R, output enable tied high) | Latch 1 = button latch, latch 2 = interlock latch |
@@ -75,7 +75,7 @@ away kills emission in hardware, not in software.
 
 | Net | SoC pin | Driven by | Effect |
 |---|---|---|---|
-| CHG_PUMP | GPIO3_24 (F22, `charge-pump-gpio`) | `glowforge.ko`: one 0→1→0 pulse at run start, then every 200 ms from a soft hrtimer **only while `state == running`**; forced low on stop, disable, unload and kernel panic | Retriggers U1-1 (t_w ≈ 0.45 s, so a 200 ms feed holds Q solidly high). No edges → Q falls ≈0.45 s after the last pulse → HV_ENABLE drops |
+| CHG_PUMP | GPIO3_24 (F22, `charge-pump-gpio`) | `glowforge.ko`: one 0→1→0 pulse at run start, then every 200 ms from a soft hrtimer **only while `state == running`**; forced low on stop, disable, unload and kernel panic | Retriggers U1-1 (t_w = 454 ms, so a 200 ms feed holds Q solidly high and one missed pulse is tolerated). No edges → Q falls 0.45 s after the last pulse → HV_ENABLE drops with it |
 | LATCH_RESET | GPIO1_07 (R3, `latch-reset-gpio`, init HIGH) | `cnc/laser_latch` (1 = lock). Also drives the FIRE line to high impedance while locked | Into U32 with lid-open; SETs the button latch → LASER_ON blocked until the next button press |
 | INTERLOCK_RESET | GPIO4_05 (P5, `interlock-latch-reset-gpio`, init HIGH) | `glowforge.ko`: high whenever the remote-interlock loop reads open, or until a switch device reporting the loop has attached; low only while an attached device reports it closed (in-kernel input handler on the gpio-keys switch, EV_SW code 5). Read back as `interlock_latch_reset` / `interlock_circuit` bit 4 | SET input of the interlock latch → LASER_ON blocked in hardware while the loop is open |
 | FIRE (LASER_ENABLE) | GPIO2_30 (E22, `laser-enable-gpio`) | The SDMA script, from bit 4 of each pulse byte; Hi-Z whenever the latch is locked or no run is in flight | One input of the final LASER_ON AND gate |
@@ -256,8 +256,13 @@ kernel readbacks (the runbook `BRINGUP.md` holds the drill records):
 - Interlock latch drive: with the connector unjumpered, `interlock`,
   `interlock_latch_reset` and `interlock_latch` all assert within one 50 ms
   sample and all clear when the loop is closed again.
-- Watchdog period: `charge_pump_alive` falls ≈0.45 s after the last
-  charge-pump pulse (two runs, 0.44/0.46 s), matching the measured R·C.
+- Watchdog period, measured directly from the SoC pins
+  (`scripts/bench/cp_watchdog_timing.py`: every CHG_PUMP pulse latched by
+  the GPIO edge detector, the ¬Q and ¬HV_ENABLE pads polled at ≈0.2 ms):
+  Q falls **451.8 / 455.6 ms** after the last pulse (t_w = 454 ± 3 ms,
+  matching R·C); Q rises on the priming pulse and HV_ENABLE falls with Q
+  within one sample; the kernel feed period is 199.98 ms (199.87–200.07).
+  A feed late by more than ≈254 ms therefore drops HV_ENABLE.
 
 ---
 
@@ -269,7 +274,7 @@ but each is worth closing:
 
 - **`hv_enable` toggles seen inside motion windows** are run boundaries:
   `hv_enable` follows the watchdog exactly (active from the first pulse of a
-  run, inactive ≈0.45 s after its last), and homing and jogs are several
-  short runs. A feed late by more than ~250 ms would look the same and has
+  run, inactive 0.45 s after its last), and homing and jogs are several
+  short runs. A feed late by more than ≈254 ms would look the same and has
   not been observed.
 - **`laser_pgood` (HV_OK, J1_14) semantics** are not fully characterized.
