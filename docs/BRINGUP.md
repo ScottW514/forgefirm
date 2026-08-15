@@ -2206,3 +2206,52 @@ accordingly ("Automatic — AP country, else World").
      position preserved; a resume waypoint with the latch locked stays
      laser-less; `laser_latch=0` written mid-ramp does not re-arm FIRE
      (probe the PSU-connector LASER_ON line as in `fire_test.py`).
+     **The GATE A part of this list is DONE (K1/K2/K3 + `fire_test`
+     A/B/U pass on image `20260814223300`, campaign record above); the
+     platform-hygiene items themselves are consolidated in item 10.**
+10. **Outstanding bench validations (consolidated 2026-08-15).** Every
+    safety-critical drill is done: GATE A (K1/K2/K3, `fire_test` A/B/U),
+    GATE B (auth/CSRF/loopback/settings-flood probes), dry motion and
+    dead-man drills (SIGKILL reap+safing, SIGSTOP → underrun, restart
+    mid-move, no stray fd), the X-2 flood, and the live-fire set (A-1
+    emission witness, A-5 HV telemetry, X-3 job-based disarm, G-10
+    grace-in-Hold, A-2 lid-IR first look). What has **not** been run on
+    hardware, none of it gating, in rough priority order:
+    - **Lid-IR fire characterization at cutting power** — ≥3
+      representative jobs at real power, read the per-job baseline/peak
+      log lines, set `cool_fire_ir_delta` well above the worst normal-cut
+      peak (never below ~15 counts), keep watch-only until several jobs
+      show no false trip, then enable the fire-abort gate. The 40 % cut
+      moved the channels only ~+3 counts, so the gate ships 0.
+    - **Kernel platform-hygiene batch (item 9), on the flashed image:**
+      panic mid-motion with motors locked and the laser latched (motion
+      stops, safety lines read safe); decay mode set/readback per axis;
+      LED behavior and a clean module unload; the two new probe lines in
+      dmesg with no bank warnings; a dead-man trip with the head
+      registers read back (measure laser off, UV LED off, lens motor
+      de-energized). Plus the Phase 8 trio: load/unload under
+      `CONFIG_DEBUG_MUTEXES` (needs a debug kernel build), a forced
+      `-EPROBE_DEFER` unwind, and a concurrent `cat` of a state attr
+      during `rmmod`.
+    - **Dead-man collateral:** a kernel dead-man trip leaves the pump and
+      airflow running (heat sources only go off); kill forgectrl during
+      an update download (no pinned device, no EBUSY respawn storm);
+      re-run the armed kill drill on the *expected*-stop path (mode
+      switch / diag suspend) on the current image.
+    - **Physical-evidence negatives:** force a head I²C error and confirm
+      the witnesses report an error, not a plausible value; confirm a
+      failed head capture leaves the measure laser off.
+    - **Cloud mode:** the C-1 cancel-with-a-rejected-settings-action
+      drill (cancel must stop the cut); malformed-frame and DNS-blip
+      injections against a live session; the oversize/bad-header job
+      rejected before the ring loads (tracked in `CLOUD.md`); re-verify
+      the homing accelerometer motion-window counts against the
+      characterized thresholds at the next live homing (the witness now
+      samples at ~100 Hz); confirm a real print header's fan duties
+      round-trip to the engine (item 8).
+    - **Opportunistic:** `STATE_FAULT` recovery via `enable` without a
+      module reload the next time a DRV8825 fault line actually trips.
+    - **Config-dependent, deliberately not gated:** an armed GRBL job
+      after an underrun cuts at the stale origin unless homing is
+      required (GRBL mode permits unhomed cutting; the underrun itself
+      alarms and unlinks the anchor).
