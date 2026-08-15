@@ -20,6 +20,93 @@ Phase 11 sweep. **Flash this image, then run the consolidated bench
 campaign** — the GATE A drills, GATE B probes, and every phase's bench
 list above validate against it.
 
+**Bench campaign — opened 2026-08-14; image `20260814223300` flashed and
+booted.** Post-flash health check passes on the board: it reports
+`20260814223300 (dev)`; kernel `6.12.20-fslc` with `CONFIG_PREEMPT` and
+the console-only `panic=10` command line; `CONFIG_IMX2_WDT` and
+`CONFIG_PANIC_ON_OOPS` present in the running config; the hardened
+`glowforge.ko` loaded with the 16 MiB `cnc-pulsebuf` no-map pool mapped
+and SDMA channel 26 / EPIT up; forgectrl holds `/dev/glowforge` (40 V up,
+dead-man active) and supervises the grbl controller with the
+motion-liveness probe reading **verified**; the latch reads **locked**
+and faults 0 at idle; the only `watchdogd` is the kernel kthread (no
+userspace watchdog daemon). **GATE B is bench-verified on the
+software/control-surface side.** From a second LAN host every
+state-changing endpoint refuses an unauthenticated write
+(`403 authentication required`); a spoofed non-literal `Host`, a
+non-literal `Origin`, and a cross-site `Sec-Fetch-Site` are each refused
+(`403 request origin refused`); `/cool/state` refuses a non-loopback peer
+(`403 loopback only`); the four-POST unsigned-flash chain
+(`upload → apply?confirm_unsigned=1 → boot → reboot`) and
+`restore/factory` are each refused unauthenticated; `/fuse-identity` is
+fully token-gated (F-1, F-2, F-19). The authenticated max-length
+`POST /settings` probe passes without a crash: a 300-character value is
+refused `400`, thirteen 16-character in-range values are accepted `200`,
+and `/status`, the panel `/`, and `/settings` all keep serving, with the
+settings restore verified byte-identical to the pre-test snapshot (F-4,
+F-18). On-board build facts re-confirmed on the running image:
+controllers stop at `K80` before forgectrl at `K90` (rc0/rc6, B-4); the
+forgefirm logrotate config and init lever are installed (F-16); there is
+no `/etc/watchdog.conf` or watchdog init (B-8); the wlconf data files are
+0644 (B-16); the panel token is stored 0600. Deferred to Phase 11: the
+settings file is still 0644 (F-23). **GATE A dry motion drills pass
+(latch locked, no emission, operator watching):** bounded relative jogs
+move the gantry (operator-witnessed) and the grblHAL position counter
+tracks the commanded moves exactly, returning to rest; a
+jog-cancel (`0x85`) stops the jog cleanly short of target and returns to
+`Idle` with position preserved; a feed-hold (`!`) parks with the feed
+ramping to 0 (`Hold:1`→`Hold:0`) and a resume (`~`) completes the move
+with no lost-step alarm; a `^X` abort decelerates under control into
+`Alarm` with machine position retained, `$X` recovers to `Idle`, and a
+subsequent jog runs — no DRV8825 wedge after the abort (the rail never
+cycled). **Dry dead-man / disruption drills pass (latch locked, no
+emission):** with only the broker and the controller holding
+`/dev/glowforge` — no stray process pins it (F-6) — a `SIGKILL` of the
+controller mid-move is reaped by the supervisor, which writes `cnc/stop`
++ `cnc/laser_latch=1`, unlinks the homing anchor, and respawns a fresh
+controller in about a second with the latch never unlocking (F-3); a
+`SIGSTOP` (hang) mid-move drains the ring into a kernel `pulse data
+underrun; position no longer trusted`, halting motion fast with the latch
+locked while the cooling engine's report-silence clock runs past its
+window; and a `forgectrl restart` mid-move leaves the busy controller
+running (reparented), lets the move finish uninterrupted, never unlinks
+the cooling verdict, and has the new daemon stand by and retake at idle
+(F-12). The liveness probe's designed skip-on-open path — the safety-chain
+output is known to de-assert during motion, so an at-that-moment read can
+skip the probe, proceed without a motion fault, and re-probe on the next
+spawn — was exercised and behaved per `liveness.c`. **Still pending —
+operator-present bench work only, and no live-fire until GATE A's
+live-fire drills pass on this image:** the
+controlled-stop decel at the default cloud tick / resume-with-latch-locked
+stays-laser-less / mid-ramp-latch-does-not-re-arm-FIRE drills, all with
+LASER_ON probed at the PSU connector; the connection-flood
+`machine_is_idle` fail-closed check under motion (X-2); the emission
+witness + lid-IR characterization (Phase 5, `cool_fire_ir_delta` set from
+the baseline); and the stale-gate / motion-integrity job drills across
+Phases 4 and 6. None of these proceed without the operator at the
+machine with the physical arm button, fire watch, and eye protection.
+
+The lid-IR **ambient baseline** for the fire-watch characterization is
+captured on this image (600 samples over 5.6 min at 2 Hz, lid closed,
+machine idle, coolant ≈25 °C): `lid_ir_1..4` read 37.3 ±0.6, 36.3 ±0.6,
+39.5 ±0.7, and 40.0 ±0.6 raw counts (total spread ±3 counts),
+`hv_current` reads 0 throughout, and the emission witness
+(`laser_on_sampled`) read 0 on all 600 samples — the idle plumbing for
+the emission/fire/HV evidence is verified quiet end to end (`/status`
+carries the sensed rows; `/cool/status` reports `fire_watch:"watch"`).
+Dataset: `scripts/bench/lid_ir_ambient_baseline.csv`. When the fire
+characterization sets `cool_fire_ir_delta`, it must land comfortably
+above the worst normal-cut peak delta and never below ~15 counts, so
+ambient noise can never trip the fire abort. The three pending GATE A
+kernel drills are scripted and staged on the bench
+(`scripts/bench/gate_a_kernel_drills.py`): K1 proves the
+controlled-stop deceleration floor at the default cloud tick, K2
+proves a resume waypoint honors the locked latch through a replayed
+FIRE window, and K3 proves a mid-ramp latch unlock never re-arms the
+FIRE drive — each with software witnesses (`laser_enable`, `laser_on`,
+`laser_on_sampled`, interlock bit 3) plus the PSU-connector LASER_ON
+scope point, run with forgectrl stopped so the pulse device is free.
+
 **Phase 10 (tests & CI) is code-complete; the safety rules are now
 machine-enforced.** The grblHAL controller repo's CI builds the
 null-sink binary (driver sources under `-Werror`; the core submodule
