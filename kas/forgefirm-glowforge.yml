@@ -82,7 +82,6 @@ repos:
     layers:
       meta-openglow-core:
       meta-glowforge-bsp:
-      # meta-openglow-bsp (separate OpenGlow_std board) intentionally excluded.
   #
   # Pinned-remote alternative for a fully self-contained clone (see
   # kas/README.md "Push & release order"):

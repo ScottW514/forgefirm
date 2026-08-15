@@ -133,8 +133,7 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
 1. ~~**Override-syntax migration**~~ — **DONE.** All `_append`/`_prepend`/
    `_remove`/`_${PN}` override syntax converted to the colon form across
    `meta-forgefirm`, `meta-openglow-core`, and `meta-glowforge-bsp` (22
-   occurrences). Note: `meta-openglow-bsp` (the separate OpenGlow_std board,
-   not built here) was intentionally left unconverted.
+   occurrences).
 2. **Kernel forward-port (4.14 → linux-fslc 6.12.20)** — the factory NXP vendor
    kernel (linux-imx 4.14.98) carried 7 out-of-tree changes; these are re-derived
    against mainline 6.12 in `meta-glowforge-bsp/recipes-kernel/linux/linux-fslc_%.bbappend`
@@ -233,9 +232,9 @@ stack and deploys `forgefirm-image-glowforge.rootfs.wic.gz` (+ `zImage`,
 Build-time prerequisites baked into the config: `ACCEPT_FSL_EULA = "1"` (NXP
 firmware-imx — the image also installs `firmware-imx-lic` so the EULA text
 ships beside the blobs) and the kernel default in `glowforge.conf`. Every
-`LICENSE` string in the layers this build uses (`meta-forgefirm`,
-`meta-glowforge-bsp`, `meta-openglow-core`) is SPDX; the pre-SPDX strings that
-remain live in `meta-openglow-bsp` and the xenomai recipes, which ForgeFIRM
-does not build. The stack
+`LICENSE` string in the layers (`meta-forgefirm`, `meta-glowforge-bsp`,
+`meta-openglow-core`) is SPDX, and the recipes for third-party components
+that carry more than one license (`wlconf`, `python3-gfhardware`) declare
+each of them with a checksum on its license text. The stack
 is hardware-validated end to end: motion timing, the laser and safety chain,
 the camera pipeline, both controller modes, and the A/B install path.
