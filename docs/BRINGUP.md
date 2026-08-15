@@ -2709,14 +2709,19 @@ motion, cooling, camera, cloud, then the live tests from the page.
       + `grblhal` → `off`: the new boot wrote zero NOTICE/INFO forgectrl
       lines and kept a WARNING probe, grblhal wrote nothing even for an
       `err` probe, kernel/system unaffected; defaults restored and
-      re-verified. ~~Remote~~ **DONE 2026-08-15 against a listener on the
-      board itself** (`127.0.0.1:5514`, UDP — the workstation's firewall
-      drops unsolicited inbound UDP and was left alone): RFC 5424 lines
-      arrive (`<31>1 … glowforge grblhal - - - …`), filtered exactly per
-      logger (grblhal debug + forgectrl info forwarded; forgectrl debug
-      and gfhome err held back); the physical hop to another host is the
-      only part not exercised. Unreachable-server behavior not separately
-      drilled (UDP has none; the TCP queue discards by config).
+      re-verified. ~~Remote~~ **DONE 2026-08-15, real hop to a LAN
+      collector (172.16.1.95:5514) over UDP and TCP** (after a first pass
+      on a loopback listener): RFC 5424 lines arrive (`<31>1 …
+      glowforge grblhal - - - …`), filtered exactly per logger across a
+      whole boot (kernel at warning only, forgectrl/grblhal at info,
+      sshd from `system`; a gfhome err and a forgectrl debug probe held
+      back). Collector down through an entire boot on TCP: `omfwd
+      suspended … Connection refused` in `system.log`, the machine
+      unaffected (jogs, local logging), and 30 s after the listener came
+      up `omfwd resumed` and the queued boot lines were delivered. Note
+      for future probes: `busybox nc -u` on the board never sends — use
+      `python3 … sendto`; my first "the workstation drops inbound UDP"
+      reading was that false negative.
     - ~~rotation~~ **DONE 2026-08-15**: a 30 000-line burst (4.8 MB) into
       `grblhal`, one `logrotate` run → `grblhal.log.1.gz` (all 30 024
       lines), the live file recreated and receiving (rsyslogd's fd on the
@@ -2746,13 +2751,9 @@ motion, cooling, camera, cloud, then the live tests from the page.
       58 s, homed X0 Y0 Z10.60) put gfhome's session lines in
       `gfhome/gfhome.log` under its own pid and grblHAL's `starting
       homing session` / `homed` in `grblhal.log`. **Item closed.** Not
-      separately drilled: the physical remote hop to another host (the
-      workstation firewall drops unsolicited inbound UDP; the omfwd path
-      is proven on the loopback listener — point `syslog_server` at any
-      real collector to finish it), and a Python traceback through the
-      relay — there is no external trigger for that; the relay pipe is
-      the same one the `logger` probes and the wrapper's `exited (137)`
-      line went through.
+      separately drilled: a Python traceback through the relay — there
+      is no external trigger for that; the relay pipe is the same one the
+      `logger` probes and the wrapper's `exited (137)` line went through.
 
 15. **Release acceptance tool (forgetest) - CODE-COMPLETE 2026-08-15,
     host- and build-verified; bench validation pending, ships with the
