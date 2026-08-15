@@ -8,6 +8,8 @@
 #
 #   release.sh <version> [--publish]   full release: gates, build, pack,
 #                                      sign, checksums, stage, publish cmd
+#                                      (the acceptance gate reads
+#                                      releases/v<version>/acceptance.json)
 #   release.sh --dev                   build + pack a dev-signed .fw for
 #                                      the GUI upload path; no staging
 #
@@ -21,6 +23,8 @@
 #   FORGEFIRM_DEV_KEY    private key for --dev mode (REQUIRED for --dev)
 #   RELEASE_STAGING_DIR  where release assets are staged
 #                        (default: <repo>/release-staging)
+#   FORGEFIRM_ACCEPTANCE_SKIP  set to 1 to bypass the acceptance gate
+#                        deliberately (never the default; docs/ACCEPTANCE.md)
 #
 # Version contract: <version> == FORGEFIRM_RELEASE in forgefirm-image.bb
 # == /etc/forgefirm-version ("v<version>") in the built rootfs == .fw
@@ -135,6 +139,27 @@ STAMP=$(debugfs -R "cat /etc/forgefirm-version" "$EXT4" 2>/dev/null)
 [ "$STAMP" = "v$VERSION" ] \
   || die "rootfs stamp is '$STAMP', expected 'v$VERSION'"
 
+# Acceptance gate: the committed acceptance artifact must authorize THIS
+# build. scripts/acceptance-gate.py recomputes every catalog test's domain
+# fingerprint from the manifest inside the release rootfs and requires the
+# recorded PASS to match (docs/ACCEPTANCE.md). A release is never signed
+# without it; FORGEFIRM_ACCEPTANCE_SKIP=1 bypasses deliberately and loudly.
+ART="$REPO/releases/v$VERSION/acceptance.json"
+if [ -n "${FORGEFIRM_ACCEPTANCE_SKIP:-}" ]; then
+  warn "acceptance gate SKIPPED by FORGEFIRM_ACCEPTANCE_SKIP - this release carries no acceptance proof"
+else
+  [ -f "$ART" ] \
+    || die "no acceptance artifact at releases/v$VERSION/acceptance.json - run the campaign on the bench, export, commit"
+  REL_MANIFEST=$(mktemp)
+  debugfs -R "cat /etc/forgefirm-manifest.json" "$EXT4" > "$REL_MANIFEST" 2>/dev/null
+  [ -s "$REL_MANIFEST" ] \
+    || { rm -f "$REL_MANIFEST"; die "release rootfs carries no /etc/forgefirm-manifest.json"; }
+  python3 "$REPO/scripts/acceptance-gate.py" "$ART" "$REL_MANIFEST" --machine glowforge \
+    || { rm -f "$REL_MANIFEST"; die "acceptance gate refused this build (see the table above)"; }
+  rm -f "$REL_MANIFEST"
+  echo "acceptance gate OK ($ART)"
+fi
+
 # Back-door gate: the release image must not ship a passwordless root. A
 # debug-tweaks image sets root's password field empty (root::...); a
 # hardened image leaves it locked (root:*: / root:!:) or hashed. Read the
@@ -177,6 +202,16 @@ fi
 
 echo "== stage assets =="
 cp -L "$DEPLOY/forgefirm-image-glowforge.rootfs.wic.gz" "$STAGE/forgefirm-image-glowforge.rootfs.wic.gz"
+# The acceptance artifact travels with the release (docs/ACCEPTANCE.md).
+ASSETS="forgefirm.fw sha256sums.txt forgefirm-image-glowforge.rootfs.wic.gz"
+if [ -f "$ART" ]; then
+  cp "$ART" "$STAGE/acceptance.json"
+  ASSETS="$ASSETS acceptance.json"
+  if [ -f "${ART%.json}.md" ]; then
+    cp "${ART%.json}.md" "$STAGE/acceptance.md"
+    ASSETS="$ASSETS acceptance.md"
+  fi
+fi
 ( cd "$STAGE" && sha256sum forgefirm.fw forgefirm-image-glowforge.rootfs.wic.gz > sha256sums.txt )
 ls -la "$STAGE"
 
@@ -193,14 +228,14 @@ Publish (from a directory with an authenticated gh):
   cd "$STAGE"
   gh release create "v$VERSION" --repo ScottW514/forgefirm \\
     --title "ForgeFIRM v$VERSION" --generate-notes \\
-    forgefirm.fw sha256sums.txt forgefirm-image-glowforge.rootfs.wic.gz
+    $ASSETS
 EOF
 
 if [ "$PUBLISH" = "1" ]; then
   command -v gh >/dev/null || die "--publish requested but gh is not on PATH"
   ( cd "$STAGE" && gh release create "v$VERSION" --repo ScottW514/forgefirm \
       --title "ForgeFIRM v$VERSION" --generate-notes \
-      forgefirm.fw sha256sums.txt forgefirm-image-glowforge.rootfs.wic.gz ) \
+      $ASSETS ) \
     || die "gh release create failed"
   echo "== published v$VERSION =="
 fi

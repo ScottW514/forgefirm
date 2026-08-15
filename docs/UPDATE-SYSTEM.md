@@ -148,8 +148,13 @@ demonstrably untouched.*
   command (`--publish` runs it where gh is authenticated). Gates:
   clean tree, version single-source, rootfs-vs-slot size
   (warn ≥ 170 MiB / fail ≥ 195 MiB, under bitbake's own hard cap),
-  **installer-embedded pubkey must match the signing key**, and
-  factory-era fwup (0.14.2) verification of the packed archive.
+  **installer-embedded pubkey must match the signing key**,
+  factory-era fwup (0.14.2) verification of the packed archive, and the
+  **release acceptance gate**: `releases/v<version>/acceptance.json`
+  (exported by forgetest on the bench) must authorize the built rootfs
+  per `docs/ACCEPTANCE.md` - the gate recomputes every catalog test's
+  domain fingerprint from `/etc/forgefirm-manifest.json` inside the
+  release ext4. The artifact is attached to the GitHub release.
 - One version source: `FORGEFIRM_RELEASE` = git tag =
   `/etc/forgefirm-version` = `.fw` meta-version; the script enforces
   agreement.

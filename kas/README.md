@@ -111,11 +111,15 @@ config move in the right order. The sequence, with current status:
 5. **GitHub release**: run `scripts/release.sh <version>` on the build
    host. It gates (version single-source, rootfs-vs-slot size,
    installer-embedded pubkey vs the signing key, factory-era fwup
-   verification), builds, packs and signs `forgefirm.fw`, stages the
-   assets with `sha256sums.txt`, and prints the `gh release create`
-   command. Assets and their exact names (the installer and the update
-   manager download them verbatim): `forgefirm.fw`, `sha256sums.txt`,
-   `forgefirm-image-glowforge.rootfs.wic.gz`. The release tag
+   verification, and the **acceptance gate** - the committed
+   `releases/v<version>/acceptance.json` from the bench campaign must
+   authorize the built rootfs, `docs/ACCEPTANCE.md`), builds, packs and
+   signs `forgefirm.fw`, stages the assets with `sha256sums.txt`, and
+   prints the `gh release create` command. Assets and their exact names
+   (the installer and the update manager download them verbatim):
+   `forgefirm.fw`, `sha256sums.txt`,
+   `forgefirm-image-glowforge.rootfs.wic.gz`, plus `acceptance.json` and
+   `acceptance.md`. The release tag
    `v<version>` = `FORGEFIRM_RELEASE` = the rootfs `/etc/forgefirm-version`
    = the `.fw` meta-version; `release.sh` enforces the agreement.
 

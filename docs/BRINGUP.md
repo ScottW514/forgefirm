@@ -1379,6 +1379,69 @@ overrides the IE (DE applied while associated to the US AP), and
 clearing reverts to the 00 hint. The UI labels the default
 accordingly ("Automatic — AP country, else World").
 
+## Release acceptance (forgetest, port 8090)
+
+The release acceptance tool - the catalog, campaigns, domain
+fingerprints, inheritance, the always-required core, invalidate-all,
+the release gate, and the coverage currency rule - is specified in
+`docs/ACCEPTANCE.md`; the tool lives in `forgetest/` and ships only on
+the dev image (`forgetest` recipe, `/etc/init.d/forgetest`, HTTP :8090).
+Status: **code landed 2026-08-15, host-verified and build-verified;
+bench validation pending - ships with the next full image flash** (the
+image manifest is an image change: `forgefirm-manifest.bbclass` entries
+from every component recipe, the kernel and the module through
+`do_deploy`, assembled by `forgefirm-image-manifest.bbclass` into
+`/etc/forgefirm-manifest.json`, also deployed next to the image as
+`*.forgefirm-manifest.json`). Build proof (dev image `20260815191634`,
+built with the classes): the manifest carries all eight components
+(forgectrl, grblhal-glowforge with the core submodule's files,
+forgefirm-app merged from its three recipes, python3-gfhardware,
+python3-gfutilities, kernel-module-glowforge and linux-fslc through the
+deploy path, forgetest through the file mode), the DTB hashes and the
+modules directory, and layer content hashes that are **byte-identical to
+what `scripts/manifest-from-tree.py` computes on the workstation** - the
+identity is content-defined, independent of the checkout's commit or
+dirty state; forgetest is installed at S95 with the bench scripts. Host
+proof: 44 unit tests (campaign
+rules, fingerprints, artifact build + gate verification incl. the
+negative fixtures - tampered artifact, covered-file change, platform
+change, core inherited, stale invalidate, catalog change, implementation
+change - and the runner + HTTP API end to end with a fake catalog and a
+fake bench tool), the tree manifest generated from the recipe pins with
+`scripts/manifest-from-tree.py` (submodule recursion verified on the
+grblHAL core), the coverage lint reporting on it, and the gate refusing an
+empty artifact cleanly; `.github/workflows/forgetest-ci.yml` runs the
+same and **enforces the coverage lint** (every manifest path is covered:
+0 uncovered on both the built manifest and the tree manifest). **Catalog
+v1 is complete: 24 tests**, every one a port of a proven bench drill or
+of a bench-verified check, with the recorded pass criteria: the core
+`image.health`, `kernel.latch-locked-idle`, `kernel.k1-k2`,
+`kernel.k3-unlock`, `kernel.fire-abu` (GATE A drills as takeover tests;
+K3 and fire B/U prompt for the lid when `laser_pgood` reports HV good)
+and `laser.emission-witness` (S400 square, emission peak -> 0, HV rise,
+M2 job-based disarm, operator confirms the mark); `forgectrl.auth` /
+`settings-bounds` / `panel-serves`, `logs.tree-tail-export` (sanitized
+bundle carries no panel token); `motion.pacing`, `jog-roundtrip`,
+`liveness-probe`, `cancel-abort`, `deadman` (SIGKILL / SIGSTOP->underrun
+/ forgectrl restart mid-move, head returned by the kernel counters);
+`cooling.flow-verify` (through forgectrl's diag runner) and
+`fans-quiet-after-motion`; `laser.disarm-in-hold`, `expected-stop`
+(POST /controller/stop mid-burn, then the operator-judged restart),
+`kill-mid-fire`; `camera.snapshot`; `update.slots-and-signature`;
+`cloud.mode-switch` (gfcloud comes up and records its service probe) and
+`cloud.gfhome-homing`. Not in the catalog by design: the stale-origin
+refusal after an underrun (config-dependent - GRBL mode permits unhomed
+cutting, see the campaign notes above). The bench tab lists every
+`scripts/bench` tool; runnable from the page: `check-pwm`,
+`pacing-test`, `bench-m2`, `bench-phase2`, `cp-watchdog`, `accel-fast`,
+`bump-seek`, `fire-test`, `gate-a-kernel`, `platform-drills`,
+`flow-confirm`, `flow-sampler` (takeover tools get forgectrl stopped and
+started around the run); the scope tools, the host-side flow
+characterization tools, and the live drills stay ssh/host-run for now.
+The coverage currency rule is in `CLAUDE.md`
+"Working rules". Bench validation and the bench-tab ports are Next work
+item 15.
+
 ## Hardware facts bank (measured)
 
 - **DRV8825 stepper drivers wedge on 40 V rail glitches** (factory board;
@@ -2643,3 +2706,21 @@ accordingly ("Automatic — AP country, else World").
       goes with the wrapper; a forced daemon crash logs the wrapper's
       `exited (N) - respawning in 5 s` line under `forgectrl`.
 
+15. **Release acceptance tool (forgetest) - CODE-COMPLETE 2026-08-15,
+    host- and build-verified; bench validation pending, ships with the
+    next full image flash.** Contract: `docs/ACCEPTANCE.md`; catalog v1
+    complete (24 tests, coverage lint enforced in CI, rule in
+    `CLAUDE.md`). **Images for the flash are archived under
+    `images/20260815193946/`** (release `…193946` + dev `…194415`, one
+    tree; the two manifests share the acceptance identity, the release
+    image carries no forgetest). Remaining, in order: (a) bench: boot
+    that dev image, run the catalog from `:8090` - the takeover, motion,
+    cooling, live
+    and cloud tests are ports of proven scripts and need their first run
+    on the machine (expect pass-criteria tuning: fan tach tolerance,
+    snapshot size floor, timeouts) - export, and drive one UI-only pin
+    bump to prove the inherited/required split; (b) the remaining
+    bench-tab ports (scope tools, host-side flow characterization, the
+    live drills - the catalog carries their acceptance forms); (c) the
+    first release runs the full
+    campaign and commits `releases/v<version>/acceptance.json`.

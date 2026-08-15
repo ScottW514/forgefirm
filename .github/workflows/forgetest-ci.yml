@@ -1,0 +1,68 @@
+# forgetest: the release acceptance tool's host-side proof.
+#
+#  - unit tests: campaign rules, fingerprints, artifact build/verify (the
+#    release gate's decision, including the negative fixtures), runner +
+#    HTTP API end to end with a fake catalog and a fake bench tool
+#  - coverage lint: every source path of every component pinned by the
+#    recipes must be selected by some catalog test's coverage globs (the
+#    tree manifest is generated from the pins with git - no Yocto build);
+#    enforced: an uncovered path fails the job (docs/ACCEPTANCE.md).
+
+name: forgetest-ci
+
+on:
+  push:
+    paths:
+      - 'forgetest/**'
+      - 'scripts/acceptance-gate.py'
+      - 'scripts/manifest-from-tree.py'
+      - 'meta-forgefirm/recipes-forgefirm/**'
+      - '.github/workflows/forgetest-ci.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout forgefirm
+        uses: actions/checkout@v4
+        with:
+          path: forgefirm
+
+      - name: Checkout meta-openglow (sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: ScottW514/meta-openglow
+          ref: scarthgap
+          path: meta-openglow
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Unit tests
+        working-directory: forgefirm/forgetest
+        run: python -m unittest discover -s tests -v
+
+      - name: Tree manifest from the recipe pins
+        working-directory: forgefirm
+        run: python scripts/manifest-from-tree.py --out tree-manifest.json
+
+      - name: Coverage lint (enforced)
+        working-directory: forgefirm/forgetest
+        run: python -m forgetest.coverage --manifest ../tree-manifest.json --enforce | tee "$GITHUB_STEP_SUMMARY"
+
+      - name: Gate self-check on the tree manifest
+        working-directory: forgefirm
+        run: |
+          # The gate must load the catalog and refuse a missing/unauthorized
+          # artifact cleanly (exit 1/2, never a traceback).
+          set +e
+          echo '{}' > empty.json
+          python scripts/acceptance-gate.py empty.json tree-manifest.json --quiet
+          rc=$?
+          set -e
+          test "$rc" -eq 1
