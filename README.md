@@ -9,6 +9,7 @@ panel, and a standard Grbl interface.
 * [Installation Instructions](https://github.com/ScottW514/forgefirm/blob/master/INSTALL.md)
 * [Build Instructions](https://github.com/ScottW514/forgefirm/blob/master/BUILD.md)
 * [Connecting LightBurn](https://github.com/ScottW514/forgefirm/blob/master/docs/LIGHTBURN.md)
+* [How the laser safing works](https://github.com/ScottW514/forgefirm/blob/master/docs/SAFETY.md)
 * [Community Support](https://community.openglow.org)
 
 ## What it does
@@ -67,7 +68,8 @@ running job unattended — keep a fire extinguisher within reach. Read
 [Before you cut — safety](docs/LIGHTBURN.md#before-you-cut--safety-read-this-first)
 before your first job, and the
 [Regulatory and legal](INSTALL.md#regulatory-and-legal) section before
-installing.
+installing. [How the laser safing works](docs/SAFETY.md) describes the hardware
+safety chain and the software gates ForgeFIRM stacks on it.
 
 **A very important warning: this is experimental software. Use of this software
 could seriously maim or kill you or others, and voids your warranty. It is not

@@ -2091,7 +2091,10 @@ accordingly ("Automatic — AP country, else World").
    Interlock-trip recovery was exercised in commissioning runs without
    one — the chain recovers when the condition clears. `cnc/laser_latch`
    stays write-only (1 = lock), the driver's arm flow unlocks per job,
-   and `interlock_latch_reset` remains a readback.
+   and `interlock_latch_reset` remains a readback. **Amended 2026-08-15:**
+   the *interlock* latch never trips at all in ForgeFIRM — see Next work
+   item 11; the "recovery" seen in commissioning was the software
+   safety-door path, not the hardware latch.
    **Bench items:** open the lid mid-job (expect `Door` at the sender,
    motion parked, resume on close); jog and `$H` with the lid open
    (refused); a Pro with an unjumpered interlock connector (expect the
@@ -2351,3 +2354,41 @@ accordingly ("Automatic — AP country, else World").
       after an underrun cuts at the stale origin unless homing is
       required (GRBL mode permits unhomed cutting; the underrun itself
       alarms and unlinks the anchor).
+11. **Interlock latch has no hardware trip path in ForgeFIRM (found
+    2026-08-15, bench-verified).** With the interlock connector unjumpered
+    at idle: EV_SW `interlock`=1 (loop open), `interlock_latch`=0 (not
+    tripped), `cnc/interlock_circuit`=13 (b4 INTERLOCK_RESET=0),
+    `interlock_latch_reset`=0. This matches the safing schematic: the
+    interlock latch (U23-2, CD4043B) has RESET = loop-closed and
+    SET = INTERLOCK_RESET (GPIO4_05) — an open loop only *releases* the
+    reset, and nothing in ForgeFIRM drives INTERLOCK_RESET (the driver
+    exposes it as a read-only readback, initialized low; the former
+    `interlock_reset` LED node that let userspace drive it is gone). So on
+    a machine with a real external lockout (Pro), an open loop does **not**
+    cut LASER_ON in hardware; enforcement is the GRBL safety-door hold on
+    switch code 5 and the cloud client's motion gate. Basic/Plus ship the
+    loop jumpered. **Decision + fix needed:** drive INTERLOCK_RESET high
+    whenever the loop is open and hold it until the loop closes, so Q2
+    blocks the LASER_ON gate in hardware (the CD4043B is set-dominant, so
+    the latch stays blocked until the SoC releases SET *and* the loop is
+    closed). **IMPLEMENTED 2026-08-15 (kernel-module, code-complete, bench
+    validation pending; kernel-module 015913b, meta-openglow 92d6e20 DTS +
+    897c175 pin, forgectrl a451e7c docs, all pushed and pins bumped
+    2026-08-15):** `src/cnc_interlock.{c,h}` — an in-kernel input
+    handler on the gpio-keys switch device (no DT change, GPIO stays with
+    gpio-keys) drives INTERLOCK_RESET high while EV_SW code 5 reads open,
+    from probe until the switch device attaches, and if it detaches
+    (unobservable = open); low only while an attached device reports the
+    loop closed. Pin init changed to `GPIOF_OUT_INIT_HIGH`. Proof so far:
+    host test `tests/interlock_test.c` (8 cases, `make -C tests check`,
+    new CI job `host-tests`) green; module cross-compiled clean against
+    the staged 6.12.20-fslc kernel with `KCFLAGS=-Werror`, MODPOST silent.
+    Ships with the next image flash (kernel changes are never hot-swapped);
+    bench re-run of this exact reading then expects `interlock_latch`=1 /
+    `interlock_circuit` b4=1 with the loop open, both clearing after it is
+    closed. Same batch: the charge-pump watchdog readback (`cnc/charge_pump_alive`,
+    `interlock_circuit` b5; GPIO1_08 = inverted one-shot Q, new
+    `charge-pump-alive-gpio` + GPIO_8 pad in the linux-fslc DTS — kernel
+    module and DTB must ship together, the pin is required at probe; DTB
+    compile-checked with cpp+dtc against the staged kernel). Full write-up
+    of the chain: `docs/SAFETY.md` (+ `docs/img/safety-chain.svg`).
