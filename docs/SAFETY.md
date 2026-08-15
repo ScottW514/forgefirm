@@ -195,9 +195,14 @@ would not allow.
   from the cooling engine (flow verification, over-temperature, lid-IR
   emission witness); a stale or failed verdict relocks in-process.
 - **Safety door.** `doors` (lid) and `interlock` (loop open) are the core's
-  safety-door signal: a running job parks; once the door/loop closes the
-  controller reports `Door:0` and a cycle start resumes it. This is a
-  motion/UX gate; the lid is *also* cut in hardware by the button latch,
+  safety-door signal, shown to the core only while it is in a job-time state
+  (cycle, hold, tool change, door): a running job parks; once the door/loop
+  closes the controller reports `Door:0` and a cycle start resumes it. While
+  idle, jogging or homing the signal is hidden — the lid is opened at idle
+  every time material is loaded and a door seen there would strand the
+  controller in Door — and it is delivered the moment the core leaves those
+  states, so a job started with the lid open parks on its first poll. This
+  is a motion/UX gate; the lid is *also* cut in hardware by the button latch,
   and the interlock by the interlock latch (§3.1).
 - **Head/motion witnesses.** Position counters are not proof of motion (the
   step-stream drives are open loop); the head accelerometer is the motion

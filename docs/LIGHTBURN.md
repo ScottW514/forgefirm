@@ -107,6 +107,12 @@ restart the controller with the head re-parked.)
   in a layer is clamped by the controller ($110/$111 = 12000 mm/min).
 - **Pause** = grbl feed hold: motion parks within ~0.4 s (0.2 s stream
   queue + deceleration); Resume continues exactly.
+- **Opening the lid (or a Pro's interlock loop) during a job** parks it
+  the same way and LightBurn shows **Door**; close the lid and press
+  **Resume** (a cycle start) to continue. At idle, while jogging, or during
+  homing the lid is yours to open and close freely — the controller does
+  not enter Door there (the hardware blocks the beam anyway), so a lid
+  cycle while loading material never leaves LightBurn waiting.
 - **Stop** = soft reset: motion aborts with a controlled deceleration
   and grblHAL raises an alarm with **position declared lost** (the
   stream queue means up to ~40 mm of in-flight difference). Recovery:

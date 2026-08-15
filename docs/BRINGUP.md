@@ -2096,10 +2096,23 @@ accordingly ("Automatic — AP country, else World").
    item 11; the "recovery" seen in commissioning was the software
    safety-door path, not the hardware latch.
    **Bench items:** open the lid mid-job (expect `Door` at the sender,
-   motion parked, resume on close); jog and `$H` with the lid open
-   (refused); a Pro with an unjumpered interlock connector (expect the
-   same door behavior); confirm no spurious door events across a full
-   job. Underrun → alarm was already covered by the stream-fault path.
+   motion parked, cycle start resumes after close); a Pro with an
+   unjumpered interlock connector (expect the same door behavior);
+   confirm no spurious door events across a full job. Underrun → alarm
+   was already covered by the stream-fault path.
+   **Changed 2026-08-15 (grblHAL a9446fe, host-tested, pin bumped, bench
+   validation pending):** the door signal is now hidden from the core while it is
+   IDLE, JOG or HOMING (`gfsw_visible`, applied to both `get_state()` and
+   the edge delivery) and delivered the moment it is in any other state.
+   Reason: a lid cycle at idle — every material load, and a power-up with
+   the lid open — left grblHAL parked in `Door:0` until a cycle start,
+   and LightBurn then sat at "Waiting for connection". Consequences: jog
+   and `$H` are allowed with the lid open (beam hardware-blocked; upstream
+   "ignore when idle" semantics), a job started with the lid open parks on
+   the first poll, mid-job opens park exactly as before, and the cloud
+   client (own EV_SW reader) is unaffected. Bench check: lid open/close
+   at idle → state stays Idle; open mid-job → Door, close, `~` → resumes;
+   Start with the lid open → Door immediately.
 4b. **Cloud-mode complete review** (operator-directed 2026-08-03):
    `load_motion` preloads a job's ENTIRE pulse file into the ring with
    no backpressure recovery — with the 16 MiB default ring that caps
