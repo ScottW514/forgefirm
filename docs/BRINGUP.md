@@ -1379,51 +1379,6 @@ overrides the IE (DE applied while associated to the US AP), and
 clearing reverts to the 00 hint. The UI labels the default
 accordingly ("Automatic — AP country, else World").
 
-## Release acceptance (forgetest, port 8090)
-
-The release acceptance tool - the catalog, campaigns, domain
-fingerprints, inheritance, the always-required core, invalidate-all,
-the release gate, and the coverage currency rule - is specified in
-`docs/ACCEPTANCE.md`; the tool lives in `forgetest/` and ships only on
-the dev image (`forgetest` recipe, `/etc/init.d/forgetest`, HTTP :8090).
-Status: **code landed 2026-08-15, host-verified and build-verified;
-bench validation pending - ships with the next full image flash** (the
-image manifest is an image change: `forgefirm-manifest.bbclass` entries
-from every component recipe, the kernel and the module through
-`do_deploy`, assembled by `forgefirm-image-manifest.bbclass` into
-`/etc/forgefirm-manifest.json`, also deployed next to the image as
-`*.forgefirm-manifest.json`). Build proof (dev image `20260815191634`,
-built with the classes): the manifest carries all eight components
-(forgectrl, grblhal-glowforge with the core submodule's files,
-forgefirm-app merged from its three recipes, python3-gfhardware,
-python3-gfutilities, kernel-module-glowforge and linux-fslc through the
-deploy path, forgetest through the file mode), the DTB hashes and the
-modules directory, and layer content hashes that are **byte-identical to
-what `scripts/manifest-from-tree.py` computes on the workstation** - the
-identity is content-defined, independent of the checkout's commit or
-dirty state; forgetest is installed at S95 with the bench scripts. Host
-proof: 44 unit tests (campaign
-rules, fingerprints, artifact build + gate verification incl. the
-negative fixtures - tampered artifact, covered-file change, platform
-change, core inherited, stale invalidate, catalog change, implementation
-change - and the runner + HTTP API end to end with a fake catalog and a
-fake bench tool), the tree manifest generated from the recipe pins with
-`scripts/manifest-from-tree.py` (submodule recursion verified on the
-grblHAL core), the coverage lint reporting on it, and the gate refusing an
-empty artifact cleanly; `.github/workflows/forgetest-ci.yml` runs the
-same. Catalog v1 on the tool: the core `image.health`,
-`kernel.latch-locked-idle`, `kernel.k1-k2`, `kernel.k3-unlock` and
-`kernel.fire-abu` (the last three are the GATE A drills
-`gate_a_kernel_drills.py` / `fire_test.py` ported as takeover tests with
-their sequences intact and the software-witness pass criteria from the
-2026-08-14 bench run; K3 and fire B/U prompt for the lid when
-`laser_pgood` reports HV good), plus `forgectrl.auth`,
-`forgectrl.settings-bounds`, `forgectrl.panel-serves`; the bench tab
-lists every `scripts/bench` tool with `check-pwm`, `pacing-test`,
-`bench-m2`, `flow-sampler` runnable, and `motion.pacing` +
-`motion.jog-roundtrip` (ports of `pacing_test.py` / `bench_m2.py`). The
-rest of the catalog and the bench ports are Next work item 15.
-
 ## Hardware facts bank (measured)
 
 - **DRV8825 stepper drivers wedge on 40 V rail glitches** (factory board;
@@ -2688,21 +2643,3 @@ rest of the catalog and the bench ports are Next work item 15.
       goes with the wrapper; a forced daemon crash logs the wrapper's
       `exited (N) - respawning in 5 s` line under `forgectrl`.
 
-15. **Release acceptance tool (forgetest) - CODE LANDED 2026-08-15,
-    host-verified; bench validation pending, ships with the next full
-    image flash.** Contract: `docs/ACCEPTANCE.md`. Remaining, in order:
-    (a) bench: boot the dev image (the manifest itself is
-    build-verified), run the v1 catalog from the page (the takeover
-    drills and the two motion tests are ports of proven bench scripts and
-    need their first run on the machine), export, and drive one UI-only
-    pin bump to prove the inherited/required split; (b) the
-    catalog: motion (liveness, hold/resume/cancel/abort, dead-man;
-    pacing and jog round-trip are in), cooling (flow-verify, confirm/escalate, fans quiet, fire
-    gate blocks arm), the live laser tests (emission witness = core,
-    disarm in hold, faultpos, kill-mid-fire, expected-stop), camera,
-    update/boot, cloud home-and-back, mode switch - each ported from its
-    `scripts/bench` drill; (c) flip the coverage lint to `--enforce` in
-    CI when the catalog covers every manifest path, and land the coverage
-    currency rule in `CLAUDE.md`; (d) port the remaining bench tools to
-    the `#bench` tab by safety class; (e) the first release runs the full
-    campaign and commits `releases/v<version>/acceptance.json`.
