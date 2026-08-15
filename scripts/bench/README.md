@@ -37,6 +37,7 @@ to go through a WSL distro from Windows).
 | `bump_seek.py` | Accelerometer bump-seek homing prototype (runs on the board): creeps toward a rail in bounded jog segments via grblHAL TCP, learns the moving-noise baseline per segment, detects the contact jolt (~530 Hz sampling, 2-sample confirm), jog-cancels (0x85) and backs off. CSV to /tmp/bump.csv. |
 | `build-feeder.sh` | Cross-compiles `feeder.c` the same way. |
 | `puls_profile.py` | Decodes factory `.puls` streams (raw or GF1-headered) into velocity/accel profiles: peak speeds, ramp-slope fits, per-move segments, Z cadence. Runs anywhere (stdlib only). Source of the factory-true grblHAL defaults: 700/590 mm/s² accel, 200 mm/s max rate, 28160 Hz travel tick. |
+| `cp_watchdog_timing.py` | HV charge-pump watchdog one-shot timing (runs on the board): latches every CHG_PUMP feed pulse in GPIO3's edge detector (pin 24 only, IMR untouched, ICR2 restored on exit) and polls the `!Q` (`charge_pump_alive`) and `!HV_ENABLE` (`hv_enable`) pads through /dev/mem in a tight loop while it commands short local jogs; prints per-run t_w (last pulse → Q fall), Q → HV_ENABLE delay, priming latency and the feed period, with the loop's worst gap as the resolution. Motion only, laser locked, no other Grbl client attached. |
 | `bench_m2.py` | Motion-quality bench, runs against the board over TCP:23: bounded round-trip jogs (sanity, max-rate, diagonal) + feed-hold/resume mid-move, reporting peak feed, state transitions, and position drift. |
 
 Data files kept beside the tools: `flow_matrix_results.json` /
