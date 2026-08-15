@@ -74,17 +74,51 @@ the cooling verdict, and has the new daemon stand by and retake at idle
 (F-12). The liveness probe's designed skip-on-open path — the safety-chain
 output is known to de-assert during motion, so an at-that-moment read can
 skip the probe, proceed without a motion fault, and re-probe on the next
-spawn — was exercised and behaved per `liveness.c`. **Still pending —
-operator-present bench work only, and no live-fire until GATE A's
-live-fire drills pass on this image:** the
-controlled-stop decel at the default cloud tick / resume-with-latch-locked
-stays-laser-less / mid-ramp-latch-does-not-re-arm-FIRE drills, all with
-LASER_ON probed at the PSU connector; the connection-flood
-`machine_is_idle` fail-closed check under motion (X-2); the emission
-witness + lid-IR characterization (Phase 5, `cool_fire_ir_delta` set from
-the baseline); and the stale-gate / motion-integrity job drills across
-Phases 4 and 6. None of these proceed without the operator at the
-machine with the physical arm button, fire watch, and eye protection.
+spawn — was exercised and behaved per `liveness.c`. **GATE A kernel drills PASS on this image (operator present, HV
+unpowered, software witnesses — the bit-to-pin correspondence was
+scope-pinned 2026-08-02):** run with forgectrl stopped so the pulse
+device is free (`scripts/bench/gate_a_kernel_drills.py`). K1: a
+controlled stop from the 10 kHz cloud tick decelerates in 0.091 s
+(theoretical ramp 0.072 s) to `idle` with no max-rate burst and no
+fault. K2: with the latch locked, a `stop` + `resume +200` replays a
+2 s FIRE window with `laser_enable`/`laser_on` at 0 throughout and
+interlock pinned at 13 — the waypoint provably completed (the position
+counter advanced all 1000 masked steps; `motor_lock` masks the output
+drive, not the counters). K3: `laser_latch=0` written inside the accel
+ramp drives the latch pin (interlock 13→5, bit 3 clear) but the FIRE
+output drive is never restored while the run is in flight —
+`laser_enable` 0 for the entire 3.5 s FIRE-bit stream. `fire_test.py`
+A/B/U reproduce the 2026-08-02 reference on the rebuilt kernel: A
+(latch locked) pins interlock at 13 through 40,000 FIRE bits; B (latch
+unlocked, chain unarmed) shows `laser_enable=1`/interlock 7 mid-window
+with `laser_on`/`laser_on_sampled` 0 — the safety AND-gate holds; U
+reaches a true underrun, the backstop drops FIRE, and `stop` acks it.
+**GATE A IS CLOSED**: every Phase 1 row is fixed, the G-1 assertion is
+green in CI, and the drills above are the bench log. Live fire is
+permitted again. The masked K2 steps leave the un-anchored X counter
+offset (+1000 steps); `homed:false` already enforces the re-home.
+
+**The campaign caught a live defect (fixed same day):** the liveness
+probe's enclosure guard read the combined-doors EV_SW bit with the
+sense inverted (bit 3 set means *closed*, as the controller's switch
+map decodes; the guard treated set as *open*), so the probe skipped on
+every spawn with the lid closed — and would have moved the gantry with
+it open. Verified live against `EVIOCGSW` (lid closed, bit 3 = 1,
+probe reporting "door/interlock open"). Fixed in forgectrl `424f185`
+and hot-deployed; on the next start the probe genuinely ran and the
+supervision behaved exactly as designed: a first gray-zone read (head
+accel p2p x=455, below the ≥500 moving threshold) was treated as NO
+MOTION and re-probed rather than false-passed, and the second probe
+returned MOTION OK (p2p x=3919, y=1636) — the DRV8825s are not wedged
+after the drill session's rail cycles.
+
+**Still pending — operator-present:** the connection-flood
+`machine_is_idle` fail-closed check under motion (X-2); the stale-gate
+/ motion-integrity armed drills across Phases 4 and 6 (physical
+button); and the Phase 5 live-fire work — emission-witness live check
+and lid-IR fire characterization to set `cool_fire_ir_delta` from the
+ambient baseline below. Live fire only with the operator armed: eye
+protection, fire watch, exhaust running.
 
 The lid-IR **ambient baseline** for the fire-watch characterization is
 captured on this image (600 samples over 5.6 min at 2 Hz, lid closed,
