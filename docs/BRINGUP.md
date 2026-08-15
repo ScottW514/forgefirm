@@ -272,9 +272,19 @@ nothing, the candle is **+3 to +6 counts on all four channels** for as
 long as it burns. That is the same size as a full-power cut's rise, so a
 threshold cannot separate a candle-sized flame from cutting and the
 15-count gate will not react to a flame that small; what a material fire
-of a size worth stopping for produces is unmeasured. The gate is kept
-(it costs nothing on normal cuts and catches anything large), and the
-lid-IR channels are recorded as a weak fire signal on this hardware. **Armed kill on
+of a size worth stopping for produces is unmeasured. **Then the decisive measurement, dry, the same
+day: the lid-IR channels track the lid LED.** `lid_led` 0 → `2 2 1 2`,
+8 → `2 2 3 2`, 131 (the resting level) → `54 55 61 62`, 255 → `172 171
+190 188`. The sensors are, first of all, a photometer for the lid lamp;
+every rise measured above (cuts +4–6, candle +3–6, the "+22 drift"
+between sessions) is a small modulation on a lamp-set level. forgectrl's
+camera engine drives `pic/lid_led` for every lid capture (132 during the
+grab, previous level restored), and the resting level is not fixed (131
+here, 8 after one reboot, cloud mode sets its own `LLvl`) — so a snapshot
+mid-run can step every channel by tens of counts and a fixed-count gate
+fires a phantom FIRE stop. **`cool_fire_ir_delta` was therefore set back
+to 0 (watch-only) the same day**; the gate stays disabled until the fire
+watch is lamp-aware (Next work item 10). **Armed kill on
 the expected-stop path — first run FAILED, defect fixed, re-run PASS.**
 With emission live, `POST /controller/stop` returned only after 5.30 s
 and the operator saw ~17 mm / ~5 s of continued cutting before a
@@ -2334,12 +2344,18 @@ accordingly ("Automatic — AP country, else World").
     - ~~**Lid-IR fire characterization at cutting power**~~ — **DONE
       2026-08-15** (three cutting-power jobs, worst rise +6 counts,
       `cool_fire_ir_delta = 15` set by hand in `/data/forgefirm.conf`).
-      Still open from it: watch the next several real jobs for a false
-      trip. The flame signature is measured (candle: +3 to +6 counts,
-      indistinguishable from a cut) — the gate cannot catch a small
-      flame; only a large one. A better fire signal (the head camera,
-      or a real IR flame sensor) is the honest next step if fire
-      detection is to mean more than that.
+      **Then disabled again the same day (`cool_fire_ir_delta = 0`)**:
+      the channels track the lid LED (0→2, 131→~58, 255→~180 counts),
+      so any lamp change during a run — a panel snapshot lights the
+      lamp — steps them by tens of counts and a fixed-count gate would
+      stop the job on a phantom FIRE. Redesign before re-arming: the
+      engine must own or observe the lamp level (suspend the watch and
+      re-baseline for a few ticks after any `lid_led` change; forgectrl
+      drives it for captures, the cloud client for lid images), and the
+      threshold should be relative to the lamp-set level, not a fixed
+      count. Even then the signal is weak (a candle reads like a cut);
+      the head camera or a real flame sensor is the honest path to fire
+      detection that means something.
     - ~~**Kernel platform-hygiene batch (item 9), on the flashed
       image**~~ — **DONE 2026-08-15** (panic mid-motion, decay/microstep
       readback, LED sequence + clean unload, probe lines, dead-man head
@@ -2359,13 +2375,23 @@ accordingly ("Automatic — AP country, else World").
       badly (the K-11 runtime case) and a failed head capture leaving the
       measure laser off — both need the head connected and a fault
       injected.
-    - **Cloud mode:** the C-1 cancel-with-a-rejected-settings-action
-      drill (cancel must stop the cut); malformed-frame and DNS-blip
-      injections against a live session; the oversize/bad-header job
-      rejected before the ring loads (tracked in `CLOUD.md`); ~~re-verify
-      the homing accelerometer motion-window counts~~ **DONE 2026-08-15**
-      (7 windows ≥ 500 at the ~100 Hz sampler on a real `$H`); confirm a
-      real print header's fan duties round-trip to the engine (item 8).
+    - **Cloud mode — mostly DONE 2026-08-15:** mode switch clean (GRBL
+      controller exit 0x0, gfcloud signed in, connect-time hunt + lid
+      image ran); **network/DNS blip** (service peers blackholed + dead
+      resolver for 75 s while the session was live): `ping/pong timed
+      out - goodbye` → in-process `RECONNECTING`, sign-in retried with
+      backoff through the outage, `authenticate_machine SUCCESS` and the
+      service's `settings` action answered right after restore, same
+      process, supervisor never involved — PASS; **a real print** (22.9 s,
+      motion bytes actual = expected, emission peak 91, HV 0..932): the
+      header's `AArd 1023 / EFrd 65535 / IFrd 43278` drove air 11.0 k /
+      exhaust 11.8 k / intake 4.1 k rpm through the armed window and the
+      hunt/Z headers (`204/0/0`) left the fans at idle levels — the
+      per-job profile round-trips (directional; duty→rpm not calibrated);
+      no false FIRE trip on the job. `$H` witness re-verified (7 windows
+      ≥ 500 at ~100 Hz). Still open, not inducible from the bench: the
+      cancel-with-a-rejected-`settings`-action case, a malformed frame
+      (needs a MITM), the oversize/bad-header job (tracked in `CLOUD.md`).
     - **Opportunistic:** `STATE_FAULT` recovery via `enable` without a
       module reload the next time a DRV8825 fault line actually trips.
     - **Config-dependent, deliberately not gated:** an armed GRBL job
