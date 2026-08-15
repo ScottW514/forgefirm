@@ -260,7 +260,10 @@ that day read ~57–64 vs 37–40 on 08-14 (day-to-day drift ≈ +22 counts),
 which is why the gate keys off the run-start baseline and never off an
 absolute level. `cool_fire_ir_delta = 15` is the sized gate (≥ 2× the
 worst cut rise, at the ~15-count floor); it is a hand-edited
-`/data/forgefirm.conf` key and takes effect at the next run start. A
+`/data/forgefirm.conf` key, **set on the bench 2026-08-15** (verified
+present, file 0600), and takes effect at the next run start — the fire
+watch is armed from here on and the next real jobs are the false-trip
+watch. A
 flame-signature measurement (tea light in the closed bed, idle) was not
 made; the gate stands on the cut data alone until one is. **Armed kill on
 the expected-stop path — first run FAILED, defect fixed, re-run PASS.**
