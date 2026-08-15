@@ -2112,7 +2112,12 @@ accordingly ("Automatic — AP country, else World").
    the first poll, mid-job opens park exactly as before, and the cloud
    client (own EV_SW reader) is unaffected. Bench check: lid open/close
    at idle → state stays Idle; open mid-job → Door, close, `~` → resumes;
-   Start with the lid open → Door immediately.
+   Start with the lid open → Door immediately. **Partly validated
+   2026-08-15 on image 20260815154622: LightBurn now connects after the
+   lid has been opened and closed at idle (the original complaint).**
+   The mid-job and start-with-lid-open checks are still open, and the
+   session surfaced further LightBurn door-open issues — see Next work
+   item 12.
 4b. **Cloud-mode complete review** (operator-directed 2026-08-03):
    `load_motion` preloads a job's ENTIRE pulse file into the ring with
    no backpressure recovery — with the 16 MiB default ring that caps
@@ -2420,3 +2425,13 @@ accordingly ("Automatic — AP country, else World").
     with the drop both times, i.e. HV_ENABLE = DOORS_OK · WDOG_ALIVE
     observed live. Full write-up of the chain: `docs/SAFETY.md`
     (+ `docs/img/safety-chain.svg`).
+12. **LightBurn door-open handling — further issues (found 2026-08-15,
+    details pending).** With image 20260815154622 (grblHAL a9446fe: door
+    signal hidden while idle/jog/homing) LightBurn connects again after
+    an idle lid cycle, but the same bench session turned up other
+    problems around lid opening in LightBurn that were not characterized
+    on the spot. To be detailed and reproduced in a dedicated testing
+    session: symptoms, whether they involve the mid-job Door hold /
+    Resume path, Start-with-lid-open, or the sender's own handling of the
+    `Door` state, and what the controller reports at each step. Until
+    then the door change stands as partially validated (item 4).
