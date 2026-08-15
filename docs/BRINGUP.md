@@ -132,6 +132,27 @@ absence of an explicit `MHD_OPTION_CONNECTION_LIMIT` + per-IP cap is
 still the deferred half; the default ceiling held here but a per-IP cap
 remains the right hardening.
 
+**Idle-CPU diagnosis + pacing fix (2026-08-14).** The controller was
+found at ~28% CPU while the machine appeared idle. Traced to grblHAL
+being parked in the safety-door state (`Door:0`) — entered when the lid
+was opened for inspection between drills, and held there awaiting a
+cycle-start even after the lid closed. In any state other than
+`STATE_IDLE`/`STATE_ALARM` the driver's `serial_wait` took the 200 µs
+segment-production pace, so a parked Door (or Hold) busy-spun the
+protocol thread. Not a regression in the audit work; the parked-state
+pacing had always been tight. Fixed in grblHAL `b2cad8d`
+(`motion_parked()`): a completed feed hold, a parked door (ajar or
+closed), and sleep now take the coarse idle poll, while the motion
+sub-phases (`Hold_Pending` decel, `Parking_Retracting`/`Resuming`) keep
+the tight pace. Hot-deployed; pin bumped and fetch-verified.
+**Bench-validated dry (`scripts/bench/pacing_test.py`):** idle 2.7%,
+active move 35% (tight, segments flowing), parked `Hold:0` 2.7% (was
+~28%), parked `Door:1`/`Door:0` 3.0% (was ~28%), and a mid-move
+feed-hold→resume preserved position exactly (30.000 mm, no lost steps —
+the feeder never starved through the decel and resume ramps). This pin
+bump also rides P10's grblHAL CI/tests and the mlockall-root-only change
+into the next image.
+
 **Live-fire drills PASS (operator armed, S400/40% vector marks on
 scrap, `scripts/bench/live_fire_drills.py`):**
 
