@@ -1,0 +1,51 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          forgetest
+# Required-Start:    $network forgectrl
+# Required-Stop:
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: ForgeFIRM release acceptance tool (dev image, HTTP :8090)
+### END INIT INFO
+
+# Dev-image only. The daemon reads /etc/forgefirm-manifest.json, keeps its
+# state under /data/forgetest, and serves the acceptance + bench pages on
+# port 8090 (FORGETEST_PORT). It starts after forgectrl and stops before
+# the controllers at shutdown; a takeover left behind by a hard stop is
+# recovered at the next start (forgectrl is started again).
+
+PIDFILE=/var/run/forgetest.pid
+DATA=/data/forgetest
+LOG=$DATA/daemon.log
+
+case "$1" in
+  start)
+    echo "Starting forgetest"
+    mkdir -p "$DATA"
+    start-stop-daemon -S -q -p $PIDFILE -m -b -x /bin/sh -- -c \
+      "exec /usr/bin/python3 -m forgetest >> $LOG 2>&1"
+    ;;
+  stop)
+    echo "Stopping forgetest"
+    start-stop-daemon -K -q -p $PIDFILE
+    rm -f $PIDFILE
+    ;;
+  restart)
+    $0 stop
+    sleep 1
+    $0 start
+    ;;
+  status)
+    if [ -f $PIDFILE ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null; then
+      echo "forgetest is running"
+      exit 0
+    fi
+    echo "forgetest is not running"
+    exit 3
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart|status}"
+    exit 1
+    ;;
+esac
+exit 0

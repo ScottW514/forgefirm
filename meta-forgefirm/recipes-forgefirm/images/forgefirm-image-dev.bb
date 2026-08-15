@@ -3,9 +3,12 @@ require forgefirm-image.bb
 DESCRIPTION = "OpenGlow/ForgeFIRM development image for Glowforge"
 
 # Strict superset of forgefirm-image: everything the main image ships, plus
-# debug tooling.
+# debug tooling. forgetest is the release acceptance tool (HTTP :8090) and
+# the bench diagnostics page; it belongs to the bench, never to a release
+# image (docs/ACCEPTANCE.md).
 IMAGE_INSTALL += " \
   forgectrl \
+  forgetest \
 "
 
 # debug-tweaks (passwordless root, root SSH login) belongs ONLY to the dev

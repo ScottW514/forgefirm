@@ -1,7 +1,13 @@
 # ForgeFIRM bench tools
 
 Hardware-verification tools for the ForgeFIRM bench. All run ON the
-target board (dev image, python3 present) unless noted. Host-side tools
+target board (dev image, python3 present) unless noted. The dev image
+installs them under `/usr/share/forgetest/bench/`, and the acceptance
+tool's **Bench diagnostics** tab (`http://<machine>:8090/#bench`,
+`docs/ACCEPTANCE.md`) runs the board-side ones with their arguments and
+the output on the page (takeover tools get forgectrl stopped and started
+around the run); the acceptance catalog itself is built from ports of
+these drills. Host-side tools
 take the machine address from `GF_HOST` (or `argv`, where stated); the
 ones that shell into the board over ssh use the `ssh` on `PATH`, or the
 client named by `GF_SSH` (for example `GF_SSH='wsl -d <distro> -- ssh'`

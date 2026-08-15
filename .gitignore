@@ -14,3 +14,9 @@
 
 # Python bytecode
 __pycache__/
+
+# manifest-from-tree.py fetch cache
+/.manifest-cache/
+
+# manifest-from-tree.py default output
+/tree-manifest.json
