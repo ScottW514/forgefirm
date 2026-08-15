@@ -2742,9 +2742,17 @@ motion, cooling, camera, cloud, then the live tests from the page.
       unmanaged controller, re-probed motion and restarted it; a mode
       switch to cloud put gfcloud's lines (`ffmachine:_lid_image …`,
       `websocket:img_upload COMPLETE`) in `gfcloud/gfcloud.log` with a
-      per-controller relay alive, and back. **Item closed** except: the
-      physical remote hop, a `$H` for the gfhome lines, and a Python
-      traceback through the relay (routing proven with `logger`).
+      per-controller relay alive, and back. A `$H` (web-service homing,
+      58 s, homed X0 Y0 Z10.60) put gfhome's session lines in
+      `gfhome/gfhome.log` under its own pid and grblHAL's `starting
+      homing session` / `homed` in `grblhal.log`. **Item closed.** Not
+      separately drilled: the physical remote hop to another host (the
+      workstation firewall drops unsolicited inbound UDP; the omfwd path
+      is proven on the loopback listener — point `syslog_server` at any
+      real collector to finish it), and a Python traceback through the
+      relay — there is no external trigger for that; the relay pipe is
+      the same one the `logger` probes and the wrapper's `exited (137)`
+      line went through.
 
 15. **Release acceptance tool (forgetest) - CODE-COMPLETE 2026-08-15,
     host- and build-verified; bench validation pending, ships with the
