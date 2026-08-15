@@ -2335,7 +2335,18 @@ accordingly ("Automatic — AP country, else World").
      (`InputSwitch.SW_HV_ENABLE`, no gating) all ship in the same image
      and read the new polarity; the DTS and that userspace must not be
      mixed across the flash (a mismatch only inverts the telemetry — nothing
-     gates on the bit — but the dashboard would lie). **Bench:** `/status`
+     gates on the bit — but the dashboard would lie). **Image
+     `20260815162923` (forgefirm-image + forgefirm-image-dev) is built on
+     these pins** (forgectrl 801f1f3, grblHAL-glowforge b629c18,
+     python3-gfhardware c3d1790, kernel module d750784, meta-openglow
+     b1ba543): the built DTB carries the `hv_enable` node with
+     `gpios = <&gpio4 6 GPIO_ACTIVE_LOW>` and no `estop` string, the rootfs
+     forgectrl emits `"hv_enable"` and no `"estop"`, the grblHAL binary has
+     no `estop_halts_motion`, `gfhardware/_common.py` carries
+     `SW_HV_ENABLE`, and the standard built-image checks pass (root locked,
+     no watchdog daemon, K80/K90 order, `glowforge.ko` in `extras/`); the
+     only build warning is the usual forced-`do_compile` taint note.
+     **Flash pending (operator).** **Bench, after the flash:** `/status`
      shows `hv_enable:false` at idle, `true` during a jog, back to `false`
      ≈0.45 s after the run ends, in lockstep with `charge_pump_alive`.
    - **GATE A kernel fixes added to the same flash (2026-08-14):**
