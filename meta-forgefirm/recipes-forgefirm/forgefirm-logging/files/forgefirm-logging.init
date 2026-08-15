@@ -1,0 +1,80 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          forgefirm-logging
+# Required-Start:    $local_fs
+# Required-Stop:
+# Default-Start:     2 3 4 5
+# Default-Stop:
+# Short-Description: ForgeFIRM logging tree: rsyslog rules, rotation
+### END INIT INFO
+
+# Runs before rsyslog (S19 < S20):
+#  1. renders the per-logger rsyslog rules and log directories from the
+#     machine settings (forgectrl --render-syslog) - this is why a log
+#     level changed in the control panel applies at the next reboot;
+#  2. moves log files from before the syslog tree out of the way, once;
+#  3. rotates at boot (bounds carry-over bloat), then hourly from a small
+#     background loop (the image runs no cron daemon).
+
+FORGECTRL=/usr/bin/forgectrl
+LOGROTATE=/usr/sbin/logrotate
+CONF=/etc/logrotate.conf
+PIDFILE=/var/run/forgefirm-logging.pid
+LEGACY=/data/forgefirm/legacy-logs
+
+render() {
+    [ -x "$FORGECTRL" ] || return 0
+    # syslog is not up yet at this point: report to the console
+    "$FORGECTRL" --render-syslog || echo "forgefirm-logging: render-syslog failed"
+}
+
+# Files written by ForgeFIRM before it logged through syslog. Moved, not
+# deleted, so nothing on the bench is lost; the factory's own
+# /data/glowforge.log and /data/log/glowforge* are not ours and stay.
+sweep_legacy() {
+    moved=0
+    for f in /data/forgectrl.log /data/forgectrl.log.* /data/forgectrl.log-* \
+             /data/gfcloud.log /data/gfcloud.log.* /data/gfhome.log /data/gfhome.log.*; do
+        [ -e "$f" ] || continue
+        mkdir -p "$LEGACY"
+        mv "$f" "$LEGACY/" && moved=1
+    done
+    for d in /data/log/gfcloud /data/log/gfhome; do
+        [ -d "$d" ] || continue
+        mkdir -p "$LEGACY"
+        mv "$d" "$LEGACY/" && moved=1
+    done
+    [ $moved -eq 1 ] && \
+        echo "forgefirm-logging: pre-syslog log files moved to $LEGACY (delete when no longer needed)"
+    return 0
+}
+
+case "$1" in
+  start)
+    render
+    sweep_legacy
+    [ -x "$LOGROTATE" ] || exit 0
+    "$LOGROTATE" "$CONF" 2>/dev/null
+    ( while :; do
+        sleep 3600
+        "$LOGROTATE" "$CONF" 2>/dev/null
+      done ) &
+    echo $! > "$PIDFILE"
+    ;;
+  stop)
+    [ -r "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null
+    rm -f "$PIDFILE"
+    ;;
+  restart)
+    $0 stop
+    $0 start
+    ;;
+  render)
+    render
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart|render}"
+    exit 1
+    ;;
+esac
+exit 0

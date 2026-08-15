@@ -1,0 +1,17 @@
+# The ForgeFIRM logging tree: one directory per logger under
+# /data/log/forgefirm, rsyslog the only writer. Size-capped, so a
+# chatty debug level cannot fill /data; rotation renames and HUPs
+# rsyslog (never copytruncate - no lost lines).
+/data/log/forgefirm/*/*.log {
+    size 2M
+    rotate 3
+    nodateext
+    compress
+    missingok
+    notifempty
+    create 0640 root root
+    sharedscripts
+    postrotate
+        pkill -HUP rsyslogd 2>/dev/null || true
+    endscript
+}

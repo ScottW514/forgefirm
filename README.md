@@ -34,6 +34,11 @@ machine is idle:**
 * A **web control panel** on port 8080: machine status and position, coolant
   and fan telemetry, safety-switch states, camera view, machine settings,
   hardware diagnostics, firmware updates, and boot-slot management.
+* **Unified logging**: every ForgeFIRM component logs through syslog into its
+  own directory under `/data/log/forgefirm`, with per-logger levels for the
+  device and for an optional remote syslog server, a live viewer in the
+  panel, and a one-click log bundle — sanitized of identifying details — for
+  attaching to an issue report.
 * Both **cameras** as MJPEG streams and full-resolution snapshots — the lid
   camera feeds LightBurn's camera overlay directly.
 * **Camera-referenced homing**: `$H` from any sender runs the factory-style

@@ -129,7 +129,8 @@ class Session:
         with open(conf, "w") as f:
             f.write("laser_disarm_s = %d\n" % disarm_s)
         verdict = os.path.join(self.workdir, "cooling.state")
-        env = dict(os.environ, GF_VERDICT_FILE=verdict, GFHOME_CONF=conf)
+        env = dict(os.environ, GF_VERDICT_FILE=verdict, GFHOME_CONF=conf,
+                   FFLOG_STDERR="1")
         env.pop("GFSINK", None)
         self.stop = threading.Event()
         self.pub = threading.Thread(target=publish_verdicts,

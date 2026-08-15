@@ -149,7 +149,8 @@ def run_session(name, steps):
     workdir = tempfile.mkdtemp(prefix="laser-test-")
     dump = os.path.join(workdir, "stream.bin")
     verdict = os.path.join(workdir, "cooling.state")
-    env = dict(os.environ, GFSINK_DUMP=dump, GF_VERDICT_FILE=verdict)
+    env = dict(os.environ, GFSINK_DUMP=dump, GF_VERDICT_FILE=verdict,
+               FFLOG_STDERR="1")
     env.pop("GFSINK", None)
 
     stop = threading.Event()

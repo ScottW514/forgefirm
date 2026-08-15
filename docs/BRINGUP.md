@@ -1,6 +1,15 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-08-15** — **audit remediation Phases 0 through 11
+Last updated: **2026-08-15** — **unified logging landed in every repo
+(code-complete, host-verified end to end, pushed, pins bumped): rsyslog
+is the system logger and the only log writer, every ForgeFIRM process
+emits through syslog under its own program name, each logger has its own
+directory under `/data/log/forgefirm/`, per-logger disk and remote levels
+plus a remote syslog target are machine settings (applied at reboot) with
+a Logs tab in the panel (levels, live viewer, sanitized tar.gz export for
+issue reports). It is an image change (rsyslog replaces busybox
+syslogd/klogd) and rides the next full image flash — bench validation
+checklist is "Next work" item 14.** Before that: **audit remediation Phases 0 through 11
 landed: every one of the 159 findings from the independent whole-tree
 audit dated 2026-08-13 has its fix committed** (the remediation was
 sequenced behind two gates — GATE A, uncommanded energy, before any
@@ -1044,16 +1053,17 @@ DRV8825 drivers and a loud `motion-fault` state), the **cooling
 engine** (single owner of fans/pump/TEC/heater for both modes:
 `POST /cool/state` job reports in, the `/run/forgefirm/cooling.state`
 verdict file out), plus cameras, telemetry, settings, diagnostics, the
-web panel, and updates. It runs under a respawn wrapper (its init
-script) and a restarted daemon retakes supervision automatically once
-the machine is idle. The meta-forgefirm recipe pins its SRCREV (bump
+web panel, updates, and the **logging tree** (`GET /logs`, `/logs/tail`,
+`POST /logs/export`; `forgectrl --render-syslog` at boot). It runs under
+a respawn wrapper (its init script) and a restarted daemon retakes
+supervision automatically once the machine is idle. The meta-forgefirm recipe pins its SRCREV (bump
 deliberately after pushing) and installs the sysvinit script from the
 repo's `init/`; bench builds cross-compile with
 `forgefirm/scripts/bench/build-forgectrl.sh` (same toolchain-borrow
 pattern as build-glowforge.sh). The **machine-services contract** —
 the EV_SW switch map, the authoritative sensor conversions, the
 hardware single-writer ownership matrix, the cooling channels, mode
-supervision, and pulse-device ownership — is
+supervision, pulse-device ownership, and logging — is
 `forgectrl/docs/SERVICES.md` in the forgectrl repo. One ulfius daemon
 serves it all, including both OV5648 cameras as MJPEG over the
 mainline imx-media pipeline:
@@ -1148,7 +1158,9 @@ a head-stream request ended the lid viewer's stream cleanly (curl exit
 likewise. **Motion coexistence proven**: X
 round-trip jogs at F1200 with an active stream — producer stats
 `clamped 0`, max behind 4.5 ms (the daemon runs at nice +5, single
-core). Run by hand: `/usr/bin/forgectrl >> /data/forgectrl.log 2>&1 &`
+core). Run by hand: `/usr/bin/forgectrl &` — it logs through syslog
+(`/data/log/forgefirm/forgectrl/forgectrl.log`; a terminal, or
+`FFLOG_STDERR=1`, echoes the lines) — after `/etc/init.d/forgectrl stop`
 (kill before scp when redeploying, text-file-busy).
 
 **LightBurn consumes the stream directly — operator-verified
@@ -2544,3 +2556,75 @@ accordingly ("Automatic — AP country, else World").
     `WARNING … wlcore/main.c:874 wl12xx_queue_recovery_work` block that
     accompanies the event is upstream noise (an "unintended recovery"
     `WARN_ON`), not a crash — the `-84` line is the signal to watch.
+14. **Unified logging — CODE-COMPLETE, host-verified, pushed and pinned
+    2026-08-15; bench validation pending — ships with the next full image
+    flash (rsyslog replaces busybox syslogd/klogd, so it is an image
+    change).** Design and contract: `forgectrl/docs/SERVICES.md`
+    "Logging". In brief: rsyslog is the only log writer; forgectrl and
+    the grblHAL driver emit through the shared non-blocking `fflog`
+    emitter (drops, never waits — a stalled log daemon can never park a
+    controller thread), gfcloud/gfhome through `SysLogHandler`, the
+    kernel through `imklog`; a controller's stray stdout/stderr rides a
+    per-controller `logger` relay under its own name; the daemon's own
+    stray output a fifo relay in its init script. Tree:
+    `/data/log/forgefirm/{forgectrl,grblhal,gfcloud,gfhome,kernel,system}/`,
+    size-capped and rotated (`forgefirm-logging` recipe: renders the
+    rsyslog rules from the settings at S19 via `forgectrl
+    --render-syslog`, sweeps the pre-syslog files once into
+    `/data/forgefirm/legacy-logs/`, logrotate at boot + hourly with a
+    `HUP`, never `copytruncate`). Levels: `log_<logger>_disk` /
+    `_remote` and `syslog_server/port/proto` in `/data/forgefirm.conf`,
+    **applied at reboot** (the panel's Logs tab shows configured vs.
+    effective and offers the reboot); a process emits at the more
+    verbose of its two levels, rsyslog filters per destination. Export:
+    `POST /logs/export` streams a `tar.gz` (tree + system snapshot),
+    sanitized by default (`src/sanitize.c`: known values first — serial,
+    hostname, cloud credentials, panel token, WiFi SSID/PSK — then
+    patterns; stable placeholders; `tests/sanitize_test.c` in CI, 39
+    fixtures). Host proof done: forgectrl/grblHAL `-Werror` builds and
+    all three CI test sets green (sanitizer, idle fail-closed, switch
+    map, arm re-check, laser stream + armed-window harnesses on the
+    null-sink build); `tests/fflog_e2e.sh` against a private rsyslogd on
+    the shipped `rsyslog.conf` (emitter format, per-logger routing,
+    level filtering, `logger` relay routing) and the equivalent Python
+    check both pass; `/logs`, `/logs/tail` (full + incremental follow),
+    and both export variants exercised over HTTP on a host build and
+    the panel's Logs tab driven in a browser (levels table, viewer,
+    follow, export). **Bench, on the flashed image:**
+    - boot: `S19forgefirm-logging` ran (`/data/forgefirm/rsyslog-forgefirm.conf`
+      present, `/var/run/forgefirm-loglevels` present, six directories
+      under `/data/log/forgefirm`), `rsyslogd` up and no busybox
+      `syslogd`/`klogd`; `/var/log/messages` gone (nothing writes it);
+      the legacy files moved to `/data/forgefirm/legacy-logs/` and
+      `/data/forgectrl.log`, `/data/gfcloud.log`, `/data/log/gfcloud`,
+      `/data/log/gfhome` no longer exist; the factory's
+      `/data/glowforge.log*` untouched and no longer growing.
+    - routing: forgectrl lines in `forgectrl/forgectrl.log`, the grbl
+      controller's in `grblhal/grblhal.log` (a `$H` shows the gfhome
+      lines in `gfhome/gfhome.log`), kernel `glowforge_cnc` lines in
+      `kernel/kernel.log` with correlated RFC 3339 timestamps, sshd in
+      `system/system.log`; a mode switch to cloud puts gfcloud's lines
+      in `gfcloud/gfcloud.log` and a deliberate Python traceback (or a
+      `print`) shows up there via the relay tagged `gfcloud`.
+    - levels: set `grblhal` disk to `debug` in the panel → the pending
+      marker and banner appear; after reboot the per-run
+      `gfstream: run:` stats appear; set it to `warning` → they stop;
+      `off` → the file stops growing. Remote: point `syslog_server` at a
+      LAN host running `nc -ul 514` (or rsyslog), one logger's remote
+      level `info`, reboot → RFC 5424 lines arrive; unplug the host →
+      the machine keeps cutting/logging locally, nothing stalls
+      (per-action queue discards).
+    - rotation: `logger -t grblhal` a 3 MB burst (or a debug-level
+      session) → the hourly/boot logrotate produces `grblhal.log.1.gz`
+      and the live file keeps receiving lines (HUP reopen).
+    - export: download both bundle variants from the panel; the
+      sanitized `README.txt` lists redactions and no bundle file
+      contains the machine's serial, `XXX-YYY` hostname, WiFi SSID, or
+      a LAN IP (`grep` the extracted tree); the unsanitized one does.
+      Staging under `/data/forgefirm/tmp/` is empty afterwards.
+    - RT: a debug-level GRBL session with LightBurn streaming — producer
+      stats `clamped 0`, no underrun (fflog is non-blocking; nothing
+      logs from the shipper).
+    - `/etc/init.d/forgectrl stop`/`start` — the fifo relay comes and
+      goes with the wrapper; a forced daemon crash logs the wrapper's
+      `exited (N) - respawning in 5 s` line under `forgectrl`.
