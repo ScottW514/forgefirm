@@ -11,11 +11,13 @@ SoC's own pins, with no kernel change and no scope:
 
 The sampler arms rising-edge detection for GPIO3 pin 24 only (ICR2 bits
 17:16), clears that pin's sticky ISR flag, then polls ISR bit 24 and the two
-readback pads in a tight loop, restoring ICR2 on exit. GPIO3 IMR bit 24 must
-be clear (nothing has an interrupt on that pin; the run refuses otherwise),
-so the kernel never sees the flag. Reads and writes go through /dev/mem;
-the CHG_PUMP pad has SION set in the device tree, so its pad state is
-visible.
+readback pads in a loop with a ~100 us sleep per pass, restoring ICR2 on
+exit. GPIO3 IMR bit 24 must be clear (nothing has an interrupt on that pin;
+the run refuses otherwise), so the kernel never sees the flag. Reads and
+writes go through /dev/mem; the CHG_PUMP pad has SION set in the device
+tree, so its pad state is visible. The loop must not hog the CPU: only the
+controller's shipper thread is SCHED_FIFO, its protocol/producer thread is
+SCHED_OTHER, and a busy loop starves it so a run never ends.
 
 Every run of the pulse engine (a jog is enough) primes the pump once and
 then feeds it every 200 ms while `state == running`; when the run ends the
@@ -26,9 +28,9 @@ count and period. Resolution = the loop period (tens of microseconds; the
 worst gap is printed).
 
 Usage: cp_watchdog_timing.py [seconds] [jog ...]
-  default: 16 s, jogs "$J=G91 X5 F300" "$J=G91 X-5 F300" x2 (out and back
-  twice, 5 mm, head ends where it started), sent to the local grblHAL on
-  127.0.0.1:23 at t = 2, 4.6, 7.2, 9.8 s. Pass "-" as the only jog to sample
+  default: 14 s, jogs "$J=G91 X5 F300" "$J=G91 X-5 F300" (out and back,
+  5 mm, head ends where it started), sent to the local grblHAL on
+  127.0.0.1:23 at t = 2 s and 6 s. Pass "-" as the only jog to sample
   without commanding motion (drive the runs yourself).
 Motion only, laser locked; needs the GRBL controller idle with no other
 Grbl client attached (a connection here displaces the sender).
@@ -39,13 +41,14 @@ GPIO1, GPIO3, GPIO4 = 0x0209C000, 0x020A4000, 0x020A8000
 PSR, ICR2, IMR, ISR = 0x08, 0x10, 0x14, 0x18
 PULSE_PIN = 24            # GPIO3_24 CHG_PUMP
 NQ_BIT, NHV_BIT = 8, 6    # GPIO1_08 !Q, GPIO4_06 !HV_ENABLE
-JOG_T0, JOG_DT = 2.0, 2.6
+JOG_T0, JOG_DT = 2.0, 4.0
+SLEEP_S = 0.0001
 
-DEFAULT_JOGS = ['$J=G91 X5 F300', '$J=G91 X-5 F300'] * 2
+DEFAULT_JOGS = ['$J=G91 X5 F300', '$J=G91 X-5 F300']
 
 
 def main():
-    dur = float(sys.argv[1]) if len(sys.argv) > 1 else 16.0
+    dur = float(sys.argv[1]) if len(sys.argv) > 1 else 14.0
     jogs = sys.argv[2:] if len(sys.argv) > 2 else DEFAULT_JOGS
     if jogs == ['-']:
         jogs = []
@@ -66,10 +69,13 @@ def main():
     if rd(g3, IMR) & (1 << PULSE_PIN):
         print('ABORT: GPIO3 IMR bit %d is set - something has an interrupt on the pump pin' % PULSE_PIN)
         return 2
-    try:
-        os.nice(-20)
-    except OSError:
-        pass
+
+    def cnc_state():
+        try:
+            with open('/sys/glowforge/cnc/state') as f:
+                return f.read().strip()
+        except OSError:
+            return '?'
 
     sock = None
     if jogs:
@@ -109,6 +115,7 @@ def main():
             if nq != nq_prev:
                 events.append((t, '!Q->%d' % nq))
                 nq_prev = nq
+                events.append((time.monotonic_ns(), 'cnc/state=' + cnc_state()))
             if nhv != nhv_prev:
                 events.append((t, '!HV->%d' % nhv))
                 nhv_prev = nhv
@@ -123,6 +130,7 @@ def main():
                 sent += 1
             if t > tend:
                 break
+            time.sleep(SLEEP_S)
     finally:
         wr(g3, ICR2, icr2_orig)
         wr(g3, ISR, 1 << PULSE_PIN)
