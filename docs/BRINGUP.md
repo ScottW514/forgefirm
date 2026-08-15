@@ -285,9 +285,31 @@ found and fixed: `auth.c` read `X-ForgeFIRM-Token`/`Host`/`Origin`/
 `Sec-Fetch-Site` case-sensitively (a title-casing client was refused);
 now `u_map_get_case`. Bench tooling for the session is committed
 (`scripts/bench/platform_drills.py`, `live_fire_drills.py` `ircut` /
-`expstop` / `ctrlstart`). Session rules, now standing: one live-laser run
-per turn with the operator's confirmation before the next; only
-observations, never inferences, in live-fire reporting.
+`expstop` / `ctrlstart`, `fdscan.sh`). Session rules, now standing: one
+live-laser run per turn with the operator's confirmation before the next;
+only observations, never inferences, in live-fire reporting.
+**Dry drills the same session, all PASS on the board:** decay/microstep
+readback per axis (every value reads back, out-of-range `3` refused
+`EINVAL`); dead-man trip readback (closing the flock'd fd mid-run →
+`closed while locked and driver is running! Emergency stop`, `pic`/`head`/
+`thermal: making safe`; heater and TEC off, measure laser, UV LED and Z
+driver off, pump/exhaust/intake/air-assist **unchanged**); three
+`rmmod`/`modprobe` cycles with a thread reading state/position/faults/
+hall_sensor throughout (6618 reads served, 14162 refused while unloaded,
+no oops/BUG/WARNING); the LED sequence ran (bright/dark/pulse/restore);
+the module's probe lines read `EPIT clock 66000000 Hz` and `SDMA channel
+26 reserved for pulse playback (script at halfword 7680)` with no bank
+warnings; forgectrl's helper children (`curl` during `/update/check`, the
+snapshot path) never hold a pulse-device descriptor — only the controller
+does; a `$H` gfcloud homing session completed in 56 s with 7 accelerometer
+motion windows above the 500-count threshold at the ~100 Hz sampler
+(anchor written, `H:1`); a kernel panic (`sysrq c`) mid-move stopped
+motion instantly (operator-witnessed) and the board rebooted on `panic=10`
+into a healthy state (liveness MOTION OK, controller running, latch
+commanded locked). Observed once, cause not established: after the three
+module reloads the first liveness probe read NO MOTION (p2p 343/241); the
+ladder's rail-off/re-probe recovered it (p2p 3466/2163) — a module reload
+resets the analog configuration, and the ladder exists for this.
 
 **Phase 11 (licensing, legal, and documentation hygiene — the last
 phase) is code-complete and host-verified, 2026-08-15.** Licensing:
@@ -2264,34 +2286,29 @@ accordingly ("Automatic — AP country, else World").
       trip before calling the gate proven, and measure an actual flame
       signature (a tea light in the closed bed, machine idle) so the 15
       is anchored on both sides.
-    - **Kernel platform-hygiene batch (item 9), on the flashed image:**
-      panic mid-motion with motors locked and the laser latched (motion
-      stops, safety lines read safe); decay mode set/readback per axis;
-      LED behavior and a clean module unload; the two new probe lines in
-      dmesg with no bank warnings; a dead-man trip with the head
-      registers read back (measure laser off, UV LED off, lens motor
-      de-energized). Plus the Phase 8 trio: load/unload under
-      `CONFIG_DEBUG_MUTEXES` (needs a debug kernel build), a forced
-      `-EPROBE_DEFER` unwind, and a concurrent `cat` of a state attr
-      during `rmmod`.
-    - **Dead-man collateral:** a kernel dead-man trip leaves the pump and
-      airflow running (heat sources only go off); kill forgectrl during
-      an update download (no pinned device, no EBUSY respawn storm).
-      ~~Re-run the armed kill drill on the *expected*-stop path~~ —
-      **DONE 2026-08-15**: it failed first (5 s of continued fire), the
-      defect is fixed on both sides, and the re-run passed (see the
-      session record above).
+    - ~~**Kernel platform-hygiene batch (item 9), on the flashed
+      image**~~ — **DONE 2026-08-15** (panic mid-motion, decay/microstep
+      readback, LED sequence + clean unload, probe lines, dead-man head
+      readback, concurrent `cat` during `rmmod` — session record above).
+      Still needing a debug kernel build: load/unload under
+      `CONFIG_DEBUG_MUTEXES` and a forced `-EPROBE_DEFER` unwind.
+    - ~~**Dead-man collateral**~~ — **DONE 2026-08-15**: the trip leaves
+      pump and airflow running (readback drill); helper children never
+      hold the pulse device (fd-scan during `/update/check` + snapshot);
+      the armed kill on the *expected*-stop path failed first (5 s of
+      continued fire), the defect is fixed on both sides, and the re-run
+      passed. The literal "kill forgectrl mid-download" variant needs a
+      published `.fw` to download and was covered by the fd-scan instead.
     - **Physical-evidence negatives:** force a head I²C error and confirm
       the witnesses report an error, not a plausible value; confirm a
       failed head capture leaves the measure laser off.
     - **Cloud mode:** the C-1 cancel-with-a-rejected-settings-action
       drill (cancel must stop the cut); malformed-frame and DNS-blip
       injections against a live session; the oversize/bad-header job
-      rejected before the ring loads (tracked in `CLOUD.md`); re-verify
-      the homing accelerometer motion-window counts against the
-      characterized thresholds at the next live homing (the witness now
-      samples at ~100 Hz); confirm a real print header's fan duties
-      round-trip to the engine (item 8).
+      rejected before the ring loads (tracked in `CLOUD.md`); ~~re-verify
+      the homing accelerometer motion-window counts~~ **DONE 2026-08-15**
+      (7 windows ≥ 500 at the ~100 Hz sampler on a real `$H`); confirm a
+      real print header's fan duties round-trip to the engine (item 8).
     - **Opportunistic:** `STATE_FAULT` recovery via `enable` without a
       module reload the next time a DRV8825 fault line actually trips.
     - **Config-dependent, deliberately not gated:** an armed GRBL job
