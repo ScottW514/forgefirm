@@ -3,6 +3,9 @@
 # python3-gfhardware repository.
 HOMEPAGE = "https://github.com/ScottW514/python3-gfhardware"
 
+# These packages ship only the Python apps under forgefirm-app/, all MIT. The
+# repository's LGPL component (the Bayer decoder compiled into
+# gfhardware._cam) is not part of them; python3-gfhardware declares it.
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://LICENSE;md5=62f8bb455fcc4bf177ecab380f71cd5d"
 

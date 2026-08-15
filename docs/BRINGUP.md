@@ -23,10 +23,12 @@ on the Phase 11 pins** — the first image whose license manifest declares
 (root locked, no watchdog daemon, K80/K90 order, `glowforge.ko` and both
 controller binaries present) and the buildpaths QA warning gone (the shipped
 grblHAL `--version` flags string carries no host paths). Its only build
-warning is a stamp-taint note from an earlier forced `do_compile`. Not yet
-flashed: the bench runs `20260814223300` plus the hot-installed Phase 11
-binaries, which is functionally the same userspace; flash this one when the
-next kernel/BSP change lands or before publishing.
+warning is a stamp-taint note from an earlier forced `do_compile`. **Flashed
+on the bench by the operator 2026-08-15** — the board now runs the pinned
+Phase 11 userspace from the image rather than hot-installed binaries. With
+that, the audit's working files (the findings list, the remediation plan)
+are retired: every finding is fixed, every deliberate leftover lives in
+"Next work" below, and this runbook is the record.
 
 **Bench campaign — opened 2026-08-14; image `20260814223300` flashed and
 booted.** Post-flash health check passes on the board: it reports
@@ -2098,7 +2100,7 @@ accordingly ("Automatic — AP country, else World").
      definition for both), so what remains is folding the tools into
      the engine as modes and retiring the suspend/resume dance.
    - **Rail policy** (SERVICES.md "Pulse-device ownership", the one
-     `[contract, pending]` item left). `cnc/enable` / `cnc/disable`
+     `[contract]` item left there). `cnc/enable` / `cnc/disable`
      are not forgectrl-only writes yet: under the broker no client
      drops the rail any more, but the GRBL driver still writes
      `cnc/enable` at init and at homing resume — idempotent, since the
@@ -2106,6 +2108,21 @@ accordingly ("Automatic — AP country, else World").
      bounce source. (An idle-rail-off policy is not part of this: the
      rail stays up while the machine is on, per the wedge model in the
      facts bank.)
+   - **Busy-state arbitration under one lock.** forgectrl's idle/busy
+     gates (`POST /settings`, `/mode`, diagnostics start, upload/apply)
+     each cross-check `machine_is_idle()` and `update_job_running()` at
+     their own call sites. They fail closed and are drilled, but a
+     single arbiter (one lock, one "who owns the machine right now"
+     answer) would replace N targeted checks with one and close the
+     remaining request-interleaving windows by construction.
+   - **HTTP surface caps.** The daemon relies on MHD's default connection
+     ceiling (a 500-connection flood plateaued at 379 fds under the raised
+     4096 `RLIMIT_NOFILE`, no crash, `cnc/state` readable throughout).
+     An explicit `MHD_OPTION_CONNECTION_LIMIT` plus a per-IP cap is the
+     right hardening, and the camera `ensure_engine` `popen()`s should
+     move out of the HTTP callback so a slow media-ctl can never stall the
+     request thread. Changing the MHD start flags touches the streaming
+     model, so this waits for a bench slot of its own.
    - **Cloud per-job fan profile.** The cloud client passes the pulse
      header's `AArd`/`EFrd`/`IFrd` duties to the engine as the per-job
      run profile. Homing headers are verified end to end (they carry
