@@ -17,7 +17,7 @@ SRC_URI += "file://grblhal.init"
 
 S = "${WORKDIR}/git"
 
-inherit cmake update-rc.d
+inherit cmake update-rc.d forgefirm-manifest
 
 INITSCRIPT_NAME = "grblhal"
 # stop 80 < forgectrl's 90: at runlevel 0/6 the controller goes down

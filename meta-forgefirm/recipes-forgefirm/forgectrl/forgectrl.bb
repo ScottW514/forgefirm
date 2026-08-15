@@ -13,7 +13,7 @@ SRCREV = "b4e01c5b24c75d09d6784c690d1c10654bc46da3"
 
 S = "${WORKDIR}/git"
 
-inherit cmake update-rc.d
+inherit cmake update-rc.d forgefirm-manifest
 
 DEPENDS += "ulfius jpeg"
 # media-ctl / v4l2-ctl configure the imx-media pipeline at runtime;

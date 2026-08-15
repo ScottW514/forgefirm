@@ -1,5 +1,9 @@
 require recipes-glowforge/images/glowforge-image.bb
 
+# /etc/forgefirm-manifest.json: the build-input identity the acceptance tool
+# and the release gate compare (forgefirm-image-manifest.bbclass).
+inherit forgefirm-image-manifest
+
 DESCRIPTION = "OpenGlow/ForgeFIRM image for Glowforge"
 
 # ForgeFIRM cuts the cloud dependency: drop the Glowforge cloud client

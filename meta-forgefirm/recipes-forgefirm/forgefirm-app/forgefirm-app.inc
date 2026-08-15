@@ -19,3 +19,8 @@ SRCREV = "a0a174d8e9a6b4b6e3abe63acc51018199df4202"
 PV = "0.1.6+git"
 
 S = "${WORKDIR}/git"
+
+# One image-manifest component for the three app recipes (same repository,
+# same pinned revision): the entries merge in the image manifest.
+inherit forgefirm-manifest
+FORGEFIRM_MANIFEST_NAME = "forgefirm-app"
