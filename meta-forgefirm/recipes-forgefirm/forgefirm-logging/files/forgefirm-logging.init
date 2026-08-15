@@ -22,10 +22,25 @@ CONF=/etc/logrotate.conf
 PIDFILE=/var/run/forgefirm-logging.pid
 LEGACY=/data/forgefirm/legacy-logs
 
+RULES=/data/forgefirm/rsyslog-forgefirm.conf
+
 render() {
-    [ -x "$FORGECTRL" ] || return 0
     # syslog is not up yet at this point: report to the console
-    "$FORGECTRL" --render-syslog || echo "forgefirm-logging: render-syslog failed"
+    if [ -x "$FORGECTRL" ]; then
+        "$FORGECTRL" --render-syslog || echo "forgefirm-logging: render-syslog failed"
+    fi
+    [ -s "$RULES" ] && return 0
+    # No rules (render failed, or a first boot without the daemon):
+    # keep everything on disk under system/, info and above, so the
+    # boot is not lost. Replaced by the real render at the next boot.
+    echo "forgefirm-logging: writing default rules to $RULES"
+    mkdir -p /data/forgefirm /data/log/forgefirm/system
+    cat > "$RULES" <<'EOF'
+# DEFAULT rules - forgectrl --render-syslog did not run; everything to
+# system/ at info and above. Rewritten at the next boot.
+if $syslogseverity <= 6 then action(type="omfile" file="/data/log/forgefirm/system/system.log" template="ff_line" asyncWriting="on" flushOnTXEnd="off" flushInterval="1" fileCreateMode="0640" dirCreateMode="0755" createDirs="on")
+stop
+EOF
 }
 
 # Files written by ForgeFIRM before it logged through syslog. Moved, not
