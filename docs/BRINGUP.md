@@ -323,6 +323,24 @@ commanded locked). Observed once, cause not established: after the three
 module reloads the first liveness probe read NO MOTION (p2p 343/241); the
 ladder's rail-off/re-probe recovered it (p2p 3466/2163) — a module reload
 resets the analog configuration, and the ladder exists for this.
+**Head-absent negatives (head unplugged, machine powered up):** the head
+driver fails probe (`head not detected`) and the whole `head/` sysfs
+group is absent, so every head attribute reads as missing rather than
+as a number; neither the daemon nor the controller logs anything
+repetitive with the head gone; the liveness probe skips (`head
+accelerometer not found`) and the controller starts. Three findings,
+fixed and re-proven the same session: `/status switches.head` was EV_SW
+bit 7 raw (reads `true` with the head unplugged) — now real presence
+(the head group exists) and it read `false`; `/mode` said `motion:
+"verified"` after a probe that could not run — now `"unverified"`
+(forgectrl `73eda9a`); and **nothing gated arming on
+head presence** — the GRBL controller now refuses the first laser-on
+of a job when the head group is absent, before the latch unlocks and
+before the button lights (grblHAL `91807a2`, "laser fire blocked: no head
+detected" + `ALARM:3`, operator-witnessed: the button stayed dark).
+The K-11 runtime-I²C-error case (a present head answering badly) and
+the C-3 failed-head-capture case are not reachable with the head
+unplugged and stay open.
 
 **Phase 11 (licensing, legal, and documentation hygiene — the last
 phase) is code-complete and host-verified, 2026-08-15.** Licensing:
@@ -2314,9 +2332,12 @@ accordingly ("Automatic — AP country, else World").
       continued fire), the defect is fixed on both sides, and the re-run
       passed. The literal "kill forgectrl mid-download" variant needs a
       published `.fw` to download and was covered by the fd-scan instead.
-    - **Physical-evidence negatives:** force a head I²C error and confirm
-      the witnesses report an error, not a plausible value; confirm a
-      failed head capture leaves the measure laser off.
+    - **Physical-evidence negatives:** ~~head absent at power-up~~ **DONE
+      2026-08-15** (head group absent → no readings, arm refused, presence
+      and motion labels fixed). Still open: a present head answering I²C
+      badly (the K-11 runtime case) and a failed head capture leaving the
+      measure laser off — both need the head connected and a fault
+      injected.
     - **Cloud mode:** the C-1 cancel-with-a-rejected-settings-action
       drill (cancel must stop the cut); malformed-frame and DNS-blip
       injections against a live session; the oversize/bad-header job
