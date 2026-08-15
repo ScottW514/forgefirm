@@ -1394,6 +1394,13 @@ accordingly ("Automatic — AP country, else World").
   devices in this kernel).
 - **Any probe/liveness move goes RIGHT (+X) first, then back**: a cable
   lives at the end of LEFT travel and must never be crushed.
+- **WL1805 Wi-Fi rides uSDHC1** (mmc0, 4-bit, SD-high-speed at 49.5 MHz,
+  `no-1-8-v`; IRQ GPIO6_04, WLAN_EN GPIO5_26). Factory pad control, now
+  ours too: CMD/DATA `0x17069`, CLK `0x10069` (SPEED_MED, DSE 48 Ω, fast
+  slew, HYS; 47 kΩ pull-up on CMD/DATA only). eMMC (uSDHC3) and the SD
+  slot (uSDHC2) use `0x17059`/`0x10059` (80 Ω), SD2_DAT3 `0x13059`. An
+  SDIO CRC error surfaces as `sdio write failed (-84)` and costs ~1 s of
+  Wi-Fi (wlcore firmware recovery) — see Next work item 13.
 
 - SDMA pulse engine: ring size = the `ring_mb` module parameter
   (default 16 MiB; power of two, must fit the 16 MiB `cnc-pulsebuf` DT
@@ -2346,9 +2353,16 @@ accordingly ("Automatic — AP country, else World").
      `SW_HV_ENABLE`, and the standard built-image checks pass (root locked,
      no watchdog daemon, K80/K90 order, `glowforge.ko` in `extras/`); the
      only build warning is the usual forced-`do_compile` taint note.
-     **Flash pending (operator).** **Bench, after the flash:** `/status`
-     shows `hv_enable:false` at idle, `true` during a jog, back to `false`
-     ≈0.45 s after the run ends, in lockstep with `charge_pump_alive`.
+     **Flashed and BENCH-VALIDATED 2026-08-15 (operator flashed; image
+     reports `20260815162923 (dev)`, `/proc/device-tree/switches/hv_enable`
+     present):** with `/status` and `cnc/charge_pump_alive` sampled together
+     at ~10 Hz on the board through a 5 mm X jog (`$J=G91 X-5 F300`, no
+     Grbl client attached, laser locked): `hv_enable:false` / pump 0 at
+     idle; `true` / 1 in the same sample the state went `running`; still
+     `true` / 1 in the first `idle` sample after the run; pump 0 ≈0.4 s
+     after that idle sample with `hv_enable` false in the next sample
+     (89 ms later); the head returned to `MPos 0.000`. The switch reads as
+     HV_ENABLE itself, in lockstep with the watchdog readback.
    - **GATE A kernel fixes added to the same flash (2026-08-14):**
      the controlled-deceleration ramp now floors at the minimum step
      frequency with a saturating decrement, and `epit_hz_to_divisor()`
@@ -2495,3 +2509,35 @@ accordingly ("Automatic — AP country, else World").
     Resume path, Start-with-lid-open, or the sender's own handling of the
     `Door` state, and what the controller reports at each step. Until
     then the door change stands as partially validated (item 4).
+13. **uSDHC pad strength brought to the factory values (DTS change
+    2026-08-15, bench validation pending — ships with the next full image
+    flash, per the batched kernel/BSP rule).** Trigger: one
+    `wl1271_sdio mmc0:0001:2: sdio write failed (-84)` (`-EILSEQ` = SDIO
+    bus CRC error) on the WL1805 Wi-Fi bus at 49.5 MHz SD-high-speed,
+    followed by wlcore's designed hardware recovery (firmware reboot +
+    reassociation, ~1.0 s of Wi-Fi outage) and one `ipu1_csi0: NFB4EOF`
+    160 ms later (a consequence of the recovery/WARN console burst, not a
+    co-cause). It happened at idle, 1.7 s after a kernel run ended and
+    ~2 s after a button press — no motion, no fire, HV_ENABLE already
+    down — so nothing points at laser or stepper EMI. Rate observed:
+    1 event in 49 min of uptime. Effect if it lands mid-job: a 1–2 s
+    sender stall (planner drains, head pauses; laser off in M4 mode) —
+    a cut-quality nuisance, never a safety matter (nothing safety-relevant
+    crosses Wi-Fi). Finding: `glowforge.dts` drove all three uSDHC
+    controllers with `0x17019` (SPEED_LOW, DSE 80 Ω, 47 kΩ pull-up on
+    CLK too), while the factory DTB uses `0x17069`/`0x10069` (SPEED_MED,
+    DSE 48 Ω; no pull on CLK) for the Wi-Fi bus and `0x17059`/`0x10059`
+    (80 Ω) for eMMC and SD (SD2_DAT3 `0x13059`) — softer edges than the
+    factory at the same 50 MHz clock. `openglow_common.dtsi` now carries
+    the four factory-exact values (`USDHC_PAD_CTRL`, `USDHC_CLK_PAD_CTRL`,
+    `USDHC_SDIO_PAD_CTRL`, `USDHC_SDIO_CLK_PAD_CTRL`) and the compiled
+    `fsl,pins` tuples were checked byte-identical to the factory DTB's
+    `glowforge_usdhc1/2` and `usdhc3grp`. **Bench:** on the next image
+    confirm `pinconf-pins` reads `0x17069`/`0x10069` on SD1, eMMC and
+    Wi-Fi come up, then watch `dmesg | grep -c "sdio .* failed"` across
+    sessions (baseline: 1 per ~49 min). Only if it still recurs, cap
+    the bus with `max-frequency = <25000000>` on `&usdhc1` (halves Wi-Fi
+    throughput — last resort; the factory ran 50 MHz on these pads). The
+    `WARNING … wlcore/main.c:874 wl12xx_queue_recovery_work` block that
+    accompanies the event is upstream noise (an "unintended recovery"
+    `WARN_ON`), not a crash — the `-84` line is the signal to watch.
