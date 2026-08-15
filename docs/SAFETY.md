@@ -269,12 +269,7 @@ kernel readbacks (the runbook `BRINGUP.md` holds the drill records):
 ## 5. Not yet established
 
 Present gaps in the hardware picture. None of them changes the safety
-argument (every gap is on the readback/sense side or is a "which part" question),
-but each is worth closing:
+argument (every gap is on the readback/sense side or is a "which part"
+question), but each is worth closing:
 
-- **`hv_enable` toggles seen inside motion windows** are run boundaries:
-  `hv_enable` follows the watchdog exactly (active from the first pulse of a
-  run, inactive 0.45 s after its last), and homing and jogs are several
-  short runs. A feed late by more than ≈254 ms would look the same and has
-  not been observed.
 - **`laser_pgood` (HV_OK, J1_14) semantics** are not fully characterized.
