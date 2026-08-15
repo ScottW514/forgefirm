@@ -14,9 +14,9 @@ and `K80grblhal`/`K80gfcloud` ahead of `K90forgectrl` at runlevel 6;
 the kernel config carries `CONFIG_IMX2_WDT`, `CONFIG_PANIC_ON_OOPS`,
 and `CONFIG_PREEMPT`; the DTB fallback bootargs is console-only;
 `glowforge.ko` (the full hardening batch) is in `/lib/modules`. The
-Phase 11 sweep (below) is host-verified and pinned; its controller and
-daemon halves are hot-deployable, its kernel half is doc/SPDX-only, and
-its recipe half (license declarations, pins) rides the next image build.
+Phase 11 sweep (below) is host-verified, pinned, and its controller and
+daemon halves are installed on the bench; its kernel half is doc/SPDX-only,
+and its recipe half (license declarations, pins) rides the next image build.
 
 **Bench campaign — opened 2026-08-14; image `20260814223300` flashed and
 booted.** Post-flash health check passes on the board: it reports
@@ -304,13 +304,9 @@ out of every tracked file, and the doc-nit bundle (dual-boot wording,
 the bench README tool list, the panel's System tab) is closed. Pins:
 forgectrl `ed2934b`, grblHAL `da4c8eb`, kernel module `1862ad3`,
 gfhardware `6c7534a`, gfutilities `6d309ae` — all pushed, bumped, and
-`bitbake -c fetch`-verified. **Bench:** the new controller and daemon
-binaries are built for the board and staged in its `/tmp`; installing them
-(mv over `/usr/bin/grblHAL_glowforge` + kill the controller for the
-respawn; mv over `/usr/bin/forgectrl` + `/etc/init.d/forgectrl restart`
-while idle) and confirming the GRBL-tab tunables round-trip through the
-panel is the one Phase 11 item that still wants an operator at the
-machine.
+`bitbake -c fetch`-verified. **Bench (operator, 2026-08-15): the new
+controller and daemon binaries are installed on the board and the
+settings file is confirmed 0600** — Phase 11 has no open items.
 
 **Phase 10 (tests & CI) is code-complete; the safety rules are now
 machine-enforced.** The grblHAL controller repo's CI builds the
