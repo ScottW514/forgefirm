@@ -263,9 +263,18 @@ worst cut rise, at the ~15-count floor); it is a hand-edited
 `/data/forgefirm.conf` key, **set on the bench 2026-08-15** (verified
 present, file 0600), and takes effect at the next run start — the fire
 watch is armed from here on and the next real jobs are the false-trip
-watch. A
-flame-signature measurement (tea light in the closed bed, idle) was not
-made; the gate stands on the cut data alone until one is. **Armed kill on
+watch. **Flame
+signature, measured the same day (machine idle):** a small candle burning
+on the bed under the closed lid read `38–41 / 38–41 / 42–45 / 42–45`
+against a lid-open level of `36 / 35 / 38 / 39` and a lid-closed-empty
+control of `34–37 / 34–36 / 36–39 / 37–40` — closing the lid changes
+nothing, the candle is **+3 to +6 counts on all four channels** for as
+long as it burns. That is the same size as a full-power cut's rise, so a
+threshold cannot separate a candle-sized flame from cutting and the
+15-count gate will not react to a flame that small; what a material fire
+of a size worth stopping for produces is unmeasured. The gate is kept
+(it costs nothing on normal cuts and catches anything large), and the
+lid-IR channels are recorded as a weak fire signal on this hardware. **Armed kill on
 the expected-stop path — first run FAILED, defect fixed, re-run PASS.**
 With emission live, `POST /controller/stop` returned only after 5.30 s
 and the operator saw ~17 mm / ~5 s of continued cutting before a
@@ -2287,9 +2296,11 @@ accordingly ("Automatic — AP country, else World").
       2026-08-15** (three cutting-power jobs, worst rise +6 counts,
       `cool_fire_ir_delta = 15` set by hand in `/data/forgefirm.conf`).
       Still open from it: watch the next several real jobs for a false
-      trip before calling the gate proven, and measure an actual flame
-      signature (a tea light in the closed bed, machine idle) so the 15
-      is anchored on both sides.
+      trip. The flame signature is measured (candle: +3 to +6 counts,
+      indistinguishable from a cut) — the gate cannot catch a small
+      flame; only a large one. A better fire signal (the head camera,
+      or a real IR flame sensor) is the honest next step if fire
+      detection is to mean more than that.
     - ~~**Kernel platform-hygiene batch (item 9), on the flashed
       image**~~ — **DONE 2026-08-15** (panic mid-motion, decay/microstep
       readback, LED sequence + clean unload, probe lines, dead-man head
