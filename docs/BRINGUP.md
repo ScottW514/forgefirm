@@ -174,7 +174,9 @@ and would have moved the gantry with it open. Fixed in forgectrl
 `424f185`, hot-deployed; the probe then ran for real and behaved as
 designed — a gray-zone first read (head-accel p2p x=455, below the ≥500
 threshold) was retried rather than false-passed, and the retry returned
-MOTION OK (p2p x=3919, y=1636).
+MOTION OK (p2p x=3919, y=1636). The forgectrl pin is bumped to
+`424f185` (fetch-verified) so the fix also rides the next image, not
+only the hot-deploy.
 
 **Deferred (fiddly or config-dependent, not blocking):** G-4 (arm
 re-checks the coolant fire gate after the button wait) wants the pump
