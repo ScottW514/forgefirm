@@ -2703,28 +2703,48 @@ motion, cooling, camera, cloud, then the live tests from the page.
       unreachable (the rendered rules end in `stop`) — the default rules
       now come from the init script when the render leaves none
       (forgefirm 7487f90, next image).
-    - levels: set `grblhal` disk to `debug` in the panel → the pending
-      marker and banner appear; after reboot the per-run
-      `gfstream: run:` stats appear; set it to `warning` → they stop;
-      `off` → the file stops growing. Remote: point `syslog_server` at a
-      LAN host running `nc -ul 514` (or rsyslog), one logger's remote
-      level `info`, reboot → RFC 5424 lines arrive; unplug the host →
-      the machine keeps cutting/logging locally, nothing stalls
-      (per-action queue discards).
-    - rotation: `logger -t grblhal` a 3 MB burst (or a debug-level
-      session) → the hourly/boot logrotate produces `grblhal.log.1.gz`
-      and the live file keeps receiving lines (HUP reopen).
-    - export: download both bundle variants from the panel; the
-      sanitized `README.txt` lists redactions and no bundle file
-      contains the machine's serial, `XXX-YYY` hostname, WiFi SSID, or
-      a LAN IP (`grep` the extracted tree); the unsanitized one does.
-      Staging under `/data/forgefirm/tmp/` is empty afterwards.
-    - RT: a debug-level GRBL session with LightBurn streaming — producer
-      stats `clamped 0`, no underrun (fflog is non-blocking; nothing
-      logs from the shipper).
-    - `/etc/init.d/forgectrl stop`/`start` — the fifo relay comes and
-      goes with the wrapper; a forced daemon crash logs the wrapper's
-      `exited (N) - respawning in 5 s` line under `forgectrl`.
+    - ~~levels~~ **DONE 2026-08-15** (three reboots): `forgectrl`/`grblhal`
+      → `debug`: `pending_reboot:true` before, effective after; the per-run
+      `gfstream: run:` DEBUG stats appear on jogs; `forgectrl` → `warning`
+      + `grblhal` → `off`: the new boot wrote zero NOTICE/INFO forgectrl
+      lines and kept a WARNING probe, grblhal wrote nothing even for an
+      `err` probe, kernel/system unaffected; defaults restored and
+      re-verified. ~~Remote~~ **DONE 2026-08-15 against a listener on the
+      board itself** (`127.0.0.1:5514`, UDP — the workstation's firewall
+      drops unsolicited inbound UDP and was left alone): RFC 5424 lines
+      arrive (`<31>1 … glowforge grblhal - - - …`), filtered exactly per
+      logger (grblhal debug + forgectrl info forwarded; forgectrl debug
+      and gfhome err held back); the physical hop to another host is the
+      only part not exercised. Unreachable-server behavior not separately
+      drilled (UDP has none; the TCP queue discards by config).
+    - ~~rotation~~ **DONE 2026-08-15**: a 30 000-line burst (4.8 MB) into
+      `grblhal`, one `logrotate` run → `grblhal.log.1.gz` (all 30 024
+      lines), the live file recreated and receiving (rsyslogd's fd on the
+      new inode). The imuxsock per-pid rate limit did not engage for
+      `logger` bursts (each line is a new pid) — it bounds a single
+      runaway process only, as intended.
+    - ~~export~~ **DONE 2026-08-15**: both variants downloaded over the LAN;
+      the sanitized bundle carries `<SERIAL>`, `<IP-n>`, `<MAC-n>` and no
+      LAN address, the full one has them; staging empty afterwards.
+    - ~~RT~~ **DONE 2026-08-15**, with a finding that is NOT logging: X
+      jogs (F600/F1200, ±5 mm) with `grblhal` at debug: without a camera
+      stream `max behind 0–5.8 ms, clamped 0`; with the lid stream running
+      steady, `max behind 6–19 ms, clamped 0–11` per run — and the same
+      with rsyslogd frozen (SIGSTOP) during the runs (`clamped 0/1/0/10`),
+      so the producer clamping under a live stream is the stream's CPU
+      load, not the logger (no underrun, the shipper is unaffected). The
+      2026-08-03 baseline said `clamped 0` at F1200 with a stream —
+      re-check under item 1/10 (VPU stream + cooling engine + telemetry
+      polling all landed since).
+    - ~~stop/start~~ **DONE 2026-08-15**: `kill -9` of the daemon → the
+      wrapper's `forgectrl[-] ERR exited (137) - respawning in 5 s` lands
+      through the fifo relay, the respawned daemon stood by, took over the
+      unmanaged controller, re-probed motion and restarted it; a mode
+      switch to cloud put gfcloud's lines (`ffmachine:_lid_image …`,
+      `websocket:img_upload COMPLETE`) in `gfcloud/gfcloud.log` with a
+      per-controller relay alive, and back. **Item closed** except: the
+      physical remote hop, a `$H` for the gfhome lines, and a Python
+      traceback through the relay (routing proven with `logger`).
 
 15. **Release acceptance tool (forgetest) - CODE-COMPLETE 2026-08-15,
     host- and build-verified; bench validation pending, ships with the
