@@ -2773,7 +2773,12 @@ motion, cooling, camera, cloud, then the live tests from the page.
       took 13.9 s on the target (0.95 s unsanitized) and tripped the hw
       client's 10 s default — the export call now has its own timeout
       and the sanitizer skips a pattern pass when the line cannot match
-      it (4x faster on the host; forgectrl 4d19e9d, next image).
+      it (4x faster on the host; forgectrl 4d19e9d). **Images
+      `20260815215236` (forgefirm-image, 192.7 MB rootfs) and
+      `20260815215332` (forgefirm-image-dev) are built on that pin with
+      the three logs tests in the dev image's catalog** — the next flash
+      carries the fast sanitizer, the init-script default rules, and the
+      catalog; nothing else in the logging system is pending.
 
 15. **Release acceptance tool (forgetest) - CODE-COMPLETE 2026-08-15,
     host- and build-verified; bench validation pending, ships with the
