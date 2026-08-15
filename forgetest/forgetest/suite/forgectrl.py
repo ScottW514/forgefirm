@@ -28,7 +28,8 @@ def lan_ip():
       covers=_COVERS_AUTH,
       description="Every state-changing endpoint refuses an unauthenticated write; a non-literal "
                   "Host, a non-literal Origin and a cross-site Sec-Fetch-Site are refused; the "
-                  "cooling report channel refuses a non-loopback peer; the fuse view is token-gated; "
+                  "cooling report channel refuses a non-loopback peer; the fuse view is two-factor "
+                  "(token and the physical button) and refused without either; "
                   "the flash and factory-restore chain is refused unauthenticated.")
 def auth(ctx):
     fc = ctx.forgectrl
@@ -74,14 +75,22 @@ def auth(ctx):
     st, body = fc.get("/status", headers={"Sec-Fetch-Site": "same-origin", "Origin": "http://127.0.0.1:8080"})
     ctx.check(st == 200, "same-origin literal Origin refused (%s)", st)
 
-    # the token opens the fuse view; without it, refused
+    # the fuse view is two-factor: the token AND the physical button held.
+    # Without the token: authentication refused; with the token and nobody
+    # at the button: refused with the button message. The identity itself is
+    # never fetched (it would land in this log).
     st, body = fc.get("/fuse-identity", auth=False)
     ev["fuse_noauth"] = st
-    ctx.check(st == 403, "GET /fuse-identity without token -> %s", st)
+    ctx.log("GET /fuse-identity (no token) -> %s %s", st, body if isinstance(body, dict) else "")
+    ctx.check(st == 403 and isinstance(body, dict) and body.get("error") == "authentication required",
+              "GET /fuse-identity without token -> %s %r", st, body)
     st, body = fc.get("/fuse-identity")
-    ev["fuse_auth"] = st
-    ctx.log("GET /fuse-identity with token -> %s", st)
-    ctx.check(st == 200, "GET /fuse-identity with the token -> %s", st)
+    ev["fuse_token_no_button"] = st
+    ctx.log("GET /fuse-identity (token, button not held) -> %s %s", st, body if isinstance(body, dict) else "")
+    msg = body.get("error", "") if isinstance(body, dict) else str(body)
+    ctx.check(st == 403 and "button" in msg,
+              "GET /fuse-identity with the token but no button -> %s %r (expected the two-factor refusal)",
+              st, body)
 
     # the cooling report channel: loopback only, even with a token
     ip = lan_ip()

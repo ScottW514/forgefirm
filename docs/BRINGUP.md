@@ -1443,6 +1443,25 @@ The coverage currency rule is in `CLAUDE.md`
 "Working rules". Bench validation and the bench-tab ports are Next work
 item 15.
 
+**Bench campaign opened 2026-08-15 on the flashed dev image
+`20260815194415` (manifest identity `2d69a61e…`, equal to the release
+build's).** The tool came up on `:8090` with all 24 tests required.
+Passed so far, driven through the API with the operator present:
+`image.health` (kernel options, module + 16 MiB ring, forgectrl holding
+`/dev/glowforge`, K80 controllers before K90 forgectrl, 0600 token and
+settings, 2.6 GiB free on /data), `kernel.latch-locked-idle` (interlock
+`0x2d`, FIRE 0, LASER_ON 0/0, faults 0), `forgectrl.auth`,
+`forgectrl.settings-bounds`, `forgectrl.panel-serves`,
+`logs.tree-tail-export` (sanitized bundle carries no panel token),
+`update.slots-and-signature` - 7 of 24. One finding, on the tool side:
+`forgectrl.auth` first failed because it expected `/fuse-identity` to
+answer 200 to the token alone; the endpoint is two-factor (token AND the
+physical button held) by design, so the test now asserts both refusals
+and never fetches the identity (a 200 would have put the fuse password
+in the result log). That FAIL closed the first campaign, as the rules
+say; the second campaign holds the passes. Next: the takeover drills,
+motion, cooling, camera, cloud, then the live tests from the page.
+
 ## Hardware facts bank (measured)
 
 - **DRV8825 stepper drivers wedge on 40 V rail glitches** (factory board;
