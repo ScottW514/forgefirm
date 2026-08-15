@@ -299,7 +299,8 @@ readback per axis (every value reads back, out-of-range `3` refused
 driver off, pump/exhaust/intake/air-assist **unchanged**); three
 `rmmod`/`modprobe` cycles with a thread reading state/position/faults/
 hall_sensor throughout (6618 reads served, 14162 refused while unloaded,
-no oops/BUG/WARNING); the LED sequence ran (bright/dark/pulse/restore);
+no oops/BUG/WARNING); the LED sequence (all bright / all dark / button
+pulse 300 ms / restore) behaved as commanded, operator-witnessed;
 the module's probe lines read `EPIT clock 66000000 Hz` and `SDMA channel
 26 reserved for pulse playback (script at halfword 7680)` with no bank
 warnings; forgectrl's helper children (`curl` during `/update/check`, the
