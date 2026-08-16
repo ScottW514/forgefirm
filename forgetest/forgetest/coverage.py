@@ -32,7 +32,10 @@ ALLOW = [
     ("*", "tests/**"),
     ("*", "graphify-out/**"),
     ("*", "**/.gitkeep"),
-    ("forgectrl", "tools/**"),        # the host-side mock, no target behavior
+    ("*", ".devcontainer/**"),        # editor/dev-environment setup, no target
+    ("*", ".vscode/**"),              #   behavior
+    ("*", ".env.example"),
+    ("forgectrl", "tools/**"),        # host-side dev tools (panel dev server)
 ]
 
 
