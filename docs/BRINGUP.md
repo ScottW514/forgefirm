@@ -1592,9 +1592,43 @@ the probe's own writes and the controller's init writes once. **Images
 `20260816191951` (forgefirm-image-dev) are built on that tree - forgectrl
 `c8f6558`, the day's forgetest, acceptance identity `c72448c2…` equal on
 both - and archived under `images/20260816191838/` with checksums (the
-previous pair, `215236`/`215332`, under `images/20260815215236/`). The
-confirmation campaign runs on the flashed dev image; every domain
-forgectrl does not touch inherits.**
+previous pair, `215236`/`215332`, under `images/20260815215236/`).**
+
+**2026-08-16, dev image `20260816191951` flashed: every test came up
+`domain-changed`, none inherited - the expectation above ("every domain
+forgectrl does not touch inherits") was wrong, and the tool was right.**
+The two dev-image manifests differ in exactly one platform field:
+`platform.layers.meta-forgefirm.content_sha256` (`b2d13d87…` →
+`7ef5555d…`); machine, kernel modules and DTB hashes are equal, and the
+only components that moved are forgectrl (7 files) and the dev-only
+forgetest. The only non-`.md` change in `meta-forgefirm` between the two
+builds is the one-line SRCREV bump in `forgectrl.bb` (`1d9b553`) - the
+layer is content-hashed into the platform identity, the platform is
+folded into every fingerprint, so the pin bump counted as a platform
+change and invalidated the whole catalog. Structural, not a fluke: every
+component update that ships in an image rides a pin bump in a
+content-hashed layer, so under that rule every image with any component
+change was an invalidate-all and the per-domain inheritance the contract
+promises could never hold across images (the component entry already
+carries the change file by file; the pin double-counted it). Fixed the
+same day: component pins live in `<recipe>-pin.inc` (SRCREV + the PV that
+moves with it, nothing else) and `forgefirm-image-manifest.bbclass` leaves
+`*-pin.inc` out of the layer content (`FORGEFIRM_MANIFEST_PIN_SUFFIX`),
+mirrored in `scripts/manifest-from-tree.py` and proven by
+`forgetest/tests/test_tree_manifest.py` (pin bump → hash unchanged; recipe
+body change or a pin written into the recipe → hash changed, the safe
+direction); the six component recipes (forgectrl, grblhal-glowforge,
+forgefirm-app in meta-forgefirm; kernel-module-glowforge,
+python3-gfhardware, python3-gfutilities in meta-openglow) require their
+pin files and resolve the same SRCREV/PV under bitbake. A second, smaller
+contributor stays as designed: a test's implementation hash is its suite
+module, so the day's edits to `suite/{cloud,cooling,forgectrl,kernel,
+motion}.py` alone would have re-required 16 of the 26. **Consequence for
+the bench: the fix changes the layer content itself, so the first image
+built with it is a platform change against everything recorded so far -
+that image's campaign is a full one, unavoidably; from then on a
+component pin bump re-requires only the tests covering that component.
+Run the full campaign on the first pin-file image, not on `191951`.**
 
 ## Hardware facts bank (measured)
 
@@ -2924,12 +2958,15 @@ forgectrl does not touch inherits.**
     core, FAIL/ERROR closing a campaign, implementation and component
     changes invalidating exactly their domains) behaved as specified
     across the day's closures; the baseline rule was added on the way
-    (record in "Release acceptance" above). Remaining: (a) the
-    confirmation campaign on the **flashed dev image `20260816191951`**
-    (built; `images/20260816191838/`; it carries the day's tool fixes and
-    the forgectrl changes; every domain forgectrl does not touch
-    inherits) - the tool on the bench is the tree, but a hot-patched image
-    is not the image that ships; (b) the remaining
+    (record in "Release acceptance" above). The flash of `20260816191951`
+    exposed the layer-hash over-invalidation (a component pin bump counted
+    as a platform change; fixed - pins in `<recipe>-pin.inc`, left out of
+    the layer content; record in "Release acceptance" above). Remaining:
+    (a) the confirmation campaign - a **full** one, on the **first image
+    built with the pin files** (that build is a platform change against
+    every result so far; after it, a component pin bump re-requires only
+    the tests covering that component) - the tool on the bench is the
+    tree, but a hot-patched image is not the image that ships; (b) the remaining
     bench-tab ports (scope tools, host-side flow characterization, the
     live drills - the catalog carries their acceptance forms); (c) the
     first release runs the full campaign and commits

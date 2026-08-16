@@ -53,7 +53,16 @@ Consequences:
   A panel-only change reruns the core plus the panel tests, not the
   cooling drills.
 - A platform change (kernel, device tree, a layer's content) invalidates
-  everything.
+  everything. Layer content is every file under `meta-forgefirm`,
+  `meta-glowforge-bsp` and `meta-openglow-core` except documentation
+  (`*.md`) and the component pin files (`<recipe>-pin.inc`, holding only a
+  component's `SRCREV` and the `PV` that moves with it). A pin bump is the
+  component's change, and the component entry already carries it file by
+  file, so it invalidates the tests that cover the component - not the
+  bench. A recipe-body change (build flags, patches, config fragments,
+  init scripts, a third-party pin with no manifest entry) is layer content
+  and invalidates everything; so does a pin written into a recipe body
+  instead of its pin file (the safe direction).
 - A change to a test's implementation invalidates that test's earlier
   passes and no other.
 - "Touched" is computed from content hashes carried in the image, never

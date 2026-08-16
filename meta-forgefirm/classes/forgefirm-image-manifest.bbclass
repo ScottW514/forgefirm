@@ -22,6 +22,19 @@
 # host-specific (paths, user, time) is recorded: the manifest travels in
 # a public release artifact.
 #
+# Two kinds of file are left out of a layer's content: documentation
+# (*.md) and component pin files (*FORGEFIRM_MANIFEST_PIN_SUFFIX,
+# "<recipe>-pin.inc"). A pin file holds nothing but the SRCREV (and the PV
+# that rides with it) of a component that has its own manifest entry; the
+# entry already identifies that source file by file, so hashing the pin as
+# layer content would turn every component update into a platform change
+# and invalidate every acceptance result instead of the tests that cover
+# the component. Everything else a recipe carries - build flags, patches,
+# config fragments, init scripts, the pins of third-party sources that
+# have no manifest entry - is layer content and stays in the hash. A pin
+# written into a recipe body instead of its pin file still hashes: the
+# safe direction (a full campaign, not a missed one).
+#
 # content_sha256 is the identity of the build's inputs: sha256 over the
 # canonical JSON (sorted keys, no whitespace) of {"components", "platform"}.
 # The image name, version string and the build section are metadata
@@ -30,19 +43,22 @@
 
 FORGEFIRM_MANIFEST_DIR ?= "${sysconfdir}/forgefirm-manifest.d"
 FORGEFIRM_MANIFEST_CONTENT_LAYERS ?= "meta-forgefirm meta-glowforge-bsp meta-openglow-core"
+FORGEFIRM_MANIFEST_PIN_SUFFIX ?= "-pin.inc"
 
 do_rootfs[depends] += "virtual/kernel:do_deploy kernel-module-glowforge:do_deploy"
 
 ROOTFS_POSTPROCESS_COMMAND += "forgefirm_manifest_assemble;"
 forgefirm_manifest_assemble[vardepsexclude] += "DATETIME"
 
-def forgefirm_manifest_layer_content(path):
+def forgefirm_manifest_layer_content(path, skip_suffixes=('.md',)):
+    """sha256 over (path, git blob id) of every file under the layer
+    directory except those whose name ends in one of skip_suffixes."""
     import hashlib, os, subprocess
     out = subprocess.run(['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '.'],
                          cwd=path, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True).stdout
     paths = sorted(set(p.decode('utf-8', 'replace') for p in out.split(b'\0') if p))
     paths = [p for p in paths
-             if os.path.isfile(os.path.join(path, p)) and not p.endswith('.md')]
+             if os.path.isfile(os.path.join(path, p)) and not p.endswith(tuple(skip_suffixes))]
     if not paths:
         return None
     # hash-object --stdin-paths resolves against the repository top level
@@ -68,6 +84,7 @@ def forgefirm_manifest_layers(d):
     and dirty flag of every layer checkout (informational)."""
     import os, subprocess
     content_layers = (d.getVar('FORGEFIRM_MANIFEST_CONTENT_LAYERS') or '').split()
+    skip = ('.md',) + tuple((d.getVar('FORGEFIRM_MANIFEST_PIN_SUFFIX') or '').split())
     identity, build = {}, {}
     for layer in (d.getVar('BBLAYERS') or '').split():
         name = os.path.basename(layer.rstrip('/'))
@@ -83,7 +100,7 @@ def forgefirm_manifest_layers(d):
         if name in content_layers:
             if rev is None:
                 bb.fatal("forgefirm-image-manifest: layer %s must be a git checkout to be content-hashed" % name)
-            identity[name] = {'content_sha256': forgefirm_manifest_layer_content(layer)}
+            identity[name] = {'content_sha256': forgefirm_manifest_layer_content(layer, skip)}
         else:
             identity[name] = {'rev': rev}
     return identity, build

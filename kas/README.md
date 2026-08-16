@@ -93,9 +93,15 @@ config move in the right order. The sequence, with current status:
    (`kernel-module-glowforge`, `python3-gfhardware`, `Glowforge-Utilities`,
    `grblHAL-glowforge`, `forgectrl`) is on GitHub and its recipe pins an exact
    `SRCREV` — no `AUTOREV` anywhere. Whenever a source repo changes: push it,
-   then bump the recipe `SRCREV` deliberately (BSP recipes in meta-openglow,
-   ForgeFIRM components in meta-forgefirm) and re-verify with
-   `bitbake -c fetch <recipe>`.
+   then bump the pin deliberately (BSP recipes in meta-openglow, ForgeFIRM
+   components in meta-forgefirm) and re-verify with
+   `bitbake -c fetch <recipe>`. A component's `SRCREV` (and the `PV` that
+   moves with it) lives in `<recipe>-pin.inc` next to the recipe, nothing
+   else goes in that file: the image manifest leaves `*-pin.inc` out of the
+   layer content hash, so a pin bump changes the component's fingerprint
+   and only that (`docs/ACCEPTANCE.md`) — a pin written into the recipe body
+   still builds, but counts as a platform change and forces a full
+   acceptance campaign.
 2. **meta-openglow pushed** — **DONE.** The Scarthgap port lives on
    the **`scarthgap` branch** (Yocto layer convention; the Dunfell-era `master`
    is untouched). Development continues on the local sibling checkout; push /

@@ -15,10 +15,13 @@
 #                         [--cache DIR] [--kernel-srcrev REV]
 #
 # Component revisions come from the recipes in meta-forgefirm and the sibling
-# meta-openglow checkout (default ../meta-openglow relative to this repo).
-# Each pinned commit is fetched shallowly into --cache (default
-# .manifest-cache/, gitignored) and listed with `git ls-tree`; a submodule
-# gitlink is followed through .gitmodules.
+# meta-openglow checkout (default ../meta-openglow relative to this repo); a
+# recipe's `require`d files in its own directory are read too, which is
+# where the pins live (<recipe>-pin.inc). Each pinned commit is fetched
+# shallowly into --cache (default .manifest-cache/, gitignored) and listed
+# with `git ls-tree`; a submodule gitlink is followed through .gitmodules.
+# The layer content hash mirrors forgefirm-image-manifest.bbclass: every
+# file under the layer except *.md and *-pin.inc.
 import argparse
 import hashlib
 import json
@@ -43,6 +46,9 @@ RECIPES = [
 CONTENT_LAYERS = {"meta-forgefirm": ("forgefirm", "meta-forgefirm"),
                   "meta-glowforge-bsp": ("meta-openglow", "meta-glowforge-bsp"),
                   "meta-openglow-core": ("meta-openglow", "meta-openglow-core")}
+# Left out of a layer's content, as in forgefirm-image-manifest.bbclass
+# (FORGEFIRM_MANIFEST_PIN_SUFFIX): documentation and the component pin files.
+LAYER_SKIP_SUFFIXES = (".md", "-pin.inc")
 
 
 def git(args, cwd=None, input=None):
@@ -50,8 +56,27 @@ def git(args, cwd=None, input=None):
                           stderr=subprocess.PIPE, check=True).stdout
 
 
+def recipe_text(path, seen=None):
+    """The recipe's text with its `require`/`include`d files from the same
+    directory appended (bitbake resolves a relative name against the
+    including file's directory first). Only local files are followed;
+    anything else is left to BBPATH and skipped here."""
+    seen = seen if seen is not None else set()
+    path = os.path.abspath(path)
+    if path in seen:
+        return ""
+    seen.add(path)
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    for m in re.finditer(r'^\s*(?:require|include)\s+(\S+)\s*$', text, re.M):
+        cand = os.path.join(os.path.dirname(path), m.group(1))
+        if os.path.isfile(cand):
+            text += "\n" + recipe_text(cand, seen)
+    return text
+
+
 def parse_recipe(path):
-    text = open(path, encoding="utf-8").read()
+    text = recipe_text(path)
     uri = re.search(r'^SRC_URI\s*\+?=\s*"([^"]+)"', text, re.M)
     rev = re.search(r'^SRCREV\s*\??=\s*"([0-9a-fA-F]+)"', text, re.M)
     if not uri or not rev:
@@ -116,7 +141,8 @@ def ls_tree(repo, rev, url, cache, prefix, files):
 def layer_content(path):
     out = git(["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."], cwd=path)
     paths = sorted(set(p.decode("utf-8", "replace") for p in out.split(b"\0") if p))
-    paths = [p for p in paths if os.path.isfile(os.path.join(path, p)) and not p.endswith(".md")]
+    paths = [p for p in paths
+             if os.path.isfile(os.path.join(path, p)) and not p.endswith(LAYER_SKIP_SUFFIXES)]
     if not paths:
         return None
     # hash-object --stdin-paths resolves against the repository top level

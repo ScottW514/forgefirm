@@ -5,11 +5,10 @@ LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://LICENSE;md5=19ed4e3e8c28a4311c16b0b2b91357ec"
 
 PE = "1"
-PV = "0.1.0"
 
 SRC_URI = "git://github.com/ScottW514/forgectrl.git;protocol=https;branch=main"
-# Pinned; bump deliberately after pushing forgectrl changes.
-SRCREV = "c8f655813ba2b9a44fdf032e84435d9454909d7c"
+# SRCREV and PV live in the pin file (forgefirm-image-manifest.bbclass).
+require forgectrl-pin.inc
 
 S = "${WORKDIR}/git"
 

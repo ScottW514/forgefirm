@@ -10,13 +10,8 @@ LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://LICENSE;md5=62f8bb455fcc4bf177ecab380f71cd5d"
 
 SRC_URI = "git://github.com/ScottW514/python3-gfhardware.git;protocol=https;branch=master"
-# Pinned; bump deliberately (AUTOREV is not reproducible).
-SRCREV = "a0a174d8e9a6b4b6e3abe63acc51018199df4202"
-
-# Bump PV with every SRCREV move: the hash-derived package version is not
-# monotonic on its own and buildhistory QA fails the build when it sorts
-# backwards.
-PV = "0.1.6+git"
+# SRCREV and PV live in the pin file (forgefirm-image-manifest.bbclass).
+require forgefirm-app-pin.inc
 
 S = "${WORKDIR}/git"
 

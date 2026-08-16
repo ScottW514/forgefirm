@@ -4,14 +4,12 @@ HOMEPAGE = "https://github.com/ScottW514/grblHAL-glowforge"
 LICENSE = "GPL-3.0-or-later"
 LIC_FILES_CHKSUM = "file://COPYING;md5=3237e48bcef3455c7bea5c0ce16206f6"
 
-PV = "0.1.0"
-
 # gitsm: the grblHAL core rides as a submodule (ScottW514/core, branch
 # forgefirm = upstream master + the step_us_min buffer fix pending
 # upstream).
 SRC_URI = "gitsm://github.com/ScottW514/grblHAL-glowforge.git;protocol=https;branch=main"
-# Pinned; bump deliberately after pushing grblHAL-glowforge changes.
-SRCREV = "67d026d39ac03286937774f5e28946b88c44d490"
+# SRCREV and PV live in the pin file (forgefirm-image-manifest.bbclass).
+require grblhal-glowforge-pin.inc
 
 SRC_URI += "file://grblhal.init"
 
