@@ -202,8 +202,8 @@ def settings_bounds(ctx):
 
 @test("forgectrl.panel-serves", title="Control panel and status endpoints", subsystem="forgectrl",
       kind="auto", est_min=1,
-      covers=[("forgectrl", "src/ui.*"), ("forgectrl", "src/status.*"), ("forgectrl", "src/cam.c"),
-              ("forgectrl", "src/main.c")],
+      covers=[("forgectrl", "src/ui.*"), ("forgectrl", "src/ui/**"), ("forgectrl", "src/status.*"),
+              ("forgectrl", "src/cam.c"), ("forgectrl", "src/main.c")],
       description="The panel page is served, /status carries the machine telemetry the panel and "
                   "the acceptance tool read, and /cam/status answers.")
 def panel_serves(ctx):
@@ -216,6 +216,8 @@ def panel_serves(ctx):
     text = body.decode("utf-8", "replace")
     ctx.check("<html" in text.lower() and "ForgeFIRM" in text, "the panel does not look like the panel")
     ctx.check(fc.token and fc.token in text, "the panel does not embed the bearer token")
+    ctx.check("<link " not in text and "<script src=" not in text,
+              "the panel references an external asset (the build did not bundle src/ui/)")
 
     s = fc.status()
     for key in ("state", "switches", "coolant", "fans"):
