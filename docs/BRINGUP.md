@@ -1553,10 +1553,43 @@ and cloud mode leave the lid lamp at 236 (gfhome should hand the lamp
 back; the mode-switch test hands it back itself because it caused the
 switch), and a mode switch back to GRBL keeps cloud's lamp level. The
 first `Idle`-before-motion race also lived in the fans-quiet test's
-second wait (harmless there). Remaining: `laser.emission-witness`
-(core), `laser.disarm-in-hold`, `laser.expected-stop`,
-`laser.kill-mid-fire` - live tests, run by the operator from the page,
-one per session turn; then the export.
+second wait (harmless there). **The operator then ran the four live tests
+from the page - `laser.emission-witness`, `disarm-in-hold`,
+`expected-stop`, `kill-mid-fire`, all PASS - and exported: 26 of 26,
+*Release authorized*, and `scripts/acceptance-gate.py` authorizes the
+image's own manifest with the artifact. That was an exercise of the
+release mechanism, not a release: no `releases/v…` directory was
+committed.** Two observations from the live runs, both restored by the
+baseline: each live test left the head a few mm +X of its start (11 /
+2.8 / 3.3 mm - the tests should end on a return jog), and
+`kill-mid-fire` left `cnc/streaming=1` (the supervisor's controller-exit
+safing writes `cnc/stop` and the latch, not the streaming flag; the
+respawned controller manages the flag per run, so it is hygiene, not a
+hazard - noted for the safing sequence).
+
+**Same day, the forgectrl changes decided from the campaign - landed,
+built in the forge-yocto tree, hot-deployed on the bench (forgectrl
+`ff9a7c9` + `c8f6558`, recipe pin bumped in `1d9b553`):** (1) the lid lamp
+has a resting policy - the `lid_lamp_idle` setting (0-255, default 236,
+Settings > Lid lamp), asserted at daemon start, on a settings change
+(live), and at every controller spawn, so a warm reboot no longer leaves
+the bed dark and a cloud session's level does not linger; the camera
+engine owns the write (a running lid capture applies it at teardown). (2)
+The liveness probe writes `cnc/motor_lock=0` for its move (a leftover
+mask from any tool must not read as a wedge), settles 300 ms after the
+run-current step before sampling (the current step jolts the head), and
+the moving threshold is 800 (live >= 1040, typically 1800-2900; the
+rail-on / current-step jolt up to ~700). Proof, through the acceptance
+tool: `forgectrl.settings-bounds` (lamp resting at 236, 256 / -1 /
+"bright" refused, 100 applied at once, cleared back to 236) and
+`motion.liveness-probe` (every axis masked, forgectrl restarted, the
+fresh probe MOTION OK on the first try at p2p 2047/1341, mask cleared by
+the controller's init). The baseline expects the lamp at the setting now
+(the boot capture is the record, not the lamp reference), and its settle
+waits for the controller to be running - the post pass had run between
+the probe's own writes and the controller's init writes once. **These
+changes ride the next image; the campaign on that image inherits every
+domain forgectrl does not touch.**
 
 ## Hardware facts bank (measured)
 
