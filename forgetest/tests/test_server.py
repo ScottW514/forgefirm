@@ -62,7 +62,9 @@ class ServerTests(unittest.TestCase):
         cls.tooldir = os.path.join(cls.tmp, "bench")
         os.makedirs(cls.tooldir)
         with open(os.path.join(cls.tooldir, "echo_tool.py"), "w") as f:
-            f.write("import sys, time\nprint('args', sys.argv[1:])\nsys.stdout.flush()\n"
+            f.write("import os, sys, time\nprint('args', sys.argv[1:])\n"
+                    "print('env', os.environ.get('GF_HOST'), os.environ.get('FORGETEST_BENCH_DATA'))\n"
+                    "sys.stdout.flush()\n"
                     "if 'slow' in sys.argv: time.sleep(30)\nsys.exit(0 if 'fail' not in sys.argv else 3)\n")
         tools = [{"id": "echo", "title": "Echo", "script": "echo_tool.py", "safety": "dry", "where": "board",
                   "ported": True, "desc": "echo",
@@ -73,6 +75,8 @@ class ServerTests(unittest.TestCase):
                  {"id": "hot", "title": "H", "script": "echo_tool.py", "safety": "live", "where": "board",
                   "ported": True, "desc": "", "args": []},
                  {"id": "tk", "title": "T", "script": "echo_tool.py", "safety": "takeover", "where": "board",
+                  "ported": True, "desc": "", "args": []},
+                 {"id": "sc", "title": "S", "script": "echo_tool.py", "safety": "scope", "where": "board",
                   "ported": True, "desc": "", "args": []}]
         cls.bench = bench_mod.Bench(tools, tool_dir=cls.tooldir,
                                     index_path=os.path.join(cls.tmp, "bench.jsonl"))
@@ -261,7 +265,7 @@ class ServerTests(unittest.TestCase):
         st, d = self.call("GET", "/bench")
         self.assertEqual(st, 200)
         ids = [t["id"] for t in d["tools"]]
-        self.assertEqual(ids, ["echo", "unported", "hot", "tk"])
+        self.assertEqual(ids, ["echo", "unported", "hot", "tk", "sc"])
         st, d = self.call("POST", "/bench/start", {"tool": "unported"})
         self.assertEqual(st, 409)
         st, d = self.call("POST", "/bench/start", {"tool": "hot"})
@@ -274,6 +278,9 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(state["last_run"]["kind"], "bench")
         self.assertEqual(state["last_run"]["finished"]["result"], "OK")
         self.assertTrue(any("['yo', '5']" in l for l in state["last_run"]["log"]))
+        # the bench environment: the machine is local, data under <data>/bench
+        self.assertTrue(any(" env 127.0.0.1 " in l and l.endswith("bench")
+                            for l in state["last_run"]["log"]), state["last_run"]["log"])
         st, d = self.call("GET", "/bench")
         self.assertEqual(d["tools"][0]["last"]["result"]["result"], "OK")
         # a failing tool and an aborted one
@@ -295,6 +302,13 @@ class ServerTests(unittest.TestCase):
         self.assertIn("takeover: forgectrl start", log)
         self.assertIn("baseline: forgectrl unreachable for 10 s", log)
         self.assertFalse(os.path.exists(os.environ["FORGETEST_MARKER"]))
+        # a scope tool is a takeover too
+        st, d = self.call("POST", "/bench/start", {"tool": "sc"})
+        self.assertEqual(st, 200, d)
+        state = self.wait_idle(timeout=40)
+        log = "\n".join(state["last_run"]["log"])
+        self.assertIn("takeover: pulse device free", log)
+        self.assertIn("takeover: forgectrl start", log)
         # bench runs never touched the acceptance log
         recs = self.log.read()
         self.assertFalse(any(r.get("t") == "result" and r.get("test") == "echo" for r in recs))

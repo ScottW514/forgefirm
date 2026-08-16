@@ -6,38 +6,20 @@ job, and does the loop reach equilibrium or climb without bound? Runs
 the driver's real check cadence (M8 held for the duration) with the
 cut-profile fans, logging bulk coolant temperature and every verdict.
 
+Needs the controller running with forgectrl's cooling engine (the
+verdict lines arrive on the Grbl socket). Runs on the board or from a
+host (gfbench: GF_HOST).
+
 Usage: flow_sustained.py [minutes]   (default 30)
 """
-import math
-import os
-import shlex
 import re
 import socket
-import subprocess
 import sys
 import time
 
-HOST = os.environ.get('GF_HOST')
-if not HOST:
-    raise SystemExit('set GF_HOST to the machine IP address')
-# ssh client used to reach the board; override for a wrapper, e.g.
-# GF_SSH='wsl -d <distro> -- ssh'.
-SSH = shlex.split(os.environ.get('GF_SSH', 'ssh'))
-F = 1024.0 * 1.3
-RD, BETA = 10000.0, 3380.0
-RINF = 10000.0 * math.exp(-3380.0 / 298.15)
+from gfbench import HOST, board, degc, setting
 
-
-def degc(raw):
-    r = RD / (F / float(raw) - 1.0)
-    return BETA / math.log(r / RINF) - 273.15
-
-
-def board(cmd):
-    r = subprocess.run(SSH + ['-o', 'PreferredAuthentications=none',
-                              'root@' + HOST, cmd],
-                       capture_output=True, text=True, timeout=30)
-    return r.stdout.strip()
+THRESHOLD = float(setting('cool_flow_rise', 14.4))    # forgectrl's configured threshold
 
 
 def temps():
@@ -92,8 +74,8 @@ print()
 print('checks run: %d over %.0f min' % (len(verdicts), minutes))
 if verdicts:
     rises = [v[1] for v in verdicts]
-    print('rise values: min=%.2f max=%.2f mean=%.2f  (threshold 13.7)'
-          % (min(rises), max(rises), sum(rises) / len(rises)))
+    print('rise values: min=%.2f max=%.2f mean=%.2f  (threshold %.1f)'
+          % (min(rises), max(rises), sum(rises) / len(rises), THRESHOLD))
     print('false faults: %d' % sum(1 for v in verdicts if v[2]))
 print('loop temperature: start %.2f -> end %.2f (%+.2f C), peak %.2f'
       % (u0, u, u - u0, peak_up))

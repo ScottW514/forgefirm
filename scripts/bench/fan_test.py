@@ -1,18 +1,18 @@
-import shlex, socket, subprocess, time
-import os
+#!/usr/bin/env python3
+"""Fan/coolant bench: snapshots the fan PWMs, tachs and coolant readings,
+drives M8 (cut-profile fans), then M9 (cooldown -> idle), and prints
+each snapshot for the tach readbacks to be judged. Needs the controller
+running with forgectrl's cooling engine. Runs on the board or from a
+host (gfbench: GF_HOST)."""
+import socket
+import time
 
-HOST = os.environ.get('GF_HOST')
-if not HOST:
-    raise SystemExit('set GF_HOST to the machine IP address')
-# ssh client used to reach the board; override for a wrapper, e.g.
-# GF_SSH='wsl -d <distro> -- ssh'.
-SSH = shlex.split(os.environ.get('GF_SSH', 'ssh'))
+from gfbench import HOST, board as _board, degc
+
 
 def board(cmd):
-    r = subprocess.run(SSH + ['-o', 'PreferredAuthentications=none',
-                              'root@' + HOST, cmd],
-                       capture_output=True, text=True, timeout=30)
-    return r.stdout.strip().replace('\n', ' ')
+    return _board(cmd).strip().replace('\n', ' ')
+
 
 ATTRS = ('head/air_assist_pwm head/air_assist_tach head/purge_air '
          'thermal/exhaust_pwm thermal/tach_exhaust '
@@ -44,7 +44,7 @@ time.sleep(0.5); drain()
 
 snap('--- baseline (driver idle profile)')
 w2 = board('cat /sys/glowforge/pic/water_temp_2')
-print('water_temp_2 = %s -> %.1f C' % (w2, int(w2) * -0.09653 + 94))
+print('water_temp_2 = %s -> %.1f C' % (w2, degc(w2)))
 
 print()
 print('=== M8: cut-profile fans ON (loud) ===')

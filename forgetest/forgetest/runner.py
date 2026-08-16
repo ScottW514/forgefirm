@@ -503,7 +503,17 @@ class Runner:
             captured = self._baseline_pre(run)
             env = dict(os.environ)
             env.setdefault("PYTHONUNBUFFERED", "1")
-            takeover = Takeover(run.log, "bench:" + tool["id"]) if tool.get("safety") == "takeover" else None
+            # The tools that also run from a LAN host (gfbench.py) run on
+            # the board here: the machine is local, the panel token is at
+            # hand, and their data files go under <data>/bench/.
+            env.setdefault("GF_HOST", "127.0.0.1")
+            env.setdefault("FORGETEST_BENCH_DATA", os.path.join(data_dir(), "bench"))
+            if not env.get("GF_TOKEN"):
+                tok = hw.Forgectrl().token
+                if tok:
+                    env["GF_TOKEN"] = tok
+            takeover = (Takeover(run.log, "bench:" + tool["id"])
+                        if tool.get("safety") in ("takeover", "scope") else None)
             if takeover is not None:
                 takeover.__enter__()
             try:

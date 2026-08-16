@@ -21,37 +21,32 @@ so slow ambient drift spreads across conditions instead of confounding
 any single one.
 
 Safety: aborts a run if downstream passes ABORT_C; heater off and pump
-on at every exit path. The controller is stopped for the duration so it
-cannot touch the fans or heater, and restarted at the end.
+on at every exit path. Drives the heater, pump and fans directly: run
+with forgectrl and the controller stopped for the duration (the bench
+page's takeover does that; from a host, stop them first). Runs on the
+board or from a host (gfbench: GF_HOST).
 
-Output: incremental JSON to flow_matrix_results.json (so partial runs
-are still usable) and a summary table at the end.
+Output: incremental JSON to flow_matrix_results.json in the bench data
+directory (gfbench.data_path; so partial runs are still usable and
+resumable) and a summary table at the end.
+
+Usage: flow_matrix.py [duties] [repeats]   e.g. flow_matrix.py 10,20,40 5
+       (or env FM_DUTIES, FM_REPEATS, FM_RESULTS)
 """
 import json
 import math
 import os
-import shlex
 import statistics
-import subprocess
 import sys
 import time
 
-HOST = os.environ.get('GF_HOST')
-if not HOST:
-    raise SystemExit('set GF_HOST to the machine IP address')
-# ssh client used to reach the board; override for a wrapper, e.g.
-# GF_SSH='wsl -d <distro> -- ssh'.
-SSH = shlex.split(os.environ.get('GF_SSH', 'ssh'))
-HERE = os.path.dirname(os.path.abspath(__file__))
-RESULTS = os.path.join(HERE, os.environ.get('FM_RESULTS', 'flow_matrix_results.json'))
+from gfbench import board, degc, data_path
 
-# Factory B-equation conversion (kernel-module-glowforge/UAPI.md).
-F = 1024.0 * 1.3
-RD, BETA = 10000.0, 3380.0
-RINF = 10000.0 * math.exp(-3380.0 / 298.15)
+RESULTS = data_path(os.environ.get('FM_RESULTS', 'flow_matrix_results.json'))
 
-DUTIES = [int(x) for x in os.environ.get('FM_DUTIES', '10,15,20,30,40,50').split(',')]
-REPEATS = int(os.environ.get('FM_REPEATS', '5'))
+DUTIES = [int(x) for x in (sys.argv[1] if len(sys.argv) > 1 else
+                           os.environ.get('FM_DUTIES', '10,15,20,30,40,50')).split(',')]
+REPEATS = int(sys.argv[2]) if len(sys.argv) > 2 else int(os.environ.get('FM_REPEATS', '5'))
 RUN_S = 75
 SAMPLE_IV = 1.0
 DURATIONS = [15, 20, 25, 30, 40, 50, 60, 75]
@@ -62,21 +57,6 @@ COOL_MAX_S = 300
 FANS_RUN = ('echo 65535 > /sys/glowforge/thermal/exhaust_pwm; '
             'echo 43278 > /sys/glowforge/thermal/intake_pwm; '
             'echo 204 > /sys/glowforge/head/air_assist_pwm')
-
-
-def degc(raw):
-    raw = float(raw)
-    if raw <= 0 or raw >= F:
-        return float('nan')
-    r = RD / (F / raw - 1.0)
-    return BETA / math.log(r / RINF) - 273.15
-
-
-def board(cmd, timeout=120):
-    r = subprocess.run(SSH + ['-o', 'PreferredAuthentications=none',
-                              'root@' + HOST, cmd],
-                       capture_output=True, text=True, timeout=timeout)
-    return r.stdout
 
 
 def temps():
@@ -204,7 +184,7 @@ def summarize(runs, log):
 
 def main():
     t_start = time.time()
-    log_path = os.path.join(HERE, 'flow_matrix_log.txt')
+    log_path = data_path('flow_matrix_log.txt')
     logf = open(log_path, 'a')
 
     def log(msg):
@@ -215,8 +195,6 @@ def main():
     log('=== flow matrix started %s' % time.strftime('%Y-%m-%d %H:%M:%S'))
     log('duties=%s repeats=%d run=%ds durations=%s' % (DUTIES, REPEATS, RUN_S, DURATIONS))
 
-    board('pkill -x grblHAL_glowfor; sleep 1; true')
-    log('controller stopped for the experiment')
     board(FANS_RUN)
     safe_state()
 
@@ -264,10 +242,7 @@ def main():
               'echo 0 > /sys/glowforge/thermal/intake_pwm')
 
     summarize(runs, log)
-
-    board('cd /data && GFSINK=/dev/glowforge nohup grblHAL_glowforge -p 23 '
-          '-e /data/EEPROM-glowforge.DAT > /data/glowforge.log 2>&1 & sleep 2; true')
-    log('controller restarted; total elapsed %.2f h' % ((time.time() - t_start) / 3600))
+    log('results: %s; total elapsed %.2f h' % (RESULTS, (time.time() - t_start) / 3600))
     logf.close()
 
 

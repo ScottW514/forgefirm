@@ -10,33 +10,25 @@ heater (which plateaus near 28-29 C - the most it can reach unaided),
 then runs the real check at 40% / 50 s with the cut-profile fans, and
 alternates flow / no-flow so both cases see the same conditions.
 
+Drives the heater, pump and fans directly: run with forgectrl and the
+controller stopped (the bench page's takeover does that; from a host,
+stop them first). Runs on the board or from a host (gfbench: GF_HOST).
+Results and the log go to the bench data directory (gfbench.data_path).
+
 Usage: flow_warm_validate.py [cycles_per_case]   (default 3)
 """
 import json
-import math
-import os
-import shlex
 import statistics
-import subprocess
 import sys
 import time
 
-HOST = os.environ.get('GF_HOST')
-if not HOST:
-    raise SystemExit('set GF_HOST to the machine IP address')
-# ssh client used to reach the board; override for a wrapper, e.g.
-# GF_SSH='wsl -d <distro> -- ssh'.
-SSH = shlex.split(os.environ.get('GF_SSH', 'ssh'))
-HERE = os.path.dirname(os.path.abspath(__file__))
-RESULTS = os.path.join(HERE, 'flow_warm_results.json')
+from gfbench import board, degc, data_path, setting
 
-F = 1024.0 * 1.3
-RD, BETA = 10000.0, 3380.0
-RINF = 10000.0 * math.exp(-3380.0 / 298.15)
+RESULTS = data_path('flow_warm_results.json')
 
 DUTY = 40
 CHECK_S = 50
-THRESHOLD = 13.7
+THRESHOLD = float(setting('cool_flow_rise', 14.4))    # forgectrl's configured threshold
 WARM_TARGET_C = 25.5        # what a ~19-20 C room permits at 50% duty
 WARM_MAX_S = 780
 ABORT_C = 48.0
@@ -45,21 +37,6 @@ FANS_RUN = ('echo 65535 > /sys/glowforge/thermal/exhaust_pwm; '
             'echo 43278 > /sys/glowforge/thermal/intake_pwm')
 FANS_OFF = ('echo 0 > /sys/glowforge/thermal/exhaust_pwm; '
             'echo 0 > /sys/glowforge/thermal/intake_pwm')
-
-
-def degc(raw):
-    raw = float(raw)
-    if raw <= 1.0 or raw >= F:
-        return float('nan')
-    r = RD / (F / raw - 1.0)
-    return BETA / math.log(r / RINF) - 273.15
-
-
-def board(cmd, timeout=120):
-    r = subprocess.run(SSH + ['-o', 'PreferredAuthentications=none',
-                              'root@' + HOST, cmd],
-                       capture_output=True, text=True, timeout=timeout)
-    return r.stdout
 
 
 _last_good = (22.0, 22.0)
@@ -155,7 +132,7 @@ def check(flow, log):
 
 def main():
     cycles = int(sys.argv[1]) if len(sys.argv) > 1 else 3
-    logf = open(os.path.join(HERE, 'flow_warm_log.txt'), 'a')
+    logf = open(data_path('flow_warm_log.txt'), 'a')
 
     def log(msg):
         print(msg, flush=True)
@@ -164,7 +141,6 @@ def main():
 
     log('=== warm-baseline validation %s  duty=%d%% window=%ds threshold=%.1f'
         % (time.strftime('%Y-%m-%d %H:%M:%S'), DUTY, CHECK_S, THRESHOLD))
-    board('pkill -x grblHAL_glowfor; sleep 1; true')
 
     runs = []
     try:
@@ -199,11 +175,9 @@ def main():
             % (min(nv) - max(fv), THRESHOLD, THRESHOLD - max(fv), min(nv) - THRESHOLD))
     wrong = [r for r in runs if ((r['down_rise'] > THRESHOLD) != (not r['flow']))]
     log('  misclassified: %d of %d' % (len(wrong), len(runs)))
-
-    board('cd /data && GFSINK=/dev/glowforge nohup grblHAL_glowforge -p 23 '
-          '-e /data/EEPROM-glowforge.DAT > /data/glowforge.log 2>&1 & sleep 2; true')
-    log('controller restarted')
+    log('results: %s' % RESULTS)
     logf.close()
+    return 1 if wrong else 0
 
 
 if __name__ == '__main__':

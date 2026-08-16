@@ -203,10 +203,21 @@ change author's judgment (rule 1).
 
 The same daemon serves `#bench`: the registry of the bench tools
 (`scripts/bench`, installed under `/usr/share/forgetest/bench/`), each with
-its safety class (`dry`, `takeover`, `live`, `scope`), argument form, and
-last run. A ported tool runs as a subprocess with the output on the page;
-unported tools are listed with Start disabled. Bench runs are recorded in
-`/data/forgetest/bench.jsonl` and never enter a campaign.
+its safety class, argument form, and last run. The classes: `dry` (reads
+or dry motion, forgectrl stays up), `takeover` (forgectrl and the
+controller stopped for the run, the pulse device free, the same wrapper
+the takeover tests use), `scope` (a takeover whose result only means
+something with the named instrument on the bench), `live` (emission
+possible; the operator acknowledgment and the physical arm press). A tool
+runs as a subprocess with the output on the page and, on the board, the
+machine as `GF_HOST=127.0.0.1`, the panel token in `GF_TOKEN`, and its data
+files under `/data/forgetest/bench/` (`FORGETEST_BENCH_DATA`); the same
+scripts run from a LAN host with `GF_HOST` set (`scripts/bench/gfbench.py`,
+`scripts/bench/README.md`). Every board-runnable tool is ported; the entries
+that stay unported are the CI harnesses of the null-sink controller and the
+factory `.puls` decoder, which do not run against the machine at all - they
+are listed so the catalog of what exists is complete. Bench runs are
+recorded in `/data/forgetest/bench.jsonl` and never enter a campaign.
 
 ## Layout
 
@@ -221,6 +232,7 @@ unported tools are listed with Start disabled. Bench runs are recorded in
       bench.py / coverage.py     bench registry + subprocess runner; the lint
       suite/                     the catalog, one module per subsystem
     forgetest/tests/             host unit tests (python3 -m unittest discover -s tests)
+    scripts/bench/               the bench tools (+ gfbench.py, the board/host helper)
     scripts/acceptance-gate.py   the gate
     scripts/manifest-from-tree.py  manifest from the recipe pins (CI, workstation)
     releases/v<version>/         the committed artifacts

@@ -1630,6 +1630,33 @@ that image's campaign is a full one, unavoidably; from then on a
 component pin bump re-requires only the tests covering that component.
 Run the full campaign on the first pin-file image, not on `191951`.**
 
+**2026-08-16, bench-tab ports complete (item 15b).** Every tool that can
+run against the machine is now runnable from the bench page: the scope
+tools (`pwm_sweep`, `pwm_hold` - now a takeover with a locked-state guard:
+the latch relocked, refused if FIRE or LASER_ON reads active;
+`pwm_stream_test` with a PASS/FAIL exit), the flow characterization
+family (`flow_characterize`, `flow_recheck_char`, `flow_warm_validate`,
+`flow_matrix` as takeovers - forgectrl owns the thermal hardware, so the
+page's takeover replaces the tools' own controller stop/restart, whose
+command line predated the supervisor; `flow_sustained`, `fan_test` and
+`temp_calibrate` stay dry), the escalation drill (`cool_confirm_max_s`
+shortened through forgectrl's settings and restored; the setting's
+minimum, 60 s, is the default budget) and the live drills (`<drill> [S]
+[F]`, all six, the token from the board). The host tools keep working
+from a workstation: `scripts/bench/gfbench.py` resolves `GF_HOST` (host
+mode, ssh) or the board itself (local mode; the page runs them that way
+with `GF_HOST=127.0.0.1`, `GF_TOKEN`, and their data files under
+`/data/forgetest/bench/`). Not ported, by nature: the two null-sink CI
+harnesses and the `.puls` decoder. Proof: `forgetest/tests/
+test_bench_registry.py` (registry <-> `scripts/bench` consistency, every
+ported tool builds its command line, every script compiles, gfbench host
+and local modes), the server test (a scope tool runs inside the takeover
+wrapper; the bench environment reaches the tool), and a local-mode smoke
+run on the bench (`temp_calibrate.py watch`, `gfbench.setting`, the
+token) staged in `/tmp` and removed. **The ported tools themselves have
+not been exercised from the page on the bench yet - that rides the next
+dev image (the confirmation campaign's image).**
+
 ## Hardware facts bank (measured)
 
 - **DRV8825 stepper drivers wedge on 40 V rail glitches** (factory board;
@@ -2966,9 +2993,11 @@ Run the full campaign on the first pin-file image, not on `191951`.**
     built with the pin files** (that build is a platform change against
     every result so far; after it, a component pin bump re-requires only
     the tests covering that component) - the tool on the bench is the
-    tree, but a hot-patched image is not the image that ships; (b) the remaining
-    bench-tab ports (scope tools, host-side flow characterization, the
-    live drills - the catalog carries their acceptance forms); (c) the
-    first release runs the full campaign and commits
+    tree, but a hot-patched image is not the image that ships; (b) the
+    bench-tab ports are **code-complete 2026-08-16** (every board-runnable
+    tool is ported: the scope tools, the flow characterization family,
+    the escalation drill, the live drills; record in "Release acceptance"
+    above) - their bench validation rides the same next dev image; (c)
+    the first release runs the full campaign and commits
     `releases/v<version>/acceptance.json` - **not yet: no release is
     cut.**

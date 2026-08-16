@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Live-fire bench drills - Phases 4, 5, 6. Runs from a LAN host against
-grblHAL over TCP (argv[1] or GF_HOST, port 23) and forgectrl over HTTP
-(:8080). LIVE LASER: the operator must be armed with eye protection, a
-fire watch, an extinguisher, and the exhaust running. Every drill waits
-for the operator to press the physical arm button before the machine
-fires; nothing here defeats that gate.
+"""Live-fire bench drills - Phases 4, 5, 6. Runs on the board (the bench
+page) or from a LAN host, against grblHAL over TCP (port 23) and
+forgectrl over HTTP (:8080); the machine is GF_HOST, default 127.0.0.1.
+LIVE LASER: the operator must be armed with eye protection, a fire
+watch, an extinguisher, and the exhaust running. Every drill waits for
+the operator to press the physical arm button before the machine fires;
+nothing here defeats that gate.
+
+Usage: live_fire_drills.py <drill> [S] [F]   (S, F used by ircut)
 
 Drills (pass a name):
   witness   Phase 5 A-1/A-2/A-5: a short vector mark at S400. Samples
@@ -29,15 +32,15 @@ Drills (pass a name):
             engine's own "run telemetry" line is the record. Run it
             >= 3 times on representative material; the highest peak
             delta sizes cool_fire_ir_delta.
-              ircut [host] [S] [F]      e.g. ircut 192.0.2.1 1000 300
+              ircut [S] [F]             e.g. ircut 1000 300
   expstop   Armed kill on the EXPECTED-stop path: start a mark job,
             then mid-burn POST /controller/stop (the supervisor stops
             the controller: SIGTERM, reap, exit safing). PASS: emission
             drops to 0 within a few samples of the stop and stays 0,
             the kernel is not running, and POST /controller/start
             is a SEPARATE step (`ctrlstart`, run after the operator has
-            judged the stop). Needs the panel token in GF_TOKEN
-            (cat /data/forgefirm/panel.token on the board).
+            judged the stop). Needs the panel token: GF_TOKEN, or
+            /data/forgefirm/panel.token when running on the board.
   ctrlstart POST /controller/start after an expstop; no motion, no laser.
 
 The G-4 arm-refuses-when-a-fire-gate-is-active drill is operator-manual
@@ -50,11 +53,20 @@ import sys
 import time
 import urllib.request
 
-HOST = sys.argv[2] if len(sys.argv) > 2 else os.environ.get('GF_HOST')
-if not HOST:
-    raise SystemExit('usage: live_fire_drills.py <drill> [host]  (or set GF_HOST)')
+HOST = os.environ.get('GF_HOST') or '127.0.0.1'
 PORT = 23
 BASE = 'http://%s:8080' % HOST
+
+
+def panel_token():
+    tok = os.environ.get('GF_TOKEN', '')
+    if tok:
+        return tok
+    try:
+        with open('/data/forgefirm/panel.token') as f:
+            return f.read().strip()
+    except OSError:
+        return ''
 
 # Ambient lid-IR baseline (2026-08-14, lid closed, idle): per-channel means.
 IR_BASELINE = [37.3, 36.3, 39.5, 40.0]
@@ -357,8 +369,8 @@ def drill_faultpos(g):
 
 
 def drill_ircut(g):
-    power = int(sys.argv[3]) if len(sys.argv) > 3 else 1000
-    feed = int(sys.argv[4]) if len(sys.argv) > 4 else 300
+    power = int(sys.argv[2]) if len(sys.argv) > 2 else 1000
+    feed = int(sys.argv[3]) if len(sys.argv) > 3 else 300
     print('=== lid-IR characterization: S%d F%d 30 mm square ===' % (power, feed))
     print('connect: %s' % prepare(g))
     base = sample_forgectrl()
@@ -405,7 +417,7 @@ def drill_ircut(g):
 def post_ctrl(action):
     # http.client preserves the header-name case exactly as given.
     import http.client
-    tok = os.environ.get('GF_TOKEN', '')
+    tok = panel_token()
     c = http.client.HTTPConnection(HOST, 8080, timeout=8)
     c.putrequest('POST', '/controller/' + action)
     c.putheader('X-ForgeFIRM-Token', tok)
@@ -419,8 +431,8 @@ def post_ctrl(action):
 
 def drill_expstop(g):
     print('=== armed kill on the expected-stop path (POST /controller/stop) ===')
-    if not os.environ.get('GF_TOKEN'):
-        raise SystemExit('set GF_TOKEN to the panel token first')
+    if not panel_token():
+        raise SystemExit('set GF_TOKEN to the panel token first (or run on the board)')
     print('connect: %s' % prepare(g))
     arm_cue()
     job = ['G91', 'G21', 'M4', 'S400',

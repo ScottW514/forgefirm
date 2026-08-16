@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Coolant temperature spot-check helper (runs on Windows, reads the
-board over ssh).
+"""Coolant temperature spot-check helper (runs on the board or from a
+host; gfbench: GF_HOST).
 
 The raw->Celsius conversion in UAPI.md is the factory B-equation (10k
 B3380 NTC in a 10k divider behind a 1.3x gain stage, 10-bit ADC). This
@@ -9,47 +9,30 @@ the machine's raw ADC readings - and fits a per-machine line to
 cross-check that curve against a thermometer.
 
 Usage:
-  temp_calibrate.py watch                 live raw + current-formula C
-  temp_calibrate.py point <measured_C>    record a calibration point
-  temp_calibrate.py fit                   fit and print the calibration
+  temp_calibrate.py watch [seconds]            live raw + current-formula C
+                                               (default 60 s)
+  temp_calibrate.py point <measured_C> [note]  record a calibration point
+  temp_calibrate.py fit                        fit and print the calibration
 
-Points accumulate in temp_calibration.json next to this script. Take at
-least two points as far apart in temperature as practical (e.g. cold
+Points accumulate in temp_calibration.json in the bench data directory
+(gfbench.data_path: next to this script, or FORGETEST_BENCH_DATA). Take
+at least two points as far apart in temperature as practical (e.g. cold
 machine in the morning, and warm after a fan-off soak with the flow
 heater on).
 """
 import json
-import math
 import os
-import shlex
-import subprocess
 import sys
 import time
 
-HOST = os.environ.get('GF_HOST')
-if not HOST:
-    raise SystemExit('set GF_HOST to the machine IP address')
-# ssh client used to reach the board; override for a wrapper, e.g.
-# GF_SSH='wsl -d <distro> -- ssh'.
-SSH = shlex.split(os.environ.get('GF_SSH', 'ssh'))
-STORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_calibration.json')
+from gfbench import board, degc, data_path
+
+STORE = data_path('temp_calibration.json')
 
 
 def uapi_c(raw):
     """The UAPI.md factory conversion (B-equation NTC behind divider + gain)."""
-    adc_f = 1024.0 * 1.3
-    if raw <= 0 or raw >= adc_f:
-        return float('nan')
-    rinf = 10000.0 * math.exp(-3380.0 / 298.15)
-    r = 10000.0 / (adc_f / raw - 1.0)
-    return 3380.0 / math.log(r / rinf) - 273.15
-
-
-def board(cmd):
-    r = subprocess.run(SSH + ['-o', 'PreferredAuthentications=none',
-                              'root@' + HOST, cmd],
-                       capture_output=True, text=True, timeout=30)
-    return r.stdout.strip()
+    return degc(raw)
 
 
 def raws(samples=5, delay=1.0):
@@ -93,24 +76,36 @@ def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else 'watch'
 
     if mode == 'watch':
-        print('raw1(down) raw2(up)   uapi-C down/up   (ctrl-C to stop)')
-        while True:
+        seconds = float(sys.argv[2]) if len(sys.argv) > 2 else 60.0
+        print('raw1(down) raw2(up)   uapi-C down/up   (%.0f s)' % seconds)
+        t0 = time.time()
+        while time.time() - t0 < seconds:
             r1, r2 = raws(1, 0)
-            print('  %6.1f   %6.1f      %.2f / %.2f'
-                  % (r1, r2, uapi_c(r1), uapi_c(r2)))
+            if r1 is None:
+                print('  (no reading)')
+            else:
+                print('  %6.1f   %6.1f      %.2f / %.2f'
+                      % (r1, r2, uapi_c(r1), uapi_c(r2)), flush=True)
             time.sleep(2)
 
     elif mode == 'point':
-        measured = float(sys.argv[2])
+        try:
+            measured = float(sys.argv[2])
+        except (IndexError, ValueError):
+            print('point needs the thermometer reading in C (value)')
+            return 2
         note = sys.argv[3] if len(sys.argv) > 3 else ''
-        print('sampling raws (10 s)...')
+        print('sampling raws (10 s)...', flush=True)
         r1, r2 = raws()
+        if r1 is None:
+            print('no readings from the machine')
+            return 1
         data = load()
         data['points'].append({'measured_c': measured, 'raw1': r1, 'raw2': r2,
                                'note': note, 'when': time.strftime('%Y-%m-%d %H:%M:%S')})
         save(data)
-        print('recorded: measured %.2f C  raw1=%.1f raw2=%.1f  (%d points total)'
-              % (measured, r1, r2, len(data['points'])))
+        print('recorded: measured %.2f C  raw1=%.1f raw2=%.1f  (%d points total in %s)'
+              % (measured, r1, r2, len(data['points']), STORE))
 
     elif mode == 'fit':
         data = load()

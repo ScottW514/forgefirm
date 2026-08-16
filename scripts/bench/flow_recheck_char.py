@@ -35,36 +35,16 @@ the machine).
 Usage: flow_recheck_char.py [heater_pct] [window_s]   (default 50 30)
 Runs both flow and no-flow cases from a comparable loop state and
 prints the differential separation. Aborts if downstream passes 45 C.
+Drives the heater and pump directly: run with forgectrl and the
+controller stopped (the bench page's takeover does that). Runs on the
+board or from a host (gfbench: GF_HOST).
 """
-import math
-import os
-import shlex
-import subprocess
 import sys
 import time
 
-HOST = os.environ.get('GF_HOST')
-if not HOST:
-    raise SystemExit('set GF_HOST to the machine IP address')
-# ssh client used to reach the board; override for a wrapper, e.g.
-# GF_SSH='wsl -d <distro> -- ssh'.
-SSH = shlex.split(os.environ.get('GF_SSH', 'ssh'))
-F = 1024.0 * 1.3
-RD, BETA = 10000.0, 3380.0
-RINF = 10000.0 * math.exp(-3380.0 / 298.15)
+from gfbench import board, degc
+
 DOWN_ABORT_C = 45.0
-
-
-def degc(raw):
-    r = RD / (F / raw - 1.0)
-    return BETA / math.log(r / RINF) - 273.15
-
-
-def board(cmd):
-    r = subprocess.run(SSH + ['-o', 'PreferredAuthentications=none',
-                              'root@' + HOST, cmd],
-                       capture_output=True, text=True, timeout=30)
-    return r.stdout.strip()
 
 
 def sample():

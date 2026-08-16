@@ -8,6 +8,11 @@ sweep: step the PWM duty register through known values with pauses so
 The duty register (PWMSAR) is the laser power SETPOINT only. No motion
 subsystem is touched (steppers are disabled before this runs), no
 stream runs, the laser latch is locked, FIRE is never asserted.
+
+Locked state only: run with the controller and forgectrl stopped (the
+bench page's takeover), the pulse device closed. The latch is relocked
+here as well, and the sweep refuses to write if the FIRE line reads
+driven or LASER_ON reads active. Usage: pwm_sweep.py [check|sweep]
 """
 import mmap, struct, sys, time
 
@@ -34,6 +39,26 @@ def dump_regs(m):
     return sar, pr
 
 
+def wr(name, val):
+    with open('/sys/glowforge/' + name, 'w') as f:
+        f.write(str(val))
+
+
+def locked_state():
+    """The latch commanded locked, FIRE not driven, no emission."""
+    try:
+        wr('cnc/laser_latch', 1)
+    except OSError as e:
+        print('!! could not lock the laser latch: %s' % e)
+        return False
+    time.sleep(0.2)
+    en, on = rd('cnc/laser_enable'), rd('cnc/laser_on')
+    if en != '0' or on != '0':
+        print('!! not the locked state: laser_enable=%s laser_on=%s' % (en, on))
+        return False
+    return True
+
+
 def safety_readback():
     print('cnc/state          =', rd('cnc/state'))
     print('cnc/laser_on       =', rd('cnc/laser_on'))
@@ -56,6 +81,9 @@ with open('/dev/mem', 'r+b') as f:
     sar0, pr = dump_regs(m)
 
     if mode == 'sweep':
+        if not locked_state():
+            m.close()
+            sys.exit(2)
         period = pr + 2
         steps = [(64, '50%'), (32, '25%'), (96, '75%'), (8, '6%'), (127, '100%')]
         print('--- duty sweep: 4 s per step, watch the scope')

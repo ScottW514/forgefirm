@@ -1,20 +1,26 @@
 #!/usr/bin/env python3
 """Bench drill for the starved-re-check escalation path.
 
-Runs ON THE BOARD against a controller started with a short
-confirmation budget (GFCOOL_CONFIRM_MAX_S=45; see the runbook for the
-manual start line). With the pump off, the job-start check reads
+Runs ON THE BOARD with the controller running. The cooling engine's
+confirmation budget (`cool_confirm_max_s`, re-read at every run start)
+is set to a short value for the drill through forgectrl's settings and
+restored afterward. With the pump off, the job-start check reads
 over-limit -> SUSPECT; the cooked stagnant loop then cannot pass the
-settle gate within 45 s, so the budget expires and the driver must
-escalate: "COOLANT FLOW FAULT: no clean re-check within 45 s".
+settle gate within the budget, so it expires and the engine must
+escalate: "COOLANT FLOW FAULT: no clean re-check within N s".
 
+Usage: flow_escalate_drill.py [budget_s]   (default 60, the setting's minimum)
 Prints PASS/FAIL and leaves the machine idle: M9 sent, pump on,
-heater off.
+heater off, the budget setting as it was.
 """
 import select
 import socket
+import sys
 import time
 
+from gfbench import forgectrl_post, setting
+
+BUDGET_S = int(sys.argv[1]) if len(sys.argv) > 1 else 60
 T0 = time.monotonic()
 
 
@@ -57,6 +63,14 @@ def wait_msg(substrs, deadline):
     return None
 
 
+budget_was = setting('cool_confirm_max_s')       # None = not set (compiled default)
+st, body = forgectrl_post('/settings', data={'cool_confirm_max_s': str(BUDGET_S)})
+if st != 200:
+    log('!! could not set cool_confirm_max_s=%d (POST /settings -> %s %s)' % (BUDGET_S, st, body))
+    s.close()
+    sys.exit(2)
+log('cool_confirm_max_s=%d for the drill (was %s)' % (BUDGET_S, budget_was or 'unset'))
+
 ok = True
 try:
     time.sleep(0.5)
@@ -67,10 +81,19 @@ try:
     if wait_msg(['FLOW SUSPECT'], el() + 180) is None:
         log('!! no SUSPECT within 180 s')
         ok = False
-    elif wait_msg(['no clean re-check within'], el() + 120) is None:
-        log('!! no escalation FAULT within 120 s of the suspect')
+    elif wait_msg(['no clean re-check within'], el() + BUDGET_S + 75) is None:
+        log('!! no escalation FAULT within %d s of the suspect' % (BUDGET_S + 75))
         ok = False
 finally:
+    try:
+        if budget_was is None:
+            st, _ = forgectrl_post('/settings', params={'cool_confirm_max_s': ''})
+        else:
+            st, _ = forgectrl_post('/settings', data={'cool_confirm_max_s': str(budget_was)})
+        log('cool_confirm_max_s restored to %s (-> %s)' % (budget_was or 'unset', st))
+    except OSError as e:
+        log('!! could not restore cool_confirm_max_s: %s' % e)
+        ok = False
     try:
         s.sendall(b'M9\n')
         time.sleep(1.0)
@@ -83,3 +106,4 @@ finally:
     log('--- M9 sent, pump on, heater off')
 
 print('ESCALATION DRILL %s' % ('COMPLETE' if ok else 'FAILED'), flush=True)
+sys.exit(0 if ok else 1)

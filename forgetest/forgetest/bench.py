@@ -12,10 +12,14 @@ so the catalog of what exists is complete, with Start disabled.
 Safety classes:
   dry       reads or dry motion, no emission, forgectrl stays up
   takeover  needs forgectrl stopped and the pulse device free
+  scope     a takeover whose result only means something with the named
+            instrument on the bench (a scope on LASER_PWM / LASER_ON)
   live      laser emission possible (operator acknowledgment required)
-  scope     needs bench instrumentation on top of the class before it
 
-Bench runs are recorded in <data>/bench.jsonl and never enter a campaign.
+The tools that also run from a LAN host (gfbench.py: GF_HOST) run on the
+board here with GF_HOST=127.0.0.1, the panel token in GF_TOKEN, and
+their data files under FORGETEST_BENCH_DATA (<data>/bench/). Bench runs
+are recorded in <data>/bench.jsonl and never enter a campaign.
 """
 import json
 import os
@@ -69,20 +73,23 @@ TOOLS = [
      "desc": "Creeps toward a rail in bounded jog segments, detects the contact jolt, jog-cancels and backs off."},
     # -- board-side, takeover / scope ------------------------------------------
     {"id": "pwm-sweep", "title": "LASER_PWM scope sweep", "script": "pwm_sweep.py",
-     "safety": "scope", "where": "board", "ported": False,
+     "safety": "scope", "where": "board", "ported": True,
      "args": [_arg("mode", "choice", "check", "check = read-only, sweep = duty staircase", ["check", "sweep"])],
-     "desc": "check: readbacks + PWM2 dump; sweep: PWMSAR through 50/25/75/6/100 percent with 4 s holds. Locked state only."},
+     "desc": "check: readbacks + PWM2 dump; sweep: PWMSAR through 50/25/75/6/100 percent with 4 s holds. "
+             "Locked state (the takeover): latch relocked, refuses if FIRE or LASER_ON reads active."},
     {"id": "pwm-hold", "title": "LASER_PWM scope hold", "script": "pwm_hold.py",
-     "safety": "scope", "where": "board", "ported": False,
+     "safety": "scope", "where": "board", "ported": True,
      "args": [_arg("sar", "int", 64, "PWMSAR value"), _arg("seconds", "int", 10, "hold time")],
-     "desc": "Holds one PWMSAR value for a scope window, then restores. Locked state only."},
+     "desc": "Holds one PWMSAR value for a scope window, then restores. Locked state (the takeover): "
+             "latch relocked, refuses if FIRE or LASER_ON reads active."},
     {"id": "fire-test", "title": "FIRE drop-timing test (A/B/U)", "script": "fire_test.py",
      "safety": "takeover", "where": "board", "ported": True,
      "args": [_arg("mode", "choice", "A", "A latch locked, B unlocked/unarmed, U true underrun", ["A", "B", "U"])],
      "desc": "Duty 0 throughout; refuses to unlock if HV reports good. Software witnesses + the PSU-connector LASER_ON scope point."},
     {"id": "pwm-stream", "title": "LASER_PWM stream-path test", "script": "pwm_stream_test.py",
-     "safety": "takeover", "where": "board", "ported": False, "args": [],
-     "desc": "Streams power bytes only (no steps, no FIRE, motor_lock=15, latch locked) through /dev/glowforge."},
+     "safety": "takeover", "where": "board", "ported": True, "args": [],
+     "desc": "Streams power bytes only (no steps, no FIRE, motor_lock=15, latch locked) through /dev/glowforge; "
+             "PASS = counters unmoved, idle at the end, no FIRE/emission read back. The scope on LASER_PWM sees the duty steps."},
     {"id": "gate-a-kernel", "title": "Kernel laser-safety drills K1/K2/K3", "script": "gate_a_kernel_drills.py",
      "safety": "takeover", "where": "board", "ported": True,
      "args": [_arg("drill", "choice", "K1", "K1 stop floor, K2 resume honors latch, K3 mid-ramp unlock", ["K1", "K2", "K3"])],
@@ -97,50 +104,77 @@ TOOLS = [
      "safety": "dry", "where": "board", "ported": True, "args": [],
      "desc": "One M8 session walks the verdict state machine through real pump-off transients; PASS/FAIL per transition."},
     {"id": "flow-escalate", "title": "Coolant starved re-check escalation drill", "script": "flow_escalate_drill.py",
-     "safety": "dry", "where": "board", "ported": False, "args": [],
-     "desc": "With the pump off the job-start check reads SUSPECT and the driver must escalate to FAULT."},
+     "safety": "dry", "where": "board", "ported": True,
+     "args": [_arg("budget_s", "int", 60, "cool_confirm_max_s for the drill (60-3600), restored after")],
+     "desc": "With the pump off the job-start check reads SUSPECT and the engine must escalate to FAULT when "
+             "the confirmation budget expires; the budget setting is shortened for the drill and restored."},
     {"id": "flow-characterize", "title": "Coolant flow characterization", "script": "flow_characterize.py",
-     "safety": "dry", "where": "host", "ported": False,
+     "safety": "takeover", "where": "board", "ported": True,
      "args": [_arg("duty", "int", 30, "heater duty percent")],
-     "desc": "Baseline -> flow -> no-flow -> recovery with the factory temperature curve; aborts past 45 C downstream."},
+     "desc": "Baseline -> flow -> no-flow -> recovery with the factory temperature curve; aborts past 45 C "
+             "downstream. Drives the heater and pump directly (about 9 minutes)."},
     {"id": "flow-sustained", "title": "Coolant sustained re-check run", "script": "flow_sustained.py",
-     "safety": "dry", "where": "host", "ported": False, "args": [],
+     "safety": "dry", "where": "board", "ported": True,
+     "args": [_arg("minutes", "float", 30.0, "how long to hold M8")],
      "desc": "Long run of the real re-check cadence via M8: verdicts, false faults, loop heat accumulation."},
     {"id": "flow-warm", "title": "Coolant warm-baseline validation", "script": "flow_warm_validate.py",
-     "safety": "dry", "where": "host", "ported": False, "args": [],
-     "desc": "Runs the real check from a heater-warmed baseline."},
+     "safety": "takeover", "where": "board", "ported": True,
+     "args": [_arg("cycles", "int", 3, "cycles per case (flow / no-flow)")],
+     "desc": "Runs the real check (40 percent / 50 s, cut-profile fans) from a heater-warmed baseline, alternating "
+             "flow and no-flow; results to the bench data directory. Slow: about 15 minutes per cycle."},
     {"id": "flow-recheck", "title": "Coolant re-check characterization", "script": "flow_recheck_char.py",
-     "safety": "dry", "where": "host", "ported": False, "args": [],
-     "desc": "Short in-run re-checks and the differential metric."},
+     "safety": "takeover", "where": "board", "ported": True,
+     "args": [_arg("heater_pct", "int", 50, "heater duty percent"), _arg("window_s", "int", 30, "re-check window")],
+     "desc": "Short in-run re-checks and the differential metric, flow vs no-flow from a settled loop; "
+             "aborts past 45 C downstream (about 5 minutes)."},
+    {"id": "flow-matrix", "title": "Coolant flow-detection design matrix", "script": "flow_matrix.py",
+     "safety": "takeover", "where": "board", "ported": True,
+     "args": [_arg("duties", "str", "10,15,20,30,40,50", "heater duties, percent, comma-separated"),
+              _arg("repeats", "int", 5, "interleaved repeats per case")],
+     "desc": "duty x flow/no-flow x repeats from a common cooled baseline; cost and precision tables and a "
+             "ranked shortlist (the derivation of cool_flow_rise). Very slow: about 1.6 h for the full matrix; "
+             "resumable from the results file in the bench data directory."},
     {"id": "flow-sampler", "title": "Coolant sampler", "script": "flow_sampler.py",
      "safety": "dry", "where": "board", "ported": True,
      "args": [_arg("duration_s", "int", 30, "capture length"), _arg("interval_s", "float", 1.0, "sample interval")],
      "desc": "Prints elapsed,raw_down,raw_up at the interval; the sampler behind the flow tools."},
     {"id": "temp-calibrate", "title": "Coolant temperature spot-check", "script": "temp_calibrate.py",
-     "safety": "dry", "where": "host", "ported": False,
+     "safety": "dry", "where": "board", "ported": True,
      "args": [_arg("mode", "choice", "watch", "watch / point / fit", ["watch", "point", "fit"]),
-              _arg("measured_c", "float", None, "thermometer reading for point")],
-     "desc": "Pairs a measured temperature with averaged raw readings; fits a per-machine line."},
+              _arg("value", "str", None, "point: the thermometer reading in C; watch: seconds (default 60)")],
+     "desc": "Pairs a measured temperature with averaged raw readings; fits a per-machine line. Points "
+             "accumulate in the bench data directory."},
     {"id": "fan-test", "title": "Fan/coolant bench", "script": "fan_test.py",
-     "safety": "dry", "where": "host", "ported": False, "args": [],
-     "desc": "Snapshots fan PWMs/tachs/temps, drives M8 -> cut fans, M9 -> cooldown -> idle. Host-side; port pending."},
+     "safety": "dry", "where": "board", "ported": True, "args": [],
+     "desc": "Snapshots fan PWMs/tachs/temps, drives M8 -> cut fans, M9 -> cooldown -> idle; the tach "
+             "readbacks in each snapshot are the evidence."},
     # -- laser (live) --------------------------------------------------------------
     {"id": "live-fire", "title": "LIVE laser drills", "script": "live_fire_drills.py",
-     "safety": "live", "where": "board", "ported": False,
-     "args": [_arg("drill", "choice", "witness", "witness / hold / faultpos", ["witness", "hold", "faultpos"])],
-     "argv_fixed_after": ["127.0.0.1"],
-     "desc": "Emission witness, disarm grace in Hold, stale-origin refusal. The operator's arm press is required for every drill."},
+     "safety": "live", "where": "board", "ported": True,
+     "args": [_arg("drill", "choice", "witness", "witness / hold / faultpos / ircut / expstop / ctrlstart",
+                   ["witness", "hold", "faultpos", "ircut", "expstop", "ctrlstart"]),
+              _arg("power", "int", 1000, "ircut: S value"), _arg("feed", "int", 300, "ircut: F value")],
+     "desc": "Emission witness, disarm grace in Hold, stale-origin refusal, lid-IR characterization cut, armed "
+             "kill on the expected-stop path (+ the separate controller restart). The operator's arm press is "
+             "required for every drill; eye protection, fire watch, extinguisher, exhaust."},
     # -- host-side harnesses (CI) ------------------------------------------------------
     {"id": "laser-stream-test", "title": "Laser pulse-stream emission harness", "script": "laser_stream_test.py",
      "safety": "dry", "where": "host", "ported": False, "args": [],
-     "desc": "Null-sink controller stream capture against the feeder contract. Runs in the grblHAL repo's CI."},
+     "desc": "Null-sink controller stream capture against the feeder contract. A CI harness (the grblHAL repo): "
+             "it needs the host-built null-sink controller, not the machine, so it is not a bench-page tool."},
     {"id": "laser-lifecycle-test", "title": "Armed-window lifecycle harness", "script": "laser_lifecycle_test.py",
      "safety": "dry", "where": "host", "ported": False, "args": [],
-     "desc": "Arm/disarm lifecycle on the null-sink controller. Runs in the grblHAL repo's CI."},
+     "desc": "Arm/disarm lifecycle on the null-sink controller. A CI harness (the grblHAL repo): needs the "
+             "host-built null-sink controller, not the machine, so it is not a bench-page tool."},
     {"id": "puls-profile", "title": "Factory .puls profile decoder", "script": "puls_profile.py",
      "safety": "dry", "where": "host", "ported": False, "args": [],
-     "desc": "Decodes factory pulse streams into velocity/accel profiles. Runs anywhere; needs a .puls file."},
+     "desc": "Decodes factory pulse streams into velocity/accel profiles. Runs anywhere; needs a .puls file "
+             "(the reference captures live off the machine), so it is not a bench-page tool."},
 ]
+
+# Files in scripts/bench that are not tools of their own: the helper module
+# the host/board tools share, and the C feeder + build scripts (not python).
+NOT_TOOLS = ("gfbench.py",)
 
 
 class Bench:

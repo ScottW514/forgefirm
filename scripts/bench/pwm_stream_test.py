@@ -12,8 +12,12 @@ Safety posture:
 - laser_latch re-asserted locked; lid closed; HV watchdog untouched.
 - Position counters compared before/after - must be identical.
 - streaming stays 0: end-of-data is a normal completion.
+
+Runs with the controller and forgectrl stopped (the bench page's
+takeover). Exit status 0 when the counters did not move, the run ended
+in an idle state and no FIRE/emission was read back; 1 otherwise.
 """
-import fcntl, mmap, os, struct, time
+import fcntl, mmap, os, struct, sys, time
 
 TICK_HZ = 10000
 PWM2_BASE = 0x02084000
@@ -88,15 +92,18 @@ try:
     dt = time.time() - t0
     print('done: state=%s after %.1f s' % (state, dt))
     pos_after = rd_pos()
-    print('post: pos before=%s after=%s  MOVED=%s'
-          % (pos_before, pos_after, pos_before[:3] != pos_after[:3]))
+    moved = pos_before[:3] != pos_after[:3]
+    print('post: pos before=%s after=%s  MOVED=%s' % (pos_before, pos_after, moved))
+    en, on, sampled = rd('cnc/laser_enable'), rd('cnc/laser_on'), rd('cnc/laser_on_sampled')
     print('post: laser_enable=%s laser_on=%s laser_on_sampled=%s faults=%s underruns=%s'
-          % (rd('cnc/laser_enable'), rd('cnc/laser_on'),
-             rd('cnc/laser_on_sampled'), rd('cnc/faults'), rd('cnc/underruns')))
+          % (en, on, sampled, rd('cnc/faults'), rd('cnc/underruns')))
     print('post: PWMSAR=%d  (duty after end-of-data)' % pwmsar())
+    ok = (not moved) and state == 'idle' and en == '0' and on == '0' and sampled == '0'
 finally:
     fcntl.flock(fd, fcntl.LOCK_UN)
     os.close(fd)
 
 wr('cnc/disable', 1)
 print('safe state restored: state=%s' % rd('cnc/state'))
+print('RESULT %s' % ('PASS' if ok else 'FAIL'))
+sys.exit(0 if ok else 1)

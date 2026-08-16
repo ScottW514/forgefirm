@@ -29,6 +29,7 @@ pins; the coverage lint is `python3 -m forgetest.coverage --manifest ...`.
 | `FORGETEST_MANIFEST` | `/etc/forgefirm-manifest.json` | the image manifest |
 | `FORGETEST_PORT`, `FORGETEST_HOST` | 8090, 0.0.0.0 | listener |
 | `FORGETEST_BENCH_DIR` | `/usr/share/forgetest/bench` | the installed bench scripts |
+| `FORGETEST_BENCH_DATA` | `<FORGETEST_DATA>/bench` | passed to bench tools: where they keep their data files (with `GF_HOST=127.0.0.1` and the panel token in `GF_TOKEN`) |
 | `FORGETEST_MARKER` | `/run/forgetest.active` | takeover marker |
 | `FORGECTRL_URL`, `FORGECTRL_TOKEN_FILE` | `http://127.0.0.1:8080`, `/data/forgefirm/panel.token` | forgectrl client |
 | `GF_SYSFS_ROOT` | `/sys/glowforge/` | kernel module sysfs |

@@ -10,43 +10,17 @@ climbs. This measures both signatures and prints the separation.
 Phases: baseline (heater off) -> flow (heater on, pump on) -> no-flow
 (pump off) -> recovery (pump on). Restores heater off / pump on.
 
-Run with the controller stopped, or accept that it will fight you: the
-driver only writes the heater on M8/M9 transitions, so an idle driver
-leaves this alone.
+Drives the heater and pump directly, so it runs with forgectrl (the
+thermal-hardware owner) and the controller stopped: the bench page's
+takeover does that; from a host, stop them first. Runs on the board or
+from a host (gfbench: GF_HOST).
+
+Usage: flow_characterize.py [heater_pct]   (default 10)
 """
-import math
-import os
-import shlex
-import subprocess
 import sys
 import time
 
-HOST = os.environ.get('GF_HOST')
-if not HOST:
-    raise SystemExit('set GF_HOST to the machine IP address')
-# ssh client used to reach the board; override for a wrapper, e.g.
-# GF_SSH='wsl -d <distro> -- ssh'.
-SSH = shlex.split(os.environ.get('GF_SSH', 'ssh'))
-
-# Factory B-equation conversion (see kernel-module-glowforge/UAPI.md).
-F = 1024.0 * 1.3
-RD = 10000.0
-BETA = 3380.0
-RINF = 10000.0 * math.exp(-3380.0 / 298.15)
-
-
-def degc(raw):
-    if raw <= 0 or raw >= F:
-        return float('nan')
-    r = RD / (F / raw - 1.0)
-    return BETA / math.log(r / RINF) - 273.15
-
-
-def board(cmd):
-    r = subprocess.run(SSH + ['-o', 'PreferredAuthentications=none',
-                              'root@' + HOST, cmd],
-                       capture_output=True, text=True, timeout=30)
-    return r.stdout.strip()
+from gfbench import board, degc
 
 
 def sample():
