@@ -2909,21 +2909,23 @@ domain forgectrl does not touch.**
       carries the fast sanitizer, the init-script default rules, and the
       catalog; nothing else in the logging system is pending.
 
-15. **Release acceptance tool (forgetest) - CODE-COMPLETE 2026-08-15,
-    host- and build-verified; bench validation pending, ships with the
-    next full image flash.** Contract: `docs/ACCEPTANCE.md`; catalog v1
-    complete (24 tests, coverage lint enforced in CI, rule in
-    `CLAUDE.md`). **Images for the flash are archived under
-    `images/20260815193946/`** (release `…193946` + dev `…194415`, one
-    tree; the two manifests share the acceptance identity, the release
-    image carries no forgetest). Remaining, in order: (a) bench: boot
-    that dev image, run the catalog from `:8090` - the takeover, motion,
-    cooling, live
-    and cloud tests are ports of proven scripts and need their first run
-    on the machine (expect pass-criteria tuning: fan tach tolerance,
-    snapshot size floor, timeouts) - export, and drive one UI-only pin
-    bump to prove the inherited/required split; (b) the remaining
+15. **Release acceptance tool (forgetest) - BENCH-VALIDATED 2026-08-16.**
+    Contract: `docs/ACCEPTANCE.md`; catalog v1 (26 tests, coverage lint
+    enforced in CI, rule in `CLAUDE.md`). The full catalog ran on the
+    dev image `20260815215332` through the tool - takeover, motion,
+    cooling, camera, cloud, and the live tests from the page - to 26 of
+    26 and an export the gate authorizes against the image's manifest;
+    the campaign rules (domain-scoped inheritance, the always-required
+    core, FAIL/ERROR closing a campaign, implementation and component
+    changes invalidating exactly their domains) behaved as specified
+    across the day's closures; the baseline rule was added on the way
+    (record in "Release acceptance" above). Remaining: (a) the
+    confirmation campaign on the **next flashed image** (it carries the
+    day's tool fixes and the forgectrl changes; every domain forgectrl
+    does not touch inherits) - the tool on the bench is the tree, but a
+    hot-patched image is not the image that ships; (b) the remaining
     bench-tab ports (scope tools, host-side flow characterization, the
     live drills - the catalog carries their acceptance forms); (c) the
-    first release runs the full
-    campaign and commits `releases/v<version>/acceptance.json`.
+    first release runs the full campaign and commits
+    `releases/v<version>/acceptance.json` - **not yet: no release is
+    cut.**
