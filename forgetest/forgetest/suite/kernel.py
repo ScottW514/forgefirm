@@ -33,7 +33,8 @@ LATCH_BIT = 1 << 3
 TICK_HZ = 10000
 FIRE = b"\x10"
 PAD = b"\x00"
-XSTEP = b"\x01"
+XSTEP = b"\x01"                 # +X (DIR clear)
+XSTEP_BACK = b"\x03"            # -X (DIR set)
 POWER0 = bytes([0x80])          # power byte, duty 0
 
 _KERNEL_COVERS = [("kernel-module-glowforge", "**"), ("linux-fslc", "**")]
@@ -251,7 +252,9 @@ def k1_k2(ctx):
         ctx.log("K1 PASS: decelerating tail %.4f s, no burst, no fault", dt)
 
         # ---- K2
-        step_sec = (XSTEP + PAD * 4) * 1000     # 1000 X steps at 2 kHz (masked)
+        # 1000 X steps out and 1000 back at 2 kHz (masked by motor_lock):
+        # the position counters end where they started
+        step_sec = (XSTEP + PAD * 4) * 1000 + (XSTEP_BACK + PAD * 4) * 1000
         stream = (POWER0 + PAD * TICK_HZ + step_sec + PAD * (TICK_HZ // 2)
                   + FIRE * (2 * TICK_HZ) + PAD * TICK_HZ)
         ctx.log("K2: %d bytes = %.1f s; latch stays LOCKED; waypoint +200; motor_lock=15",
@@ -283,9 +286,8 @@ def k1_k2(ctx):
                         "underruns": rd("cnc/underruns"), "faults": rd("cnc/faults")}
             ctx.log("K2 done: state=%s pos before=%s after=%s", state, pos_before, pos_after)
         ctx.check(not hits, "K2: laser asserted with the latch locked: %s", hits[:10])
-        if pos_before[:3] == pos_after[:3]:
-            ctx.log("K2 NOTE: position did not advance under motor_lock (waypoint completion "
-                    "unconfirmed by the counter on this board)")
+        ctx.check(pos_before[:3] == pos_after[:3],
+                  "K2: position counters did not return to start (%s -> %s)", pos_before[:3], pos_after[:3])
         ctx.log("K2 PASS: FIRE window replayed after the resume waypoint with "
                 "laser_enable/laser_on at 0 throughout")
 
