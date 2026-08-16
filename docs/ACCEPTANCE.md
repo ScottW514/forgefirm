@@ -126,13 +126,20 @@ forgectrl restarts, so the supervisor's liveness probe runs on the machine
 it expects. The runner waits for forgectrl's supervisor to settle (motion
 verified, or the ladder's verdict) before and after every takeover.
 
-**Reboot before a campaign.** forgetest takes a **fresh-boot reference**
-once per boot (`/data/forgetest/boot-<boot_id>.json`, taken only within
-the first ten minutes after boot, after the supervisor settles): the whole
-idle picture of this machine as the image boots it. It is the session's
-resting lid-lamp level and the check on the fixed values; without one the
-lamp level is unknown and the page says so. Position counters cannot be
-written back - a run that shifts them is reported and must be fixed.
+**Power-cycle before a campaign.** forgetest takes a **fresh-boot
+reference** once per boot (`/data/forgetest/boot-<boot_id>.json`, taken
+only within the first ten minutes after boot, after the supervisor
+settles): the whole idle picture of this machine as the image boots it. It
+is the session's resting lid-lamp level and the check on the fixed values;
+without one the lamp level is unknown and the page says so. Take it after
+a **power cycle**, not a warm `reboot`: the PIC lights the lid lamp at
+power-on (132), and a warm reboot leaves it dark because the module's
+remove path turns it off - the machine's true fresh state is the lit one.
+A displaced head is jogged back along its own path by the kernel-measured
+X/Y delta (bounded to 100 mm; Z is never touched); beyond that the
+counters are reported and the run must be fixed. A run that legitimately
+re-zeroes the counters (cloud mode's connect) tells the runner so
+(`ctx.counters_rezeroed()`) and hands the head back itself.
 
 ## The gate
 
