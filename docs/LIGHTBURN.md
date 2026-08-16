@@ -35,7 +35,8 @@ The laser fires only inside an operator-armed window:
   cancels the wait at any time. Opening the lid (or a Pro's interlock
   loop) while the button is lit cancels the job the same way — the
   message names the reason, the latch relocks, and a press with the lid
-  open never arms; close the lid, clear the alarm, and start again.
+  open never arms; the job ends for LightBurn (a clean cancel, no alarm to
+  clear); close the lid and start again.
 - One press covers one job — power changes and M5/M3 toggles do not
   re-prompt. The window relocks when the job ends (program end
   `M2`/`M30`), when the sender connection changes, or after

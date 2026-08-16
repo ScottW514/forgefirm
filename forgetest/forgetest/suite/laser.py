@@ -436,9 +436,9 @@ def kill_mid_fire(ctx):
              "When the white button lights, do NOT press it: open the lid instead."],
       description="Start a laser job so the controller unlocks the latch and lights the button, "
                   "then open the lid while it waits. The wait must abort with the lid named as the "
-                  "reason and alarm 3, the armed window closed (armed -> false), the kernel latch "
-                  "back to locked, and no emission; closing the lid and clearing the alarm returns "
-                  "the controller to Idle. No press is given, so nothing can fire.")
+                  "reason, cancelled with a soft reset (no alarm - nothing to unlock), the armed "
+                  "window closed (armed -> false), the kernel latch back to locked, and no emission; "
+                  "the controller ends Idle. No press is given, so nothing can fire.")
 def arm_wait_lid(ctx):
     ev = ctx.evidence
     with ctx.grbl() as g, LiveJob(ctx, g):
@@ -463,14 +463,15 @@ def arm_wait_lid(ctx):
         while time.time() - t1 < 15:
             ctx.checkpoint()
             text += g.drain()
-            if "job cancelled" in text and "ALARM:3" in text:
+            if "job cancelled" in text and "help]" in text:
                 break
             time.sleep(0.1)
         ev["messages"] = [ln for ln in text.splitlines() if ln.startswith("[MSG:") or ln.startswith("ALARM")]
         ctx.log("controller: %s", ev["messages"])
         ctx.check("lid opened during arm - job cancelled" in text,
                   "the lid open was not reported as cancelling the arm")
-        ctx.check("ALARM:3" in text, "no alarm 3 after the lid-open cancel")
+        ctx.check("help]" in text, "no reset banner after the lid-open cancel (it must be a clean cancel)")
+        ctx.check("ALARM" not in text, "an alarm was raised on the lid-open cancel")
         # Armed window closed and the kernel latch locked.
         t2 = time.time()
         s = None
@@ -489,11 +490,10 @@ def arm_wait_lid(ctx):
         ctx.check(not ev["emission"], "emission_samples nonzero (%s) - nothing may have fired", ev["emission"])
         ctx.instruct("Close the lid, then click Done.")
         ctx.sleep(1)
-        ctx.log("unlock: %s", g.command("$X"))
         st = g.status_report()["state"]
         ev["state_after"] = st
-        ctx.check(st.startswith("Idle"), "controller is %s after $X, expected Idle", st)
-    ctx.log("PASS: lid open during the arm wait cancelled the job (alarm 3), armed=false, latch locked")
+        ctx.check(st.startswith("Idle"), "controller is %s after the cancel, expected Idle (no unlock needed)", st)
+    ctx.log("PASS: lid open during the arm wait cancelled the job (clean reset, no alarm), armed=false, latch locked")
 
 
 @test("laser.lid-cancel-mid-fire", title="Lid open mid-burn: beam off in hardware, job cancelled, head home",

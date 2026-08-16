@@ -18,8 +18,8 @@ reported messages:
      armed message appears
   6. with a switch source present (GF_SWITCH_FILE), the arm blocks on the
      button: a press with the lid closed arms, and the lid or the
-     interlock loop opening during the wait cancels the job (alarm,
-     latch relocked, never armed)
+     interlock loop opening during the wait cancels the job (a clean
+     soft reset, no alarm; latch relocked, never armed)
   7. outside the arm wait the button is the pause/resume toggle: a press
      while running feed-holds, a press while held resumes; the arming
      press itself is not a pause press
@@ -433,8 +433,10 @@ def test_lid_open_in_wait():
         s.set_switches(SW_LID_OPEN)
         if not wait_for(s.log, LID_CANCEL, 5, s.sock):
             fail("[lid-in-wait] lid open during the wait was not reported as a cancel")
-        if not wait_for(s.log, "ALARM:3", 5, s.sock):
-            fail("[lid-in-wait] no alarm after the lid-open cancel")
+        if not wait_for(s.log, "for help]", 5, s.sock):
+            fail("[lid-in-wait] no reset banner after the lid-open cancel (a clean cancel, not an alarm)")
+        if "ALARM" in "".join(s.log):
+            fail("[lid-in-wait] an alarm was raised on the lid-open cancel")
         # Press with the lid still open: nothing may arm.
         s.set_switches(1 << 2)
         read_avail(s.sock, s.log, 1.0)
