@@ -28,7 +28,8 @@ def flow_verify(ctx):
     ctx.check(not body.get("running"), "a diagnostic is already running (%s)", body.get("tool"))
     st, body = fc.post("/diag/flow-verify")
     ctx.log("POST /diag/flow-verify -> %s %s", st, body if isinstance(body, dict) else "")
-    ctx.check(st == 200, "could not start flow-verify (%s %s)", st, body)
+    ctx.check(st == 202 and isinstance(body, dict) and body.get("started") is True,
+              "could not start flow-verify (%s %s)", st, body)
     last_phase = None
     result = None
     t0 = time.time()
