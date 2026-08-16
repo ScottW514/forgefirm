@@ -1446,7 +1446,7 @@ item 15.
 **Bench campaign opened 2026-08-15 on the flashed dev image
 `20260815194415` (manifest identity `2d69a61e…`, equal to the release
 build's).** The tool came up on `:8090` with all 24 tests required.
-Passed so far, driven through the API with the operator present:
+Passed that day, driven through the API with the operator present:
 `image.health` (kernel options, module + 16 MiB ring, forgectrl holding
 `/dev/glowforge`, K80 controllers before K90 forgectrl, 0600 token and
 settings, 2.6 GiB free on /data), `kernel.latch-locked-idle` (interlock
@@ -1459,8 +1459,65 @@ answer 200 to the token alone; the endpoint is two-factor (token AND the
 physical button held) by design, so the test now asserts both refusals
 and never fetches the identity (a 200 would have put the fuse password
 in the result log). That FAIL closed the first campaign, as the rules
-say; the second campaign holds the passes. Next: the takeover drills,
-motion, cooling, camera, cloud, then the live tests from the page.
+say; the second campaign held the passes.
+
+**2026-08-16, dev image `20260815215332` (26-test catalog), campaign
+`c-20260816171010-cd59`: 14 of 26 satisfied** - the always-required core
+`image.health`, `kernel.latch-locked-idle`, `kernel.k1-k2` (controlled
+stop 0.09 s, no burst; K2 FIRE window replayed after the resume waypoint
+with laser_enable/laser_on 0 throughout, counters back to start),
+`kernel.k3-unlock` (mid-ramp unlock drives the latch pin, FIRE drive stays
+0), `kernel.fire-abu` (A: no FIRE drive under the lock; B: FIRE driven,
+LASER_ON off with the chain unarmed, FIRE clear at end-of-data; U: true
+underrun, backstop drops FIRE, stop acks) and `cooling.flow-verify`
+(flow 9.5 / threshold 14.4 / no-flow 16.4 C, margins 4.9/2.0, not
+thin), plus `camera.snapshot` (lid snapshot half/full + a stream, operator
+confirmed the bed) and the seven forgectrl/logs/update tests, which
+re-passed on this image and then **inherited across two campaign
+closures** - the domain-scoped inheritance and the always-required core
+behaved as specified. Two campaigns closed by test-side FAILs, both
+fixed: forgectrl answers a started diagnostic with 202 (the test asserted
+200); and the takeover wrapper returned as soon as `forgectrl start`
+succeeded, so the next test found the machine busy under the
+supervisor's liveness probe (`409 machine is not idle`).
+
+**The important finding of the day (machine-side symptom, tool-side
+cause):** after the kernel takeover tests, forgectrl's supervisor reported
+NO MOTION on its liveness probe, ran the rail-off ladder (5/15/30 s), and
+once ended in `motion-fault` - the driver-wedge signature. The cause was
+`cnc/motor_lock=15` left behind by the takeover drills (they mask every
+axis and never restored the mask), and the supervisor's probe does not
+reset the mask: its steps were masked, so no motion by construction. Real
+probes read head-accel p2p 1779-2857; the masked ones 144-480; the two
+"MOTION OK" ladder recoveries seen under the mask (p2p 541 and 718)
+were false positives against the fixed `>=500` threshold, plausibly the
+rail re-energize jolt. Two consequences: (1) **the rule, from the
+operator: every test starts from, and leaves, the fresh-boot idle state
+(atomic clean start), and the baseline is taken after a reboot** - the
+runner now brackets every test and bench tool with a baseline pass
+(`forgetest/baseline.py`, contract in `docs/ACCEPTANCE.md`), takes a
+fresh-boot reference once per boot, and takeover runs capture the
+controller-owned kernel attributes on entry and write them back before
+forgectrl restarts; the fresh-boot dump of this image (uptime 235 s)
+confirmed the fixed values (`motor_lock 8`, `x/y_mode 8`, `x/y_decay 1`,
+`step_freq 28160` - the controller's tick, not the probe's 10000 -
+`ramp_rate 125000`, hold currents 33/5, lamps and button LEDs 0, heater
+and TEC off). Proof: k1-k2 / k3 / fire-abu re-run under the baseline -
+counters (0,0,0) before and after, the probe verified in 3 s after every
+takeover, no ladder, `post: clean` every time. (2) Two forgectrl items
+for the operator's decision, not changed: the liveness probe should write
+`cnc/motor_lock=0` for its move (a leftover mask from any tool must not
+read as a wedge), and the `P2P_MOVING >= 500` threshold has little margin
+over the noise floor seen today (~480) against a real-move signature of
+~1800+ - a settle after the rail-on before sampling, or a threshold near
+1000, would keep a false MOTION OK from starting a controller on a dead
+machine. Also noted: at a fresh boot in GRBL mode `pic/lid_led` is 0 and
+nothing in the GRBL stack lights the lid lamp; the lit bed the bench was
+used to is cloud mode's `LLvl=132`, which persists across the switch back
+to GRBL - a resting-lamp setting in forgectrl would be a product
+decision. Next: the motion group (bed clear, head parked with free +X/+Y
+travel, operator-confirmed), fans-quiet, cloud, then the live tests from
+the page.
 
 ## Hardware facts bank (measured)
 
