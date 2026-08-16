@@ -3018,8 +3018,9 @@ dev image (the confirmation campaign's image).**
     button → pause with a 2000-tick laser-off backtrack, resume with a
     1950-tick laser-off lead; lid while paused → cancel + park).
     - **GRBL mode** (`grblHAL-glowforge/src/glowforge_switches.c`,
-      `glowforge_laser.c`): the arm wait aborts on lid or interlock (relock,
-      alarm 3, reason reported; a press with the lid open never arms); the
+      `glowforge_laser.c`): the arm wait cancels on lid or interlock (relock,
+      clean soft reset - no alarm, reason reported; a press with the lid open
+      never arms); the
       button is the pause/resume toggle outside the arm wait (feed hold /
       cycle start; the arming press is consumed and never a pause press);
       lid or interlock mid-job → the core parks the job (planned decel) and
