@@ -23,6 +23,7 @@ import time
 import traceback
 
 from . import artifact as _artifact
+from . import baseline as _baseline
 from . import campaign as _campaign
 from . import catalog as _catalog
 from . import hw
@@ -197,61 +198,46 @@ class Takeover:
     is started again on every exit path. Used by takeover tests (through
     Context.takeover()) and by takeover bench tools."""
 
+    # Controller-owned kernel attributes a takeover drill may change:
+    # captured on enter, written back on exit before forgectrl starts, so
+    # the supervisor's liveness probe runs on the machine it expects (a
+    # leftover motor_lock=15 masks the probe's steps: no motion by
+    # construction, a false driver-wedge verdict, the rail-off ladder).
+    PRESERVE = ("cnc/motor_lock", "cnc/step_freq", "cnc/ramp_rate", "cnc/streaming",
+                "cnc/x_mode", "cnc/y_mode", "cnc/x_decay", "cnc/y_decay",
+                "pic/x_step_current", "pic/y_step_current")
+
     def __init__(self, log, who):
         self.log = log            # callable(str)
         self.who = who
         self.marker = marker_path()
+        self.saved = {}
 
-    # forgectrl's supervisor probes motion liveness on every start (a
-    # small head move, verified by the accelerometer) and runs a rail-off
-    # ladder of up to ~70 s on a dead verdict; /mode reads
-    # controller=stopped/motion=unverified until that settles.
-    SETTLE_S = 150
+    def wait_settled(self):
+        return _baseline.Baseline(self.log).wait_settled()
 
-    def wait_settled(self, timeout=SETTLE_S, unreachable_s=10):
-        """Block until forgectrl reports a settled supervisor: motion
-        verified (the probe passed), motion-fault (the ladder exhausted),
-        or standby (the manual stop lever). Gives up after unreachable_s without an answer (a
-        started forgectrl listens within a second or two). Returns the
-        last /mode body (or None if unreachable)."""
-        log = self.log
-        t0 = time.time()
-        deadline = t0 + timeout
-        last = None
-        seen = None
-        heard = None
-        while time.time() < deadline:
+    def restore_attrs(self):
+        """Write the captured kernel attributes back and relock the latch."""
+        for attr, val in self.saved.items():
             try:
-                st, body = hw.Forgectrl().get("/mode")
-            except hw.HwError:
-                st, body = None, None
-            if st is None and heard is None and time.time() - t0 >= unreachable_s:
-                log("takeover: forgectrl unreachable for %d s - not waiting for it" % unreachable_s)
-                return None
-            if st == 200 and isinstance(body, dict):
-                heard = time.time()
-                last = body
-                key = (body.get("controller"), body.get("motion"))
-                if key != seen:
-                    seen = key
-                    log("takeover: /mode controller=%s motion=%s" % key)
-                # settled: the probe passed (verified) or gave its verdict
-                # (motion-fault); standby is the manual lever, nothing in flight
-                if (body.get("motion") == "verified"
-                        or body.get("controller") in ("motion-fault", "standby")):
-                    if body.get("controller") == "motion-fault":
-                        log("takeover: WARNING - motion liveness ladder failed, controllers "
-                            "are down (motion-fault); retry via POST /mode")
-                    return body
-            time.sleep(1.0)
-        log("takeover: WARNING - forgectrl did not settle within %d s (last /mode: %s)"
-            % (timeout, last))
-        return last
+                hw.sysfs_write(attr, val)
+            except OSError as e:
+                self.log("takeover: WARNING could not restore %s=%s: %s" % (attr, val, e))
+        try:
+            hw.sysfs_write("cnc/laser_latch", "1")
+        except OSError as e:
+            self.log("takeover: WARNING could not relock the latch: %s" % e)
 
     def __enter__(self):
         log = self.log
         log("takeover: waiting for forgectrl to be settled")
         self.wait_settled()
+        for attr in self.PRESERVE:
+            v = hw.sysfs_read(attr)
+            if v is not None:
+                self.saved[attr] = v
+        if self.saved:
+            log("takeover: preserving %s" % ", ".join("%s=%s" % kv for kv in self.saved.items()))
         log("takeover: stopping the controller through forgectrl")
         try:
             st, body = hw.Forgectrl().post("/controller/stop")
@@ -273,6 +259,7 @@ class Takeover:
         return self
 
     def __exit__(self, exc_type, exc, tb):
+        self.restore_attrs()
         rc, out = hw.initd("forgectrl", "start")
         self.log("takeover: forgectrl start -> rc %s" % rc)
         try:
@@ -300,7 +287,22 @@ class Runner:
         self.current = None
         self.last = None
         self.messages = []
+        self.boot_ref = None
         self.recover()
+        threading.Thread(target=self._take_boot_reference, daemon=True,
+                         name="forgetest-bootref").start()
+
+    def _take_boot_reference(self):
+        try:
+            self.boot_ref = _baseline.boot_reference(self._note, data_dir())
+        except Exception as e:  # noqa: BLE001
+            self._note("baseline: boot reference failed: %s: %s" % (type(e).__name__, e))
+
+    def _note(self, msg):
+        """A runner-level line: kept in messages for the page (bounded)."""
+        with self._lock:
+            self.messages.append(msg)
+            del self.messages[:-50]
 
     # -- startup recovery ------------------------------------------------
     def recover(self):
@@ -402,11 +404,37 @@ class Runner:
         th.start()
         return True, "started"
 
+    # -- baseline around every run -----------------------------------------
+    def _baseline_pre(self, run):
+        """Bring the machine to the fresh-boot idle state before a run and
+        record what the previous run left behind. Returns the captured
+        preserved state for the post pass."""
+        bl = _baseline.Baseline(run.log, abort=run.aborted.is_set)
+        ref = self.boot_ref
+        session = {"sysfs": {a: (ref.get("sysfs") or {}).get(a) for a in _baseline.PRESERVED_SYSFS}} if ref else None
+        left = bl.enforce("pre", captured=session)
+        if left:
+            who = self.last.id if self.last is not None else "an earlier run"
+            self.messages.append("leftovers before %s (left by %s): %s"
+                                 % (run.id, who, "; ".join(str(x) for x in left)))
+        run.evidence["baseline"] = {"pre": [x.as_dict() for x in left]}
+        return bl.capture()
+
+    def _baseline_post(self, run, captured):
+        bl = _baseline.Baseline(run.log)
+        left = bl.enforce("post", captured=captured)
+        run.evidence.setdefault("baseline", {})["post"] = [x.as_dict() for x in left]
+        if left:
+            self.messages.append("leftovers after %s: %s" % (run.id, "; ".join(str(x) for x in left)))
+        return left
+
     def _exec_test(self, t, run, campaign):
         ctx = Context(run, self, t)
         fp = t.fingerprint(self.manifest)
         result, message = _campaign.PASS, ""
+        captured = None
         try:
+            captured = self._baseline_pre(run)
             t.fn(ctx)
             if run.aborted.is_set():
                 result, message = _campaign.ABORTED, "aborted"
@@ -417,6 +445,10 @@ class Runner:
         except Exception as e:  # noqa: BLE001 - an erroring test is a failed test
             result, message = _campaign.ERROR, "%s: %s" % (type(e).__name__, e)
             run.log(traceback.format_exc().rstrip())
+        try:
+            self._baseline_post(run, captured)
+        except Exception as e:  # noqa: BLE001 - never lose the result over the cleanup
+            run.log("baseline: post pass errored: %s: %s" % (type(e).__name__, e))
         duration = int(time.time() - run.started)
         run.log("result %s%s" % (result, (": " + message) if message else ""))
         rec = {"t": "result", "campaign": campaign["id"], "test": t.id, "result": result,
@@ -455,7 +487,9 @@ class Runner:
     def _exec_bench(self, tool, run, argv, args):
         rc = None
         message = ""
+        captured = None
         try:
+            captured = self._baseline_pre(run)
             env = dict(os.environ)
             env.setdefault("PYTHONUNBUFFERED", "1")
             takeover = Takeover(run.log, "bench:" + tool["id"]) if tool.get("safety") == "takeover" else None
@@ -476,6 +510,10 @@ class Runner:
         except Exception as e:  # noqa: BLE001
             message = "%s: %s" % (type(e).__name__, e)
             run.log(message)
+        try:
+            self._baseline_post(run, captured)
+        except Exception as e:  # noqa: BLE001
+            run.log("baseline: post pass errored: %s: %s" % (type(e).__name__, e))
         duration = int(time.time() - run.started)
         result = "ABORTED" if run.aborted.is_set() else ("OK" if rc == 0 else "EXIT %s" % rc)
         run.log("bench %s finished: %s" % (tool["id"], result))

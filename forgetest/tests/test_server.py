@@ -168,7 +168,9 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(state["last_run"]["finished"]["result"], "PASS")
         st, rec = self.call("GET", "/result?test=fake.pass")
         self.assertEqual(st, 200)
-        self.assertEqual(rec["evidence"], {"k": 1})
+        self.assertEqual(rec["evidence"]["k"], 1)
+        # the baseline passes ran (no machine on the host: nothing to restore)
+        self.assertEqual(rec["evidence"]["baseline"], {"pre": [], "post": []})
         self.assertTrue(any("hello" in l for l in rec["log"]))
 
     def test_03_requires_and_live_gate(self):
@@ -291,7 +293,7 @@ class ServerTests(unittest.TestCase):
         log = "\n".join(state["last_run"]["log"])
         self.assertIn("takeover: pulse device free", log)
         self.assertIn("takeover: forgectrl start", log)
-        self.assertIn("takeover: forgectrl unreachable for 10 s", log)
+        self.assertIn("baseline: forgectrl unreachable for 10 s", log)
         self.assertFalse(os.path.exists(os.environ["FORGETEST_MARKER"]))
         # bench runs never touched the acceptance log
         recs = self.log.read()

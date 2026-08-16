@@ -102,6 +102,38 @@ forces a full campaign; nothing before it can be inherited.
 The raw log (`/data/forgetest/results.jsonl`, `Raw log` in the footer) is
 the bench's own record; the artifact is the release's.
 
+### Every run starts from, and leaves, the fresh-boot idle state
+
+The runner brackets every test and bench tool with a **baseline** pass
+(`baseline.py`): before the run it verifies the machine against the
+fresh-boot idle state and restores anything off it; after the run - on
+every exit path, pass, fail, or abort - it restores again. Two kinds of
+items: **fixed** resting values the boot establishes (the kernel module
+defaults, forgectrl's start-up writes, the GRBL controller's init writes:
+`motor_lock=8`, `x/y_mode=8`, `x/y_decay=1`, `step_freq=28160`,
+`ramp_rate=125000`, `streaming=0`, `state=idle`, latch locked, hold
+currents, camera lamps and button LEDs off, heater and TEC off; forgectrl:
+the controller running with motion verified, no diagnostic, the camera
+engine and cooling engine idle), and **preserved** state with no resting
+policy that a run must hand back as it found it (the lid lamp level, the
+position counters, the settings map, the controller mode). Deviations are
+**leftovers**: logged in the run pane, kept in the result's `evidence`
+(`baseline.pre` / `baseline.post`), and surfaced in the page's message
+line - a leftover found before a run is attributed to the previous run; one
+found after is the run's own defect. Takeover runs additionally capture
+the controller-owned kernel attributes on entry and write them back before
+forgectrl restarts, so the supervisor's liveness probe runs on the machine
+it expects. The runner waits for forgectrl's supervisor to settle (motion
+verified, or the ladder's verdict) before and after every takeover.
+
+**Reboot before a campaign.** forgetest takes a **fresh-boot reference**
+once per boot (`/data/forgetest/boot-<boot_id>.json`, taken only within
+the first ten minutes after boot, after the supervisor settles): the whole
+idle picture of this machine as the image boots it. It is the session's
+resting lid-lamp level and the check on the fixed values; without one the
+lamp level is unknown and the page says so. Position counters cannot be
+written back - a run that shifts them is reported and must be fixed.
+
 ## The gate
 
 `scripts/release.sh <version>` builds the release image, reads
@@ -168,6 +200,7 @@ unported tools are listed with Start disabled. Bench runs are recorded in
       campaign.py                the rules (pure functions)
       artifact.py                export + gate verification
       runner.py                  one run at a time, prompts, abort, takeover
+      baseline.py                the fresh-boot idle state around every run
       server.py / page.py        HTTP API + the page (forgectrl's access rules)
       bench.py / coverage.py     bench registry + subprocess runner; the lint
       suite/                     the catalog, one module per subsystem
