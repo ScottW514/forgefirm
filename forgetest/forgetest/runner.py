@@ -202,8 +202,56 @@ class Takeover:
         self.who = who
         self.marker = marker_path()
 
+    # forgectrl's supervisor probes motion liveness on every start (a
+    # small head move, verified by the accelerometer) and runs a rail-off
+    # ladder of up to ~70 s on a dead verdict; /mode reads
+    # controller=stopped/motion=unverified until that settles.
+    SETTLE_S = 150
+
+    def wait_settled(self, timeout=SETTLE_S, unreachable_s=10):
+        """Block until forgectrl reports a settled supervisor: motion
+        verified (the probe passed), motion-fault (the ladder exhausted),
+        or standby (the manual stop lever). Gives up after unreachable_s without an answer (a
+        started forgectrl listens within a second or two). Returns the
+        last /mode body (or None if unreachable)."""
+        log = self.log
+        t0 = time.time()
+        deadline = t0 + timeout
+        last = None
+        seen = None
+        heard = None
+        while time.time() < deadline:
+            try:
+                st, body = hw.Forgectrl().get("/mode")
+            except hw.HwError:
+                st, body = None, None
+            if st is None and heard is None and time.time() - t0 >= unreachable_s:
+                log("takeover: forgectrl unreachable for %d s - not waiting for it" % unreachable_s)
+                return None
+            if st == 200 and isinstance(body, dict):
+                heard = time.time()
+                last = body
+                key = (body.get("controller"), body.get("motion"))
+                if key != seen:
+                    seen = key
+                    log("takeover: /mode controller=%s motion=%s" % key)
+                # settled: the probe passed (verified) or gave its verdict
+                # (motion-fault); standby is the manual lever, nothing in flight
+                if (body.get("motion") == "verified"
+                        or body.get("controller") in ("motion-fault", "standby")):
+                    if body.get("controller") == "motion-fault":
+                        log("takeover: WARNING - motion liveness ladder failed, controllers "
+                            "are down (motion-fault); retry via POST /mode")
+                    return body
+            time.sleep(1.0)
+        log("takeover: WARNING - forgectrl did not settle within %d s (last /mode: %s)"
+            % (timeout, last))
+        return last
+
     def __enter__(self):
         log = self.log
+        log("takeover: waiting for forgectrl to be settled")
+        self.wait_settled()
         log("takeover: stopping the controller through forgectrl")
         try:
             st, body = hw.Forgectrl().post("/controller/stop")
@@ -231,6 +279,9 @@ class Takeover:
             os.remove(self.marker)
         except OSError:
             pass
+        # leave the machine settled for whatever runs next: the probe
+        # move done, the controller back (or the ladder's verdict logged)
+        self.wait_settled()
         return False
 
 

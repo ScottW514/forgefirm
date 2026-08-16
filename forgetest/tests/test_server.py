@@ -287,10 +287,11 @@ class ServerTests(unittest.TestCase):
         # a takeover tool runs inside the takeover wrapper (init.d is absent on the host: rc 127)
         st, d = self.call("POST", "/bench/start", {"tool": "tk"})
         self.assertEqual(st, 200, d)
-        state = self.wait_idle()
+        state = self.wait_idle(timeout=40)     # two unreachable-forgectrl settle waits
         log = "\n".join(state["last_run"]["log"])
         self.assertIn("takeover: pulse device free", log)
         self.assertIn("takeover: forgectrl start", log)
+        self.assertIn("takeover: forgectrl unreachable for 10 s", log)
         self.assertFalse(os.path.exists(os.environ["FORGETEST_MARKER"]))
         # bench runs never touched the acceptance log
         recs = self.log.read()
