@@ -276,10 +276,14 @@ class Grbl:
         self.send_raw(bytes([byte]))
 
     def status_report(self):
-        """One '?' report, parsed: {'state': 'Idle', 'MPos': (x,y,z), ...}."""
+        """One '?' report, parsed: {'state': 'Idle', 'MPos': (x,y,z), ...}.
+        The '?' is re-sent every 0.5 s until a report arrives: a soft
+        reset (^X) flushes the controller's read buffer and eats a '?'
+        that lands in it."""
         self.drain()
         self.send_raw(b"?")
         deadline = time.time() + self.timeout
+        resend = time.time() + 0.5
         self.sock.settimeout(0.2)
         while time.time() < deadline:
             try:
@@ -288,6 +292,9 @@ class Grbl:
                     self.buf += d
             except socket.timeout:
                 pass
+            if time.time() >= resend:
+                self.send_raw(b"?")
+                resend = time.time() + 0.5
             i = self.buf.find(b"<")
             j = self.buf.find(b">", i + 1) if i >= 0 else -1
             if i >= 0 and j > i:

@@ -48,11 +48,14 @@ def wait_state(ctx, g, prefix, timeout):
     return None
 
 
-def wait_idle(ctx, g, timeout=30.0, poll=0.05):
-    """Poll until Idle; returns (peak_feed_mm_min, states_seen, final_report)."""
+def wait_idle(ctx, g, timeout=30.0, poll=0.05, grace=0.3):
+    """Poll until Idle; returns (peak_feed_mm_min, states_seen, final_report).
+    An Idle report inside the first `grace` seconds counts only once a
+    non-Idle state was seen: a move just commanded may not have started."""
     peak = 0.0
     states = []
-    deadline = time.time() + timeout
+    t0 = time.time()
+    deadline = t0 + timeout
     st = None
     while time.time() < deadline:
         ctx.checkpoint()
@@ -66,10 +69,18 @@ def wait_idle(ctx, g, timeout=30.0, poll=0.05):
                 peak = max(peak, float(str(f).split(",")[0]))
             except ValueError:
                 pass
-        if state.startswith("Idle"):
+        if state.startswith("Idle") and (time.time() - t0 >= grace or len(states) > 1):
             return peak, states, st
         time.sleep(poll)
     return peak, states + ["TIMEOUT"], st
+
+
+def machine_idle(ctx, timeout=15.0):
+    """The machine itself idle - the kernel has played out the stream
+    depth and the decel tail behind grblHAL's Idle. Every motion test ends
+    on this, so it hands the machine back at rest."""
+    ok = ctx.forgectrl.wait_idle(timeout, abort=ctx.aborted)
+    ctx.check(ok, "the machine did not return to idle within %.0f s of the last move", timeout)
 
 
 def clean_slate(ctx, g):
@@ -138,6 +149,7 @@ def pacing(ctx):
         g.command("G90")
         final = g.status_report().get("MPos")
         ev["final_drift_mm"] = round(final[0] - start[0], 3) if final else None
+    machine_idle(ctx)
 
     ctx.check(abs(moved - dist) < 0.05, "hold+resume lost steps: moved %.3f of %.1f mm", moved, dist)
     ctx.check(parked < moving * 0.5 and parked < 8.0,
@@ -203,6 +215,7 @@ def jog_roundtrip(ctx):
         drift = max(abs(a - b) for a, b in zip(final[:2], start[:2]))
         ev["drift_mm"] = round(drift, 3)
         ctx.log("final drift %.3f mm (start %s, final %s)", drift, start, final)
+    machine_idle(ctx)
     ctx.check("Hold" in held["state"], "feed hold did not park (state %s)", held["state"])
     ctx.check(drift <= 0.05, "position drift %.3f mm", drift)
     ctx.confirm("Did the gantry move on every jog (X, Y, the fast X, the diagonal, the held move) "
@@ -304,6 +317,7 @@ def cancel_abort(ctx):
         ctx.log("returned: drift %.3f mm", drift)
         ctx.check(drift <= 0.05, "position drift %.3f mm after cancel/abort/return", drift)
         g.command("G90")
+    machine_idle(ctx)
 
 
 # ---------------------------------------------------------------- dead-man
@@ -324,6 +338,7 @@ def _return_x(ctx, delta_mm):
             g.command("$X")
         g.command("$J=G91X%.3fF1200" % (-delta_mm))
         wait_idle(ctx, g, 30)
+    machine_idle(ctx)
 
 
 @test("motion.deadman", title="Dead-man: controller kill, controller hang, forgectrl restart mid-move",
@@ -348,11 +363,14 @@ def deadman(ctx):
         v = hw.sysfs_int("cnc/interlock_circuit")
         return v is not None and bool(v & (1 << 3))
 
-    def wait_running(timeout=30):
+    def wait_running(timeout=30, not_pid=None):
+        """A running controller; with not_pid, one other than that pid (a
+        killed controller can still read as running until it is reaped)."""
         t0 = time.time()
         while time.time() - t0 < timeout:
             st, m = fc.get("/mode")
-            if isinstance(m, dict) and m.get("controller") == "running" and m.get("pid"):
+            if (isinstance(m, dict) and m.get("controller") == "running" and m.get("pid")
+                    and m.get("pid") != not_pid):
                 return m
             ctx.sleep(0.5)
         return None
@@ -417,7 +435,7 @@ def deadman(ctx):
         _os.kill(pid1, _signal.SIGKILL)       # the hung controller cannot recover itself
     ctx.check(kstate == "underrun", "the ring did not drain into a kernel underrun (state %s)", kstate)
     ctx.check(latch_locked(), "latch unlocked after the underrun")
-    m2 = wait_running(30)
+    m2 = wait_running(30, not_pid=pid1)
     ev["sigstop"]["respawn"] = m2
     ctx.check(m2 and m2.get("pid") != pid1, "supervisor did not respawn after the hang")
     ctx.sleep(3)
@@ -450,10 +468,16 @@ def deadman(ctx):
     ev["restart"]["mode_after"] = m3
     ctx.log("mode after restart: %s", m3)
     ctx.check(m3 and m3.get("controller") == "running", "supervision not retaken after the restart: %s", m3)
-    ctx.check(m3.get("pid") == pid2, "the busy controller was replaced (%s -> %s) instead of retaken",
-              pid2, m3.get("pid"))
+    ctx.check(m3.get("motion") == "verified", "motion not verified after the retake: %s", m3)
+    # the retake, by design: the busy controller (unmanaged, its own fd carrying
+    # the dead-man) finished its move; at idle the new supervisor stopped it,
+    # re-probed motion, and started a supervised one under the broker
+    ev["restart"]["replaced_at_idle"] = m3.get("pid") != pid2
+    ctx.log("retake: unmanaged pid %s finished the move; supervised pid %s started at idle",
+            pid2, m3.get("pid"))
     ctx.check(latch_locked(), "latch unlocked after the restart drill")
     x1 = _kernel_x_mm(ctx)
     _return_x(ctx, (x1 - x0) if (x0 is not None and x1 is not None) else None)
-    ctx.log("PASS: kill respawned in %s s, hang -> underrun in %s s, restart retook pid %s",
-            respawn_s, halt_s, pid2)
+    machine_idle(ctx)
+    ctx.log("PASS: kill respawned in %s s, hang -> underrun in %s s, restart retook supervision (pid %s)",
+            respawn_s, halt_s, m3.get("pid"))
