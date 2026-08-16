@@ -1587,9 +1587,14 @@ fresh probe MOTION OK on the first try at p2p 2047/1341, mask cleared by
 the controller's init). The baseline expects the lamp at the setting now
 (the boot capture is the record, not the lamp reference), and its settle
 waits for the controller to be running - the post pass had run between
-the probe's own writes and the controller's init writes once. **These
-changes ride the next image; the campaign on that image inherits every
-domain forgectrl does not touch.**
+the probe's own writes and the controller's init writes once. **Images
+`20260816191838` (forgefirm-image, v0.1.0, 192.7 MB rootfs) and
+`20260816191951` (forgefirm-image-dev) are built on that tree - forgectrl
+`c8f6558`, the day's forgetest, acceptance identity `c72448c2…` equal on
+both - and archived under `images/20260816191838/` with checksums (the
+previous pair, `215236`/`215332`, under `images/20260815215236/`). The
+confirmation campaign runs on the flashed dev image; every domain
+forgectrl does not touch inherits.**
 
 ## Hardware facts bank (measured)
 
@@ -2920,10 +2925,11 @@ domain forgectrl does not touch.**
     changes invalidating exactly their domains) behaved as specified
     across the day's closures; the baseline rule was added on the way
     (record in "Release acceptance" above). Remaining: (a) the
-    confirmation campaign on the **next flashed image** (it carries the
-    day's tool fixes and the forgectrl changes; every domain forgectrl
-    does not touch inherits) - the tool on the bench is the tree, but a
-    hot-patched image is not the image that ships; (b) the remaining
+    confirmation campaign on the **flashed dev image `20260816191951`**
+    (built; `images/20260816191838/`; it carries the day's tool fixes and
+    the forgectrl changes; every domain forgectrl does not touch
+    inherits) - the tool on the bench is the tree, but a hot-patched image
+    is not the image that ships; (b) the remaining
     bench-tab ports (scope tools, host-side flow characterization, the
     live drills - the catalog carries their acceptance forms); (c) the
     first release runs the full campaign and commits
