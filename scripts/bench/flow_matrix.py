@@ -118,7 +118,7 @@ def run_case(duty, flow, log):
     time.sleep(3)
     d0, u0 = temps()
     heater(duty)
-    raw = board('python3 /data/flow_sampler.py %d %.1f' % (RUN_S, SAMPLE_IV),
+    raw = board('python3 /usr/share/forgetest/bench/flow_sampler.py %d %.1f' % (RUN_S, SAMPLE_IV),
                 timeout=RUN_S + 60)
     heater(0)
     pump(True)

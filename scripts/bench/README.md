@@ -29,13 +29,13 @@ to go through a WSL distro from Windows).
 | `pacing_test.py` | Protocol-loop pacing check (runs on the board, dry motion): idle and parked-in-Hold states are coarse-paced, active motion is tight-paced, and a feed-hold/resume mid-move preserves position with no feeder starve. |
 | `fan_test.py` | Fan/coolant bench (Windows-side): snapshots fan PWMs/tachs/temps, drives M8 → cut fans, M9 → cooldown → idle, verifying via tach readbacks. |
 | `flow_characterize.py` | Coolant flow characterization using the factory temperature curve: baseline → flow → no-flow → recovery, printing the ΔT bands and their separation. Takes the heater duty as an argument (`flow_characterize.py 30`); aborts if downstream passes 45 °C. |
-| `flow_matrix.py` | **The flow-detection design matrix** (with `flow_sampler.py`, which lives on the board at `/data/`): duty × duration × flow/no-flow, every run from a common cooled baseline, interleaved repeats. One heating trace yields the metric at every candidate duration, so cost and precision come from the same 60 runs. Prints a cost table, a precision table (mean±sd, worst-case margin, d′) and a ranked shortlist. Env: `FM_DUTIES`, `FM_REPEATS`, `FM_RESULTS`. |
+| `flow_matrix.py` | **The flow-detection design matrix** (with `flow_sampler.py`, run on the board from `/usr/share/forgetest/bench/`): duty × duration × flow/no-flow, every run from a common cooled baseline, interleaved repeats. One heating trace yields the metric at every candidate duration, so cost and precision come from the same 60 runs. Prints a cost table, a precision table (mean±sd, worst-case margin, d′) and a ranked shortlist. Env: `FM_DUTIES`, `FM_REPEATS`, `FM_RESULTS`. |
 | `flow_sustained.py` | Long-run test of the real re-check cadence via M8: counts verdicts/false faults and tracks whether the loop accumulates heat. |
 | `flow_warm_validate.py` | Runs the real check from a heater-warmed baseline. Note the ceiling: 100 % duty pushes the downstream sensor past 50 °C in 30 s while the bulk barely moves, so warm-loop validation above ~23 °C needs the laser, not the heater. |
 | `flow_recheck_char.py` | Characterizes short in-run re-checks and the differential metric; shows why over-temp cannot see a stopped pump and why passive warming trends are ambiguous. |
 | `flow_confirm_drill.py` | Coolant flow suspicion/confirmation drill (runs on the board): one continuous M8 session walks the verdict state machine through real pump-off transients — verified → SUSPECT (+ immediate re-check) → cleared → SUSPECT → FAULT (consecutive) → recovered — printing PASS/FAIL per transition. Leaves the machine idle (M9, pump on, heater off). |
 | `flow_escalate_drill.py` | Coolant starved-re-check escalation drill (runs on the board against a controller started with a short confirmation budget): with the pump off the job-start check reads SUSPECT, the stagnant loop cannot pass the settle gate inside the budget, and the driver must escalate to FAULT. PASS/FAIL, leaves the machine idle. |
-| `flow_sampler.py` | Board-side coolant sampler used by the flow tools (`flow_sampler.py <duration_s> <interval_s>`, prints `elapsed,raw_down,raw_up`); kept on the board at `/data/` so cadence does not depend on ssh latency. |
+| `flow_sampler.py` | Board-side coolant sampler used by the flow tools (`flow_sampler.py <duration_s> <interval_s>`, prints `elapsed,raw_down,raw_up`); run on the board (dev image: `/usr/share/forgetest/bench/`) so cadence does not depend on ssh latency. |
 | `temp_calibrate.py` | Coolant temperature spot-check helper (`watch` / `point <measured_C>` / `fit`) — pairs a measured temperature with averaged raw ADC readings and fits a per-machine line to sanity-check the factory curve against a thermometer. |
 | `build-glowforge.sh` | Cross-compiles **grblHAL-glowforge** (the canonical driver repo, `../../../grblHAL-glowforge`) in the Yocto build environment, borrowing the recipe toolchain. Run: `bash <path>/build-glowforge.sh` (from Windows, launch it through the WSL distro from PowerShell; Git Bash mangles /mnt/c paths). Env: `FF_SRC_TOP`, `FF_BUILD_TOP`. This is the production controller build. |
 | `build-forgectrl.sh` | Cross-compiles **forgectrl** (the canonical control-daemon repo, `../../../forgectrl`) the same way, borrowing the toolchain from the forgectrl recipe workdir (regenerate with `bitbake forgectrl` after a clean). |
@@ -83,9 +83,10 @@ the threshold set at the balanced midpoint of the two bands (14.4 °C).
 baselines (`flow_warm_results.json`).
 
 To reproduce on another machine: set `GF_HOST` (and `GF_SSH` if ssh needs a
-wrapper), copy `flow_sampler.py` to `/data/` on the board, and run
-`flow_matrix.py` (env `FM_DUTIES`, `FM_REPEATS`, `FM_RESULTS`; ~1.6 h for
-the full matrix, the controller is stopped for the duration). The same
+wrapper), boot the dev image (it installs `flow_sampler.py` under
+`/usr/share/forgetest/bench/`), and run `flow_matrix.py` (env `FM_DUTIES`,
+`FM_REPEATS`, `FM_RESULTS`; ~1.6 h for the full matrix, the controller is
+stopped for the duration). The same
 derivation is also built into forgectrl as the panel's Diagnostics →
 **flow-calibrate** tool (3 trials per case at the operating point, reports
 both bands and a recommended threshold; the bench value it recommends

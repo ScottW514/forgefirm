@@ -135,7 +135,7 @@ def check(flow, log):
     time.sleep(3)
     d0, u0 = temps()
     heater(DUTY)
-    raw = board('python3 /data/flow_sampler.py %d 1.0' % CHECK_S, timeout=CHECK_S + 60)
+    raw = board('python3 /usr/share/forgetest/bench/flow_sampler.py %d 1.0' % CHECK_S, timeout=CHECK_S + 60)
     heater(0)
     pump(True)
 
