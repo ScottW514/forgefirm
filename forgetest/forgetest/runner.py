@@ -422,9 +422,7 @@ class Runner:
         record what the previous run left behind. Returns the captured
         preserved state for the post pass."""
         bl = _baseline.Baseline(run.log, abort=run.aborted.is_set)
-        ref = self.boot_ref
-        session = {"sysfs": {a: (ref.get("sysfs") or {}).get(a) for a in _baseline.PRESERVED_SYSFS}} if ref else None
-        left = bl.enforce("pre", captured=session)
+        left = bl.enforce("pre", captured=None)
         if left:
             who = self.last.id if self.last is not None else "an earlier run"
             self.messages.append("leftovers before %s (left by %s): %s"

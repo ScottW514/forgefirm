@@ -112,11 +112,12 @@ items: **fixed** resting values the boot establishes (the kernel module
 defaults, forgectrl's start-up writes, the GRBL controller's init writes:
 `motor_lock=8`, `x/y_mode=8`, `x/y_decay=1`, `step_freq=28160`,
 `ramp_rate=125000`, `streaming=0`, `state=idle`, latch locked, hold
-currents, camera lamps and button LEDs off, heater and TEC off; forgectrl:
-the controller running with motion verified, no diagnostic, the camera
-engine and cooling engine idle), and **preserved** state with no resting
-policy that a run must hand back as it found it (the lid lamp level, the
-position counters, the settings map, the controller mode). Deviations are
+currents, head lamp and button LEDs off, heater and TEC off, the lid lamp
+at forgectrl's `lid_lamp_idle` setting; forgectrl: the controller running
+with motion verified, no diagnostic, the camera engine and cooling engine
+idle), and **preserved** state with no resting policy that a run must
+hand back as it found it (the position counters, the settings map, the
+controller mode). Deviations are
 **leftovers**: logged in the run pane, kept in the result's `evidence`
 (`baseline.pre` / `baseline.post`), and surfaced in the page's message
 line - a leftover found before a run is attributed to the previous run; one
@@ -129,12 +130,11 @@ verified, or the ladder's verdict) before and after every takeover.
 **Power-cycle before a campaign.** forgetest takes a **fresh-boot
 reference** once per boot (`/data/forgetest/boot-<boot_id>.json`, taken
 only within the first ten minutes after boot, after the supervisor
-settles): the whole idle picture of this machine as the image boots it. It
-is the session's resting lid-lamp level and the check on the fixed values;
-without one the lamp level is unknown and the page says so. Take it after
-a **power cycle**, not a warm `reboot`: the PIC lights the lid lamp at
-power-on (132), and a warm reboot leaves it dark because the module's
-remove path turns it off - the machine's true fresh state is the lit one.
+settles): the whole idle picture of this machine as the image boots it,
+the check on the fixed values, and the record a leftover is judged
+against. Take it after a **power cycle**, not a warm `reboot` - the
+machine's true fresh state is the powered-on one (the PIC's own lamp and
+sensor defaults, then forgectrl's start-up writes on top).
 A displaced head is jogged back along its own path by the kernel-measured
 X/Y delta (bounded to 100 mm; Z is never touched); beyond that the
 counters are reported and the run must be fixed. A run that legitimately

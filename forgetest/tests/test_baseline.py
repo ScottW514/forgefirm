@@ -105,31 +105,26 @@ class BaselineTests(unittest.TestCase):
         self._sync_leds()
         self.assertEqual(baseline.read_led("button_led_2"), "0")
 
-    def test_preserved_lamp_and_position(self):
+    def test_preserved_position(self):
         b = self.bl()
-        self._attr("pic/lid_led", "132")
         cap = b.capture()
-        self.assertEqual(cap["sysfs"]["pic/lid_led"], "132")
         self.assertEqual(cap["position"], [0, 0, 0])
-        # the run turned the lamp off and shifted the counters
-        self._attr("pic/lid_led", "0")
+        # the run shifted the counters
         self._pos(1000, 0, 0)
         left = b.enforce("post", captured=cap)
         items = {x.item: x for x in left}
-        self.assertEqual(set(items), {"pic/lid_led", "position"})
-        self.assertEqual(items["pic/lid_led"].action, "restored")
-        self.assertEqual(self._read("pic/lid_led"), "132")
+        self.assertEqual(set(items), {"position"})
         # no GRBL controller on the host: the head cannot be jogged back
         self.assertTrue(items["position"].action.startswith("unrestorable"), items["position"].action)
         self.assertEqual(items["position"].found, [1000, 0, 0])
 
-    def test_session_resting_lamp_from_boot_reference(self):
-        # the pre pass hands the lamp back to the boot level
+    def test_lamp_needs_forgectrl(self):
+        # the lamp's idle level comes from forgectrl's settings: without the
+        # daemon there is nothing to compare against
         self._attr("pic/lid_led", "77")
-        session = {"sysfs": {"pic/lid_led": "0"}}
-        left = self.bl().enforce("pre", captured=session)
-        self.assertEqual([(x.item, x.action) for x in left], [("pic/lid_led", "restored")])
-        self.assertEqual(self._read("pic/lid_led"), "0")
+        left = self.bl().enforce("pre", captured=None)
+        self.assertEqual(left, [])
+        self.assertEqual(self._read("pic/lid_led"), "77")
 
     def test_no_sysfs_means_skip(self):
         os.environ["GF_SYSFS_ROOT"] = os.path.join(self.tmp, "nope") + os.sep

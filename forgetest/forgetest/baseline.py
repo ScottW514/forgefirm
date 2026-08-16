@@ -9,9 +9,12 @@ restores it after (on every exit path), so a test cannot hand the next one
              the GRBL controller's init writes. Verified against the value,
              restored by writing it back.
   preserved  state with no resting policy that a run must hand back as it
-             found it: the lid lamp level, the position counters, the
-             settings map, the controller mode. Captured before the run,
-             compared after, restored where the interface allows.
+             found it: the position counters, the settings map, the
+             controller mode. Captured before the run, compared after,
+             restored where the interface allows.
+
+The lid lamp is fixed too, at forgectrl's `lid_lamp_idle` setting (unset =
+236): the daemon asserts it at start and at every controller spawn.
 
 Everything found off-baseline is a "leftover": logged, kept in the run's
 evidence, and surfaced on the page. The pre-run pass attributes leftovers
@@ -63,7 +66,10 @@ LATCH_BIT = 0x08                    # interlock_circuit bit 3: latch locked
 
 BUTTON_LEDS = ("button_led_1", "button_led_2", "button_led_3")
 
-PRESERVED_SYSFS = ["pic/lid_led"]   # captured before, restored after
+PRESERVED_SYSFS = []                # sysfs attrs captured before, restored after
+
+LID_LAMP_ATTR = "pic/lid_led"
+LID_LAMP_DEFAULT = "236"            # forgectrl's lid_lamp_idle default
 
 BOOT_MAX_AGE_S = 600                # a boot reference is taken only this soon after boot
 SETTLE_S = 150                      # the supervisor's probe + rail-off ladder
@@ -165,6 +171,7 @@ class Baseline:
         t0 = time.time()
         deadline = t0 + timeout
         last = seen = heard = None
+        pending_since = None        # verified but not running: the spawn follows
         while time.time() < deadline and not self.abort():
             try:
                 st, body = self.fc().get("/mode")
@@ -181,12 +188,20 @@ class Baseline:
                 if key != seen:
                     seen = key
                     self.log("/mode controller=%s motion=%s" % key)
-                if (body.get("motion") == "verified"
-                        or body.get("controller") in ("motion-fault", "standby")):
-                    if body.get("controller") == "motion-fault":
+                ctl = body.get("controller")
+                if ctl in ("motion-fault", "standby") or (ctl == "running" and body.get("motion") == "verified"):
+                    if ctl == "motion-fault":
                         self.log("WARNING - motion liveness ladder failed, controllers are "
                                  "down (motion-fault); retry via POST /mode")
                     return body
+                if body.get("motion") == "verified":
+                    # the probe passed; the spawn (or a respawn backoff of up to
+                    # 30 s) is in flight - give it a bounded moment
+                    pending_since = pending_since or time.time()
+                    if time.time() - pending_since > 35:
+                        return body
+                else:
+                    pending_since = None
             time.sleep(1.0)
         self.log("WARNING - forgectrl did not settle within %d s (last /mode: %s)" % (timeout, last))
         return last
@@ -214,6 +229,7 @@ class Baseline:
         left = []
         self._forgectrl_side(left)
         self._kernel_side(left)
+        self._lamp_side(left)
         self._preserved(left, captured)
         if left:
             self.log("%s: %d leftover(s): %s" % (phase, len(left), "; ".join(str(x) for x in left)))
@@ -304,6 +320,23 @@ class Baseline:
                                COOL_IDLE_S)
                 left.append(Leftover("cool", found, "idle/unarmed/no hold",
                                      "waited" if w is not None else "failed: still %s" % found))
+
+    def _lamp_side(self, left):
+        """The lid lamp at forgectrl's idle level (the lid_lamp_idle setting)."""
+        st, body = self.fc_get("/settings")
+        if st != 200 or not isinstance(body, dict):
+            return
+        want = (body.get("lid_lamp_idle") or "").strip() or LID_LAMP_DEFAULT
+        got = hw.sysfs_read(LID_LAMP_ATTR)
+        if got is None or got == want:
+            return
+        try:
+            hw.sysfs_write(LID_LAMP_ATTR, want)
+            back = hw.sysfs_read(LID_LAMP_ATTR)
+            act = "restored" if back == want else "failed: reads %s" % back
+        except OSError as e:
+            act = "failed: %s" % e
+        left.append(Leftover(LID_LAMP_ATTR, got, want, act))
 
     def _kernel_side(self, left):
         if hw.sysfs_read("cnc/state") is None:
@@ -414,7 +447,8 @@ class Baseline:
                 for k, v in was.items():
                     if body.get(k) == v:
                         continue
-                    st2, b2 = self.fc_post("/settings", data={k: v})
+                    st2, b2 = (self.fc_post("/settings", params={k: ""}) if v == ""
+                               else self.fc_post("/settings", data={k: v}))
                     left.append(Leftover("settings." + k, body.get(k), v,
                                          "restored" if st2 == 200 else "failed: %s %s" % (st2, b2)))
 
@@ -514,8 +548,8 @@ def boot_reference(log, data_dir):
         pass
     up = uptime_s()
     if up is None or up > BOOT_MAX_AGE_S:
-        log("baseline: no fresh-boot reference for this boot (uptime %s s > %d s) - "
-            "the lid lamp resting level is unknown; reboot to take one" % (up, BOOT_MAX_AGE_S))
+        log("baseline: no fresh-boot reference for this boot (uptime %s s > %d s); "
+            "power-cycle to take one" % (up, BOOT_MAX_AGE_S))
         return None
     bl = Baseline(log)
     bl.wait_settled()

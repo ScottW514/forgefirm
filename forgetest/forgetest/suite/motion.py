@@ -5,6 +5,7 @@ Ported from `scripts/bench/pacing_test.py` (protocol-loop pacing) and
 and round-trip; the laser stays latched (the tests never touch it); the
 suite is the only Grbl client while a test runs.
 """
+import os
 import time
 
 from ..catalog import test
@@ -230,13 +231,23 @@ def jog_roundtrip(ctx):
       kind="auto", est_min=1,
       covers=[("forgectrl", "src/super.c"), ("forgectrl", "src/liveness.c"), ("kernel-module-glowforge", "**")],
       requires=["kernel.latch-locked-idle"],
-      steps=["Bed clear, lid closed: the probe jogs the head a few mm (+X first)."],
+      steps=["Bed clear, lid closed: the probe jogs the head 15 mm out and back (+X first); "
+             "forgectrl is restarted once for a fresh probe."],
       description="forgectrl's supervisor reports the head-accelerometer liveness probe as "
                   "verified for the running controller (the DRV8825s are not wedged); when the "
-                  "probe was skipped at spawn, the controller is respawned once so it runs.")
+                  "probe was skipped at spawn, the controller is respawned once so it runs. Then "
+                  "the regression: with every axis masked (cnc/motor_lock=15, as a bench tool "
+                  "may leave it) forgectrl is restarted and its fresh probe must still read "
+                  "MOTION OK - the probe unmasks the axes itself - with the head-accel p2p at "
+                  "or above the moving threshold.")
 def liveness_probe(ctx):
     fc = ctx.forgectrl
     ev = ctx.evidence
+    _liveness_verdict(ctx, fc, ev)
+    _liveness_masked_restart(ctx, fc, ev)
+
+
+def _liveness_verdict(ctx, fc, ev):
     st, m = fc.get("/mode")
     ctx.check(st == 200 and isinstance(m, dict), "GET /mode -> %s", st)
     ev["mode_before"] = m
@@ -261,6 +272,64 @@ def liveness_probe(ctx):
     ctx.log("mode after: %s", m)
     ctx.check(m.get("controller") == "running", "controller is %s", m.get("controller"))
     ctx.check(m.get("motion") == "verified", "liveness is %r, expected verified", m.get("motion"))
+
+
+FORGECTRL_LOG = "/data/log/forgefirm/forgectrl/forgectrl.log"
+
+
+def _log_offset(path):
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return 0
+
+
+def _probe_lines(path, offset):
+    try:
+        with open(path, "rb") as f:
+            f.seek(offset)
+            data = f.read().decode("utf-8", "replace")
+    except OSError:
+        return []
+    return [ln.strip() for ln in data.splitlines() if "liveness probe:" in ln]
+
+
+def _liveness_masked_restart(ctx, fc, ev):
+    """The regression: a leftover motor_lock must not read as a wedge."""
+    ctx.check(fc.wait_idle(15, abort=ctx.aborted), "machine not idle before the masked restart")
+    x0 = _kernel_x_mm(ctx)
+    hw.sysfs_write("cnc/motor_lock", "15")
+    ctx.log("masked every axis (cnc/motor_lock=15); restarting forgectrl for a fresh probe")
+    off = _log_offset(FORGECTRL_LOG)
+    rc, out = hw.initd("forgectrl", "restart")
+    ctx.check(rc == 0, "forgectrl restart -> rc %s", rc)
+    m = None
+    t0 = time.time()
+    while time.time() - t0 < 150:
+        ctx.checkpoint()
+        try:
+            st, m = fc.get("/mode")
+        except hw.HwError:
+            m = None                # the daemon is still coming up
+        if isinstance(m, dict) and ((m.get("controller") == "running" and m.get("motion") == "verified")
+                                    or m.get("controller") == "motion-fault"):
+            break
+        ctx.sleep(1)
+    lines = _probe_lines(FORGECTRL_LOG, off)
+    for ln in lines:
+        ctx.log("  %s", ln.split(" INFO ", 1)[-1] if " INFO " in ln else ln[-160:])
+    ev["masked_restart"] = {"mode": m, "probe_lines": lines[-4:], "motor_lock_after": ctx.sysfs("cnc/motor_lock")}
+    ctx.check(m and m.get("controller") == "running" and m.get("motion") == "verified",
+              "fresh probe under a leftover mask did not verify motion: %s", m)
+    ctx.check(lines and "MOTION OK" in lines[0],
+              "the first probe after the restart was not MOTION OK: %s", lines[:1])
+    ctx.check(len(lines) == 1, "the probe needed the recovery ladder (%d probes) - a false dead verdict", len(lines))
+    ctx.check(ctx.sysfs("cnc/motor_lock") == "8", "motor_lock reads %s after the controller start (expected 8)",
+              ctx.sysfs("cnc/motor_lock"))
+    ctx.check(fc.wait_idle(15, abort=ctx.aborted), "machine not idle after the probe")
+    x1 = _kernel_x_mm(ctx)
+    ctx.log("kernel X %s -> %s mm across the probe (out and back)", x0, x1)
+    ctx.log("PASS: masked restart probed MOTION OK on the first try, mask cleared, controller up")
 
 
 # ---------------------------------------------------------------- cancel / abort

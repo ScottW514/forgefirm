@@ -1,6 +1,7 @@
 """forgectrl.* - the machine-services daemon's API, access control, and panel."""
 import json
 import socket
+import time
 
 from ..catalog import test
 from .. import hw
@@ -107,9 +108,11 @@ def auth(ctx):
 
 @test("forgectrl.settings-bounds", title="Settings validation and restore", subsystem="forgectrl",
       kind="auto", est_min=1,
-      covers=[("forgectrl", "src/settings.*"), ("forgectrl", "src/main.c")],
+      covers=[("forgectrl", "src/settings.*"), ("forgectrl", "src/main.c"), ("forgectrl", "src/cam.c")],
       description="An over-length value and an out-of-range value are refused (400) and leave the "
-                  "settings byte-identical; an in-range value is accepted (200).")
+                  "settings byte-identical; an in-range value is accepted (200). The lid lamp "
+                  "idles at lid_lamp_idle (unset = 236), an out-of-range level is refused, a new "
+                  "level applies to the lamp at once, and clearing it returns the default.")
 def settings_bounds(ctx):
     fc = ctx.forgectrl
     ev = ctx.evidence
@@ -157,6 +160,44 @@ def settings_bounds(ctx):
     others_after = {k: v for k, v in final.items() if k != key}
     ctx.check(others_before == others_after, "other settings changed by the write")
     ctx.check(final.get(key) == val, "%s reads back %r, wrote %r", key, final.get(key), val)
+
+    # the lid lamp's idle level: resting at the setting, bounded, applied live
+    lamp_was = (before.get("lid_lamp_idle") or "").strip()
+    want = lamp_was or "236"
+    got = ctx.sysfs("pic/lid_led")
+    ev["lid_lamp"] = {"setting": lamp_was, "resting": got}
+    ctx.log("lid lamp: setting %r, pic/lid_led=%s (expected %s)", lamp_was, got, want)
+    ctx.check(got == want, "lid lamp rests at %s, lid_lamp_idle is %s", got, want)
+    for bad in ("256", "-1", "bright"):
+        st, body = fc.post("/settings", data={"lid_lamp_idle": bad})
+        ctx.check(st == 400, "lid_lamp_idle=%s -> %s, expected 400", bad, st)
+    ctx.log("lid_lamp_idle 256 / -1 / bright refused")
+    try_level = "100" if want != "100" else "120"
+    st, body = fc.post("/settings", data={"lid_lamp_idle": try_level})
+    ctx.check(st == 200, "lid_lamp_idle=%s -> %s, expected 200", try_level, st)
+    applied = None
+    t0 = time.time()
+    while time.time() - t0 < 5:
+        applied = ctx.sysfs("pic/lid_led")
+        if applied == try_level:
+            break
+        ctx.sleep(0.2)
+    ctx.log("lid_lamp_idle=%s -> pic/lid_led=%s after %.1f s", try_level, applied, time.time() - t0)
+    # an empty value clears the key: the query-string form carries it
+    st, body = (fc.post("/settings", params={"lid_lamp_idle": ""}) if not lamp_was
+                else fc.post("/settings", data={"lid_lamp_idle": lamp_was}))
+    ctx.check(st == 200, "restoring lid_lamp_idle=%r -> %s", lamp_was, st)
+    t0 = time.time()
+    back = None
+    while time.time() - t0 < 5:
+        back = ctx.sysfs("pic/lid_led")
+        if back == want:
+            break
+        ctx.sleep(0.2)
+    ev["lid_lamp"].update({"applied": applied, "restored": back})
+    ctx.check(applied == try_level, "lamp did not follow lid_lamp_idle=%s (reads %s)", try_level, applied)
+    ctx.check(back == want, "lamp did not return to %s after the restore (reads %s)", want, back)
+    ctx.log("lid lamp follows the setting live and returns to %s", want)
 
 
 @test("forgectrl.panel-serves", title="Control panel and status endpoints", subsystem="forgectrl",
