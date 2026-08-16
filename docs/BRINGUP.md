@@ -1515,9 +1515,48 @@ machine. Also noted: at a fresh boot in GRBL mode `pic/lid_led` is 0 and
 nothing in the GRBL stack lights the lid lamp; the lit bed the bench was
 used to is cloud mode's `LLvl=132`, which persists across the switch back
 to GRBL - a resting-lamp setting in forgectrl would be a product
-decision. Next: the motion group (bed clear, head parked with free +X/+Y
-travel, operator-confirmed), fans-quiet, cloud, then the live tests from
-the page.
+decision. (Later the same day the operator power-cycled the machine and
+the fresh-boot reference read `lid_led=132`: the PIC lights the lid lamp
+at power-on; the dark lamp after my soft `reboot` was the module's remove
+path. The reference is therefore taken after a **power cycle** -
+`docs/ACCEPTANCE.md`.)
+
+**Same day, after the power cycle, campaign `c-20260816181534-d07a`:
+22 of 26 - everything but the four live-laser tests.** The motion group
+under the baseline: `motion.pacing` (idle CPU 2.7 %, moving 34 %, parked
+2.7 %, hold/resume exact), `liveness-probe`, `cancel-abort` (jog cancel
+16.8 mm short of 40, `^X` abort mid-move into Alarm with position
+retained, `$X`, return drift 0.000), `jog-roundtrip` (8 jogs, peak 10500
+mm/min, hold parked, drift 0.000, operator confirmed the gantry) and
+`deadman` (SIGKILL respawn 1.3 s, SIGSTOP -> kernel underrun 0.21 s with
+the latch locked, forgectrl restart mid-move: the busy controller
+finished unmanaged and supervision was retaken at idle);
+`cooling.fans-quiet-after-motion` (idle profile back 30 s after M9);
+`cloud.mode-switch` (session established 2 s after the switch, back to
+GRBL Idle) and `cloud.gfhome-homing` (`$H`, homed in 50.5 s, corner
+confirmed). Tool findings fixed on the way, each a real bench lesson:
+grblHAL's Idle precedes the machine's by the stream depth and the decel
+tail, so motion tests now end on forgectrl's idle; a soft reset (`^X`)
+flushes the controller's read buffer and eats a `?` that lands in it, so
+the Grbl client re-sends `?` until a report arrives; a killed controller
+still reads as running until the supervisor reaps it (wait for a
+different pid); a forgectrl restart mid-move ends in a **replace-at-idle**
+- stop the unmanaged controller, hold the device, re-probe, start a
+supervised one - because the old inherited fd cannot be adopted
+(SERVICES.md now says so; the test expected the same pid); the cloud
+session's evidence is gfcloud's own authenticate/ws-connect lines, not
+the optional firmware-probe file; cloud mode's connect zeroes the kernel
+counters at the head's start and its hunt homes the head 245/139 mm to
+the corner - the test tells the runner and jogs the head back. Two
+product observations left visible as baseline leftovers: `$H` (gfhome)
+and cloud mode leave the lid lamp at 236 (gfhome should hand the lamp
+back; the mode-switch test hands it back itself because it caused the
+switch), and a mode switch back to GRBL keeps cloud's lamp level. The
+first `Idle`-before-motion race also lived in the fans-quiet test's
+second wait (harmless there). Remaining: `laser.emission-witness`
+(core), `laser.disarm-in-hold`, `laser.expected-stop`,
+`laser.kill-mid-fire` - live tests, run by the operator from the page,
+one per session turn; then the export.
 
 ## Hardware facts bank (measured)
 
