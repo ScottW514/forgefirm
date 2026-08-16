@@ -121,7 +121,7 @@ machine when the lid is closed *and* the SoC has already released its lock.
 | SoC stops toggling CHG_PUMP (hang, panic, stop, fault, underrun) | drops within one one-shot period | FIRE is parked by the same paths | next run restarts the feed |
 | Button pressed with lid closed and lock released | — | armed (Q1 cleared) | — |
 | Button pressed while lid open or lock held | — | stays blocked (SET is dominant) | — |
-| Remote-interlock loop opens (Pro) | unchanged | blocked: the kernel drives INTERLOCK_RESET high on the switch edge, setting the interlock latch. Opening the loop by itself only releases the latch's RESET — the board has no direct trip path — so this SoC drive is what makes the interlock a hardware cut (see §3.1); software additionally parks the job on `interlock` | close the loop: the kernel releases INTERLOCK_RESET and the closed loop resets the latch |
+| Remote-interlock loop opens (Pro) | unchanged | blocked: the kernel drives INTERLOCK_RESET high on the switch edge, setting the interlock latch. Opening the loop by itself only releases the latch's RESET — the board has no direct trip path — so this SoC drive is what makes the interlock a hardware cut (see §3.1); software additionally cancels (or, with `lid_policy = hold`, parks) the job on `interlock` | close the loop: the kernel releases INTERLOCK_RESET and the closed loop resets the latch |
 | Interlock latch already SET | unchanged | blocked | closing the loop clears it |
 
 `hv_enable` (GPIO4_06) is a readback of this chain's own output, not an
@@ -198,14 +198,28 @@ would not allow.
   emission witness); a stale or failed verdict relocks in-process.
 - **Safety door.** `doors` (lid) and `interlock` (loop open) are the core's
   safety-door signal, shown to the core only while it is in a job-time state
-  (cycle, hold, tool change, door): a running job parks; once the door/loop
-  closes the controller reports `Door:0` and a cycle start resumes it. While
-  idle, jogging or homing the signal is hidden — the lid is opened at idle
-  every time material is loaded and a door seen there would strand the
-  controller in Door — and it is delivered the moment the core leaves those
-  states, so a job started with the lid open parks on its first poll. This
-  is a motion/UX gate; the lid is *also* cut in hardware by the button latch,
-  and the interlock by the interlock latch (§3.1).
+  (cycle, hold, tool change, door): a running job parks with a planned
+  deceleration and — with `lid_policy = cancel`, the default and the factory
+  firmware's behavior — is then cancelled: the armed window closes, a soft
+  reset ends the sender's stream (from a fully parked state, so the position
+  is kept and no alarm is raised), and the head returns to where the job
+  started with the latch locked, lid open or not. The next job re-arms with a
+  fresh button press, which is also what clears the hardware button latch
+  the lid set — the software armed window and the hardware latch cannot
+  disagree. `lid_policy = hold` keeps the stock door hold (once the door/loop
+  closes the controller reports `Door:0` and a cycle start resumes it). During
+  the arm wait either opening cancels the job outright under both policies.
+  While idle, jogging or homing — and during the return-to-start motion after
+  a cancel — the signal is hidden: the lid is opened at idle every time
+  material is loaded and a door seen there would strand the controller in
+  Door; it is delivered the moment the core leaves those states, so a job
+  started with the lid open parks (and cancels) on its first poll. This is a
+  motion/UX gate; the lid is *also* cut in hardware by the button latch, and
+  the interlock by the interlock latch (§3.1).
+- **Button.** Outside the arm wait the button is the job pause/resume toggle
+  in both controller modes (feed hold / cycle start in GRBL mode; the
+  factory's stop-backtrack-hold and lead-in resume in cloud mode); a held
+  button has no further meaning during a job.
 - **Head/motion witnesses.** Position counters are not proof of motion (the
   step-stream drives are open loop); the head accelerometer is the motion
   witness, and `beam_detect_analog` on the head is the live emission witness.

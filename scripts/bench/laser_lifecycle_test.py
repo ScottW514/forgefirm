@@ -20,6 +20,14 @@ reported messages:
      button: a press with the lid closed arms, and the lid or the
      interlock loop opening during the wait cancels the job (alarm,
      latch relocked, never armed)
+  7. outside the arm wait the button is the pause/resume toggle: a press
+     while running feed-holds, a press while held resumes; the arming
+     press itself is not a pause press
+  8. the lid or the interlock loop opening mid-job cancels the job (the
+     default lid_policy): reason reported, armed window closed, a soft
+     reset with the position kept (no alarm), the head returns to the
+     job start on its own; with lid_policy = hold the stock door hold and
+     cycle-start resume apply
 
 The disarm grace is shortened via a temp config (GFHOME_CONF), the
 cooling verdict is published hermetically (GF_VERDICT_FILE), the same
@@ -137,12 +145,12 @@ def publish_verdicts(path, stop, fire_ok):
 class Session:
     """One controller process with the lifecycle overrides applied."""
 
-    def __init__(self, name, fire_ok=True, disarm_s=2, switches=None):
+    def __init__(self, name, fire_ok=True, disarm_s=2, switches=None, conf_extra=""):
         self.name = name
         self.workdir = tempfile.mkdtemp(prefix="laser-lifecycle-")
         conf = os.path.join(self.workdir, "forgefirm.conf")
         with open(conf, "w") as f:
-            f.write("laser_disarm_s = %d\n" % disarm_s)
+            f.write("laser_disarm_s = %d\n%s" % (disarm_s, conf_extra))
         verdict = os.path.join(self.workdir, "cooling.state")
         env = dict(os.environ, GF_VERDICT_FILE=verdict, GFHOME_CONF=conf,
                    FFLOG_STDERR="1")
@@ -189,6 +197,42 @@ class Session:
         """Send a line without waiting for ok/error (the arm wait blocks
         the gcode stream, so the ok only comes once the button is pressed)."""
         self.sock.sendall((line + "\n").encode())
+
+    def press_button(self, hold_s=0.15):
+        """A momentary press: word with the button bit, then without."""
+        base = SW_CLOSED if self.switch_word_closed() else SW_LID_OPEN
+        self.set_switches(base | (1 << 2))
+        time.sleep(hold_s)
+        self.set_switches(base)
+
+    def switch_word_closed(self):
+        try:
+            with open(self.switch_file) as f:
+                return int(f.read().strip() or "0", 0) & SW_CLOSED
+        except (OSError, ValueError):
+            return True
+
+    def state(self):
+        """One '?' report's state word (e.g. 'Run', 'Hold:0', 'Door:1', 'Idle')."""
+        self.sock.sendall(b"?")
+        read_avail(self.sock, self.log, 0.3)
+        m = re.findall(r"<([A-Za-z]+(?::\d)?)", "".join(self.log[-4:]))
+        return m[-1] if m else ""
+
+    def wait_state(self, prefix, timeout):
+        end = time.time() + timeout
+        while time.time() < end:
+            st = self.state()
+            if st.startswith(prefix):
+                return st
+            time.sleep(0.1)
+        return None
+
+    def mpos_x(self):
+        self.sock.sendall(b"?")
+        read_avail(self.sock, self.log, 0.3)
+        m = re.findall(r"MPos:(-?[\d.]+)", "".join(self.log[-4:]))
+        return float(m[-1]) if m else None
 
     def armed_count(self):
         return "".join(self.log).count(ARMED)
@@ -415,6 +459,115 @@ def test_lid_open_in_wait():
         s.close()
 
 
+def start_armed_move(s, tag, gcode="G1 X30 F60"):
+    """Arm through the button and get a long move under way; returns once
+    the controller reports Run."""
+    s.send_raw("M4 S100")
+    s.send_raw(gcode)
+    if not wait_for(s.log, PROMPT, 5, s.sock):
+        fail("[%s] no button prompt" % tag)
+    s.press_button()
+    if not wait_for(s.log, ARMED, 5, s.sock):
+        fail("[%s] the button press did not arm" % tag)
+    if not s.wait_state("Run", 5):
+        fail("[%s] the job never reported Run" % tag)
+
+
+def test_button_pause_resume():
+    """Rule 7: outside the arm wait the button is the pause/resume toggle -
+    a press while running is a feed hold, a press while held is a cycle
+    start; the arming press itself is not a pause press."""
+    s = Session("button-toggle", disarm_s=60, switches=SW_CLOSED)
+    try:
+        start_armed_move(s, "button-toggle")
+        time.sleep(0.5)
+        if s.state().startswith("Hold"):
+            fail("[button-toggle] the arming press was taken as a pause press")
+        s.press_button()
+        if not s.wait_state("Hold", 3):
+            fail("[button-toggle] a press while running did not feed-hold (state %s)" % s.state())
+        if not wait_for(s.log, "button pressed - job paused", 2, s.sock):
+            fail("[button-toggle] no pause message")
+        s.press_button()
+        if not s.wait_state("Run", 3):
+            fail("[button-toggle] a press while held did not resume (state %s)" % s.state())
+        if not wait_for(s.log, "button pressed - job resumed", 2, s.sock):
+            fail("[button-toggle] no resume message")
+        s.sock.sendall(b"\x18")
+        print("PASS [button-toggle]: press paused (Hold), press resumed (Run); the arming press did not")
+    finally:
+        s.close()
+
+
+def test_lid_cancels_and_returns():
+    """Rule 8 (lid_policy = cancel, the default): the lid opening mid-job
+    parks the job and cancels it - reason reported, armed window closed,
+    a soft reset (no alarm: position kept), then the head returns on its
+    own to the job start; the sender sees the reset banner. The interlock
+    loop is the same event with its own reason."""
+    s = Session("lid-cancel", disarm_s=60, switches=SW_CLOSED)
+    try:
+        start_armed_move(s, "lid-cancel", gcode="G1 X20 F600")
+        time.sleep(0.5)
+        x_mid = s.mpos_x()
+        s.set_switches(SW_LID_OPEN)
+        if not wait_for(s.log, "lid opened - job cancelled", 5, s.sock):
+            fail("[lid-cancel] the lid open did not cancel the job")
+        if not wait_for(s.log, DISARMED, 5, s.sock):
+            fail("[lid-cancel] the cancel did not close the armed window")
+        if not wait_for(s.log, "for help]", 5, s.sock):
+            fail("[lid-cancel] no reset banner after the cancel")
+        if not wait_for(s.log, "returned to the job start", 15, s.sock):
+            fail("[lid-cancel] the head did not report returning to the job start")
+        st = s.wait_state("Idle", 5)
+        if not st:
+            fail("[lid-cancel] not Idle after the return (state %s)" % s.state())
+        if "ALARM" in "".join(s.log):
+            fail("[lid-cancel] an alarm was raised on the cancel (position should be kept)")
+        x_end = s.mpos_x()
+        if x_end is None or abs(x_end) > 0.05:
+            fail("[lid-cancel] head not back at the job start: MPos X=%s (was %s mid-job)" % (x_end, x_mid))
+        print("PASS [lid-cancel]: lid open mid-job -> cancelled, disarmed, reset banner, "
+              "returned to X=%.3f (mid-job X=%.3f), Idle, no alarm" % (x_end, x_mid))
+        s.close()
+        # Interlock variant.
+        s = Session("loop-cancel", disarm_s=60, switches=SW_CLOSED)
+        start_armed_move(s, "loop-cancel", gcode="G1 X20 F600")
+        time.sleep(0.5)
+        s.set_switches(SW_LOOP_OPEN)
+        if not wait_for(s.log, "interlock open - job cancelled", 5, s.sock):
+            fail("[loop-cancel] the interlock open did not cancel the job")
+        if not wait_for(s.log, "returned to the job start", 15, s.sock):
+            fail("[loop-cancel] no return to the job start after the interlock cancel")
+        print("PASS [loop-cancel]: interlock open mid-job -> cancelled and returned")
+    finally:
+        s.close()
+
+
+def test_lid_policy_hold():
+    """lid_policy = hold keeps stock grblHAL behavior: the lid parks the job
+    in Door and a cycle start resumes it once closed."""
+    s = Session("lid-hold", disarm_s=60, switches=SW_CLOSED, conf_extra="lid_policy = hold\n")
+    try:
+        start_armed_move(s, "lid-hold", gcode="G1 X20 F60")
+        time.sleep(0.5)
+        s.set_switches(SW_LID_OPEN)
+        if not s.wait_state("Door", 3):
+            fail("[lid-hold] the lid open did not park the job in Door (state %s)" % s.state())
+        read_avail(s.sock, s.log, 1.0)
+        if "job cancelled" in "".join(s.log):
+            fail("[lid-hold] the hold policy cancelled the job")
+        s.set_switches(SW_CLOSED)
+        time.sleep(0.5)
+        s.sock.sendall(b"~")
+        if not s.wait_state("Run", 3):
+            fail("[lid-hold] cycle start did not resume the held job (state %s)" % s.state())
+        s.sock.sendall(b"\x18")
+        print("PASS [lid-hold]: with lid_policy=hold the lid parked the job in Door and ~ resumed it")
+    finally:
+        s.close()
+
+
 def main():
     if not os.path.isfile(BIN):
         fail("controller binary not found at %s" % BIN)
@@ -423,6 +576,9 @@ def main():
     test_hold_grace()
     test_button_wait_arms()
     test_lid_open_in_wait()
+    test_button_pause_resume()
+    test_lid_cancels_and_returns()
+    test_lid_policy_hold()
     test_verdict_blocks_arm()
     test_sigterm_mid_job()
     print("PASS: the armed-window lifecycle holds")

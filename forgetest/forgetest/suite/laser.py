@@ -494,3 +494,94 @@ def arm_wait_lid(ctx):
         ev["state_after"] = st
         ctx.check(st.startswith("Idle"), "controller is %s after $X, expected Idle", st)
     ctx.log("PASS: lid open during the arm wait cancelled the job (alarm 3), armed=false, latch locked")
+
+
+@test("laser.lid-cancel-mid-fire", title="Lid open mid-burn: beam off in hardware, job cancelled, head home",
+      subsystem="laser", kind="live", est_min=5,
+      covers=_LASER_COVERS + [("grblhal-glowforge", "src/glowforge_switches.c"),
+                              ("grblhal-glowforge", "src/glowforge_switch_map.h")],
+      requires=["laser.emission-witness", "motion.lid-cancel-home"],
+      steps=["Scrap under the head with 40 mm of free +X and +Y travel; lid closed; exhaust on.",
+             "Press the physical button when it lights white; open the lid once the burn is under way "
+             "and leave it open until the head has come back."],
+      description="Start the S400 square; once emission is live, open the lid. Emission stops in "
+                  "hardware, the job parks and is cancelled (reason reported, controller reset "
+                  "with the position kept), the armed window closes and the kernel latch relocks, "
+                  "the hardware button latch reads SET, and the head returns to the job start "
+                  "with the lid still open.")
+def lid_cancel_mid_fire(ctx):
+    ev = ctx.evidence
+    with ctx.grbl() as g, LiveJob(ctx, g):
+        prepare(ctx, g)
+        start = g.status_report()["MPos"]
+        ctx.instruct(ARM_CUE % "40 mm +X and +Y")
+        stream(g, ["G91", "G21", "M4", "S400",
+                   "G1 X40 F200", "G1 Y40 F200", "G1 X-40 F200", "G1 Y-40 F200",
+                   "M5", "G90", "M2"])
+        t0 = time.time()
+        smp = None
+        seen = False
+        while time.time() - t0 < 240:
+            ctx.checkpoint()
+            smp = sample(ctx)
+            if smp and smp["emission"] and smp["emission"] > 0:
+                seen = True
+                break
+            time.sleep(0.15)
+        if not seen:
+            g.realtime(0x18)
+            raise Failed("no emission seen within 240 s (arm refused, or no button press)")
+        ctx.log("emission live (%s) - asking the operator to open the lid", smp["emission"])
+        ctx.instruct("The laser is cutting. Open the lid NOW and leave it open, then click Done.")
+        t_lid = time.time()
+        trail = []
+        text = ""
+        while time.time() - t_lid < 8:
+            s = sample(ctx)
+            if s:
+                trail.append((round(time.time() - t_lid, 2), s["emission"], s["kstate"], s["armed"]))
+            text += g.drain()
+            time.sleep(0.12)
+        for t in trail:
+            ctx.log("  post-lid %s", t)
+        ev["messages"] = [ln for ln in text.splitlines() if ln.startswith("[MSG:") or "help]" in ln
+                          or ln.startswith("ALARM")]
+        ctx.log("controller: %s", ev["messages"])
+        zero_at = next((t for t, e, _, _ in trail if e == 0), None)
+        tail_zero = all(e == 0 for _, e, _, _ in trail[-16:])
+        ev.update({"zero_at_s": zero_at, "tail_zero": tail_zero})
+        ctx.check(zero_at is not None and zero_at < 3.0, "emission did not stop after the lid opened (first 0 at %s)", zero_at)
+        ctx.check(tail_zero, "emission returned after the lid opened")
+        ctx.check("lid opened - job cancelled" in text, "the lid open was not reported as cancelling the job")
+        ctx.check("help]" in text, "no reset banner after the cancel")
+        ctx.check("ALARM" not in text, "an alarm was raised on the cancel (position should be kept)")
+        # the head returns to the job start on its own
+        t1 = time.time()
+        returned = "returned to the job start" in text
+        while not returned and time.time() - t1 < 30:
+            ctx.checkpoint()
+            text += g.drain()
+            returned = "returned to the job start" in text
+            time.sleep(0.2)
+        ev["returned_message"] = returned
+        ctx.check(returned, "the head did not report returning to the job start")
+        st = g.status_report()
+        drift = max(abs(st["MPos"][i] - start[i]) for i in range(2))
+        ev["drift_mm"] = round(drift, 3)
+        s = sample(ctx)
+        ev["armed_after"] = s["armed"] if s else None
+        ilk = hw.sysfs_int("cnc/interlock_circuit")
+        ev["latch_locked"] = ilk is not None and bool(ilk & (1 << 3))
+        ev["button_latch"] = hw.sysfs_int("cnc/button_latch")
+        ctx.log("returned: drift %.3f mm; armed=%s latch_locked=%s button_latch=%s", drift,
+                ev["armed_after"], ev["latch_locked"], ev["button_latch"])
+        ctx.check(drift <= 0.05, "head not back at the job start (drift %.3f mm)", drift)
+        ctx.check(not ev["armed_after"], "armed window still open after the cancel")
+        ctx.check(ev["latch_locked"], "kernel latch not locked after the cancel")
+        ctx.check(ev["button_latch"] == 1, "hardware button latch not SET after the lid open (%s)", ev["button_latch"])
+        ctx.confirm("Did the burn stop the instant the lid opened, and did the head then go straight back "
+                    "to where the job started with the lid still open, dark?")
+        ctx.instruct("Close the lid, then click Done.")
+        ctx.sleep(1)
+    ctx.log("PASS: lid open mid-burn -> emission 0 at +%s s, cancelled, reset without alarm, returned (drift %.3f mm), "
+            "button latch SET", zero_at, drift)

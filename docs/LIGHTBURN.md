@@ -19,9 +19,9 @@ roughly 45 W. **Jobs sent from LightBurn fire the laser.**
   with some materials; sustained flame is not. Keep a fire extinguisher
   (CO₂ preferred) within reach and know how you will open the lid and
   smother a fire before you start.
-- **Stop means stop.** The big button, LightBurn's Stop, and opening the
-  lid each halt the job. If anything looks wrong, stop first and diagnose
-  second.
+- **Stop means stop.** Opening the lid cancels the job (the beam is cut by
+  the hardware the same instant); LightBurn's Stop aborts it; the big button
+  pauses it. If anything looks wrong, stop first and diagnose second.
 
 The laser fires only inside an operator-armed window:
 
@@ -109,13 +109,22 @@ restart the controller with the head re-parked.)
 - **Start** runs the job. Travels run up to 200 mm/s; anything faster
   in a layer is clamped by the controller ($110/$111 = 12000 mm/min).
 - **Pause** = grbl feed hold: motion parks within ~0.4 s (0.2 s stream
-  queue + deceleration); Resume continues exactly.
-- **Opening the lid (or a Pro's interlock loop) during a job** parks it
-  the same way and LightBurn shows **Door**; close the lid and press
-  **Resume** (a cycle start) to continue. At idle, while jogging, or during
-  homing the lid is yours to open and close freely — the controller does
-  not enter Door there (the hardware blocks the beam anyway), so a lid
-  cycle while loading material never leaves LightBurn waiting.
+  queue + deceleration); Resume continues exactly. **The big button does
+  the same**: one press while a job runs pauses it (LightBurn shows Hold),
+  the next press resumes it — the factory's pause/resume, on the machine.
+- **Opening the lid (or a Pro's interlock loop) during a job cancels it**,
+  as the factory firmware does: the head parks with a controlled
+  deceleration (the hardware cut the beam the instant the lid moved), the
+  console reports the reason, the job ends for LightBurn (the controller
+  resets — position is kept, no alarm), and the head returns on its own to
+  where the job started, lid open or not. Close the lid and start again
+  from LightBurn; the next job asks for the button, which is also what
+  re-arms the machine's hardware button latch. The `lid_policy` setting on
+  the control panel's GRBL tab can select the stock Grbl behavior instead
+  (Door hold, Resume once closed). At idle, while jogging, or during homing
+  the lid is yours to open and close freely — the controller does nothing
+  there (the hardware blocks the beam anyway), so a lid cycle while loading
+  material never leaves LightBurn waiting.
 - **Stop** = soft reset: motion aborts with a controlled deceleration
   and grblHAL raises an alarm with **position declared lost** (the
   stream queue means up to ~40 mm of in-flight difference). Recovery:
