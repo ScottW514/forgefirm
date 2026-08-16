@@ -16,10 +16,15 @@ reported messages:
      job abandoned in feed hold disarms after laser_disarm_s
   5. arming is refused while the cooling verdict blocks fire, and no
      armed message appears
+  6. with a switch source present (GF_SWITCH_FILE), the arm blocks on the
+     button: a press with the lid closed arms, and the lid or the
+     interlock loop opening during the wait cancels the job (alarm,
+     latch relocked, never armed)
 
-The disarm grace is shortened via a temp config (GFHOME_CONF) and the
+The disarm grace is shortened via a temp config (GFHOME_CONF), the
 cooling verdict is published hermetically (GF_VERDICT_FILE), the same
-overrides the emission harness uses.
+overrides the emission harness uses, and the switches are driven through
+the file-backed test source (GF_SWITCH_FILE: the EV_SW word as an integer).
 
 Usage: laser_lifecycle_test.py [path-to-binary]
        (default ./build-native/grblHAL_glowforge)
@@ -41,6 +46,16 @@ PORT = 2398
 ARMED = "laser armed"
 DISARMED = "laser disarmed - latch locked"
 BLOCKED = "laser fire blocked"
+PROMPT = "press the button to start the laser job"
+LID_CANCEL = "lid opened during arm - job cancelled"
+LOOP_CANCEL = "interlock open during arm - job cancelled"
+
+# EV_SW words for the file-backed switch source: bit 2 button, bit 3 doors
+# (set = closed), bit 5 interlock loop (set = OPEN).
+SW_CLOSED = 1 << 3
+SW_PRESSED = SW_CLOSED | (1 << 2)
+SW_LID_OPEN = 0
+SW_LOOP_OPEN = SW_CLOSED | (1 << 5)
 
 
 def fail(msg):
@@ -122,7 +137,7 @@ def publish_verdicts(path, stop, fire_ok):
 class Session:
     """One controller process with the lifecycle overrides applied."""
 
-    def __init__(self, name, fire_ok=True, disarm_s=2):
+    def __init__(self, name, fire_ok=True, disarm_s=2, switches=None):
         self.name = name
         self.workdir = tempfile.mkdtemp(prefix="laser-lifecycle-")
         conf = os.path.join(self.workdir, "forgefirm.conf")
@@ -132,6 +147,12 @@ class Session:
         env = dict(os.environ, GF_VERDICT_FILE=verdict, GFHOME_CONF=conf,
                    FFLOG_STDERR="1")
         env.pop("GFSINK", None)
+        env.pop("GF_SWITCH_FILE", None)
+        self.switch_file = None
+        if switches is not None:
+            self.switch_file = os.path.join(self.workdir, "switches")
+            self.set_switches(switches)
+            env["GF_SWITCH_FILE"] = self.switch_file
         self.stop = threading.Event()
         self.pub = threading.Thread(target=publish_verdicts,
                                     args=(verdict, self.stop, fire_ok),
@@ -157,6 +178,17 @@ class Session:
             err = self.proc.stderr.read() or b""
         fail("[%s] cannot connect to the controller (exit=%s)\n%s"
              % (self.name, self.proc.poll(), err.decode(errors="replace")))
+
+    def set_switches(self, word):
+        tmp = self.switch_file + ".tmp"
+        with open(tmp, "w") as f:
+            f.write("%d\n" % word)
+        os.replace(tmp, self.switch_file)
+
+    def send_raw(self, line):
+        """Send a line without waiting for ok/error (the arm wait blocks
+        the gcode stream, so the ok only comes once the button is pressed)."""
+        self.sock.sendall((line + "\n").encode())
 
     def armed_count(self):
         return "".join(self.log).count(ARMED)
@@ -322,12 +354,75 @@ def test_sigterm_mid_job():
         s.close()
 
 
+def test_button_wait_arms():
+    """Rule 6a: with a switch source the arm blocks on the button; a press
+    with the lid closed arms; the window is not opened before it."""
+    s = Session("button-wait", disarm_s=60, switches=SW_CLOSED)
+    try:
+        s.send_raw("M4 S100")
+        s.send_raw("G1 X1 F600")
+        if not wait_for(s.log, PROMPT, 5, s.sock):
+            fail("[button-wait] no button prompt with a switch source present")
+        read_avail(s.sock, s.log, 1.0)
+        if ARMED in "".join(s.log):
+            fail("[button-wait] armed before the button was pressed")
+        s.set_switches(SW_PRESSED)
+        if not wait_for(s.log, ARMED, 5, s.sock):
+            fail("[button-wait] the button press did not arm")
+        s.set_switches(SW_CLOSED)
+        wait_idle(s.sock, s.log)
+        print("PASS [button-wait]: the arm blocked on the button and the press armed")
+    finally:
+        s.close()
+
+
+def test_lid_open_in_wait():
+    """Rule 6b: the lid opening during the button wait cancels the job:
+    the reason is reported, an alarm is raised, the window never opens.
+    A press with the lid still open must not arm either."""
+    s = Session("lid-in-wait", disarm_s=60, switches=SW_CLOSED)
+    try:
+        s.send_raw("M4 S100")
+        s.send_raw("G1 X1 F600")
+        if not wait_for(s.log, PROMPT, 5, s.sock):
+            fail("[lid-in-wait] no button prompt")
+        s.set_switches(SW_LID_OPEN)
+        if not wait_for(s.log, LID_CANCEL, 5, s.sock):
+            fail("[lid-in-wait] lid open during the wait was not reported as a cancel")
+        if not wait_for(s.log, "ALARM:3", 5, s.sock):
+            fail("[lid-in-wait] no alarm after the lid-open cancel")
+        # Press with the lid still open: nothing may arm.
+        s.set_switches(1 << 2)
+        read_avail(s.sock, s.log, 1.0)
+        if ARMED in "".join(s.log):
+            fail("[lid-in-wait] armed after a lid-open cancel")
+        # Interlock variant on a fresh session, so the alarm state does not
+        # mask the check.
+        s.close()
+        s = Session("loop-in-wait", disarm_s=60, switches=SW_CLOSED)
+        s.send_raw("M4 S100")
+        s.send_raw("G1 X1 F600")
+        if not wait_for(s.log, PROMPT, 5, s.sock):
+            fail("[loop-in-wait] no button prompt")
+        s.set_switches(SW_LOOP_OPEN)
+        if not wait_for(s.log, LOOP_CANCEL, 5, s.sock):
+            fail("[loop-in-wait] interlock open during the wait was not reported as a cancel")
+        if ARMED in "".join(s.log):
+            fail("[loop-in-wait] armed despite the open interlock loop")
+        print("PASS [lid-in-wait]: lid or interlock open during the arm wait "
+              "cancelled the job and never armed")
+    finally:
+        s.close()
+
+
 def main():
     if not os.path.isfile(BIN):
         fail("controller binary not found at %s" % BIN)
     test_job_window()
     test_sender_change()
     test_hold_grace()
+    test_button_wait_arms()
+    test_lid_open_in_wait()
     test_verdict_blocks_arm()
     test_sigterm_mid_job()
     print("PASS: the armed-window lifecycle holds")

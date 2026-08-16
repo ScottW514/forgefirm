@@ -32,7 +32,10 @@ The laser fires only inside an operator-armed window:
   requires). LightBurn simply waits; press the button and the job
   runs. If nobody presses within `laser_button_timeout_s` (default
   300 s) the job aborts with alarm 3. Stop in LightBurn (soft reset)
-  cancels the wait at any time.
+  cancels the wait at any time. Opening the lid (or a Pro's interlock
+  loop) while the button is lit cancels the job the same way — the
+  message names the reason, the latch relocks, and a press with the lid
+  open never arms; close the lid, clear the alarm, and start again.
 - One press covers one job — power changes and M5/M3 toggles do not
   re-prompt. The window relocks when the job ends (program end
   `M2`/`M30`), when the sender connection changes, or after

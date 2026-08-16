@@ -424,3 +424,73 @@ def kill_mid_fire(ctx):
     ctx.confirm("Did the cut end abruptly at the kill (a short line, no run-on), with the machine "
                 "quiet and the button dark now?")
     ctx.log("PASS: emission 0 at +%s s after SIGKILL, latch locked, controller respawned", zero_at)
+
+
+@test("laser.arm-wait-lid", title="Lid open during the arm wait cancels the job",
+      subsystem="laser", kind="operator", est_min=3,
+      covers=_LASER_COVERS + [("grblhal-glowforge", "src/glowforge_laser.c"),
+                              ("grblhal-glowforge", "src/glowforge_switches.c"),
+                              ("grblhal-glowforge", "src/glowforge_switch_map.h")],
+      requires=["kernel.latch-locked-idle", "motion.jog-roundtrip"],
+      steps=["Lid closed; nothing under the head needs to be in place - the machine will not fire.",
+             "When the white button lights, do NOT press it: open the lid instead."],
+      description="Start a laser job so the controller unlocks the latch and lights the button, "
+                  "then open the lid while it waits. The wait must abort with the lid named as the "
+                  "reason and alarm 3, the armed window closed (armed -> false), the kernel latch "
+                  "back to locked, and no emission; closing the lid and clearing the alarm returns "
+                  "the controller to Idle. No press is given, so nothing can fire.")
+def arm_wait_lid(ctx):
+    ev = ctx.evidence
+    with ctx.grbl() as g, LiveJob(ctx, g):
+        prepare(ctx, g)
+        base = sample(ctx)
+        ctx.check(base, "forgectrl /status or /cool/status unavailable")
+        ctx.check(not base["armed"], "armed window already open before the job")
+        stream(g, ["G91", "G21", "M4", "S400", "G1 X5 F600"])
+        # The prompt: the latch is unlocked and the button lit from here on.
+        t0 = time.time()
+        text = ""
+        while time.time() - t0 < 30 and "press the button" not in text:
+            ctx.checkpoint()
+            text += g.drain()
+            time.sleep(0.1)
+        ctx.check("press the button" in text, "no arm prompt within 30 s (job did not reach the arm)")
+        s = sample(ctx)
+        ev["armed_during_wait"] = s["armed"] if s else None
+        ctx.log("arm prompt seen; armed=%s; asking the operator to open the lid", ev["armed_during_wait"])
+        ctx.instruct("The button is lit white. Do NOT press it. Open the lid now, then click Done.")
+        t1 = time.time()
+        while time.time() - t1 < 15:
+            ctx.checkpoint()
+            text += g.drain()
+            if "job cancelled" in text and "ALARM:3" in text:
+                break
+            time.sleep(0.1)
+        ev["messages"] = [ln for ln in text.splitlines() if ln.startswith("[MSG:") or ln.startswith("ALARM")]
+        ctx.log("controller: %s", ev["messages"])
+        ctx.check("lid opened during arm - job cancelled" in text,
+                  "the lid open was not reported as cancelling the arm")
+        ctx.check("ALARM:3" in text, "no alarm 3 after the lid-open cancel")
+        # Armed window closed and the kernel latch locked.
+        t2 = time.time()
+        s = None
+        while time.time() - t2 < 10:
+            s = sample(ctx)
+            if s and not s["armed"]:
+                break
+            time.sleep(0.25)
+        ev["armed_after"] = s["armed"] if s else None
+        ilk = hw.sysfs_int("cnc/interlock_circuit")
+        locked = ilk is not None and bool(ilk & (1 << 3))
+        ev["latch_locked"] = locked
+        ev["emission"] = s["emission"] if s else None
+        ctx.check(s and not s["armed"], "the armed window stayed open after the lid-open cancel")
+        ctx.check(locked, "kernel latch not locked after the lid-open cancel (interlock_circuit=%s)", ilk)
+        ctx.check(not ev["emission"], "emission_samples nonzero (%s) - nothing may have fired", ev["emission"])
+        ctx.instruct("Close the lid, then click Done.")
+        ctx.sleep(1)
+        ctx.log("unlock: %s", g.command("$X"))
+        st = g.status_report()["state"]
+        ev["state_after"] = st
+        ctx.check(st.startswith("Idle"), "controller is %s after $X, expected Idle", st)
+    ctx.log("PASS: lid open during the arm wait cancelled the job (alarm 3), armed=false, latch locked")
