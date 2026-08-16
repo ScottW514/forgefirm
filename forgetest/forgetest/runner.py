@@ -52,6 +52,7 @@ class Run:
         self.prompt = None        # {"id","question","options"}
         self.answers = []
         self.evidence = {}
+        self.baseline_captured = None   # preserved state the post pass hands back
         self.aborted = threading.Event()
         self.finished = None      # {"result","message","duration_s"}
         self.proc = None
@@ -190,6 +191,17 @@ class Context:
 
     def takeover(self):
         return Takeover(self.run.log, self.test.id)
+
+    def counters_rezeroed(self):
+        """Tell the baseline the kernel position counters were re-zeroed
+        at the head's starting position during this run (cloud mode's
+        connect clears them): counters at (0,0,0) afterward mean the head
+        is back where the run found it."""
+        cap = self.run.baseline_captured
+        if cap and cap.get("position") is not None:
+            cap["position"] = [0, 0, 0]
+            self.log("position counters re-zeroed at the starting position; the baseline "
+                     "expects (0,0,0) at the end")
 
 
 class Takeover:
@@ -418,11 +430,12 @@ class Runner:
             self.messages.append("leftovers before %s (left by %s): %s"
                                  % (run.id, who, "; ".join(str(x) for x in left)))
         run.evidence["baseline"] = {"pre": [x.as_dict() for x in left]}
-        return bl.capture()
+        run.baseline_captured = bl.capture()
+        return run.baseline_captured
 
     def _baseline_post(self, run, captured):
         bl = _baseline.Baseline(run.log)
-        left = bl.enforce("post", captured=captured)
+        left = bl.enforce("post", captured=run.baseline_captured or captured)
         run.evidence.setdefault("baseline", {})["post"] = [x.as_dict() for x in left]
         if left:
             self.messages.append("leftovers after %s: %s" % (run.id, "; ".join(str(x) for x in left)))

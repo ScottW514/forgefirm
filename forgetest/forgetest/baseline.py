@@ -71,6 +71,9 @@ CAM_IDLE_S = 20                     # camera engine idle stop is 10 s
 COOL_IDLE_S = 120                   # cooldown after motion
 IDLE_S = 30                         # cnc/state back to idle after a job
 
+XY_STEPS_PER_MM = 53.333            # boards/glowforge.h (x8 microstepping)
+RETURN_MAX_MM = 100.0               # a displaced head is jogged back at most this far
+
 
 def leds_root():
     r = os.environ.get("GF_LEDS_ROOT") or "/sys/class/leds/"
@@ -339,6 +342,53 @@ class Baseline:
                     act = "failed: %s" % e
                 left.append(Leftover("leds/" + name, got, "0", act))
 
+    def _return_head(self, was, now):
+        """Jog the head back along its own path by the kernel-measured X/Y
+        delta (Z is never touched), through the GRBL controller. Bounded:
+        beyond RETURN_MAX_MM per axis, or without a running GRBL
+        controller, the counters are reported and left."""
+        dx = (now[0] - was[0]) / XY_STEPS_PER_MM
+        dy = (now[1] - was[1]) / XY_STEPS_PER_MM
+        if abs(dx) < 0.02 and abs(dy) < 0.02:
+            return "unrestorable (Z only)" if now[2] != was[2] else "restored"
+        if abs(dx) > RETURN_MAX_MM or abs(dy) > RETURN_MAX_MM:
+            return "unrestorable: %.1f/%.1f mm exceeds %.0f mm" % (dx, dy, RETURN_MAX_MM)
+        # a controller may be inside a respawn backoff (seconds): wait for it
+        mode = None
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            st, mode = self.fc_get("/mode")
+            if (st == 200 and isinstance(mode, dict) and mode.get("mode") == "grbl"
+                    and mode.get("controller") == "running"):
+                break
+            if st is None:
+                break
+            time.sleep(1.0)
+        if not (isinstance(mode, dict) and mode.get("mode") == "grbl"
+                and mode.get("controller") == "running"):
+            return "unrestorable: no running GRBL controller"
+        try:
+            with hw.Grbl() as g:
+                rep = g.status_report()
+                if rep["state"].startswith("Alarm"):
+                    g.command("$X")
+                g.command("$J=G91X%.3fY%.3fF1200" % (-dx, -dy))
+                deadline = time.time() + 60
+                while time.time() < deadline:
+                    rep = g.status_report()
+                    if rep["state"].startswith("Idle") and time.time() > deadline - 59.5:
+                        break
+                    time.sleep(0.2)
+                g.command("G90")
+        except (hw.HwError, OSError) as e:
+            return "failed: %s" % e
+        self.fc().wait_idle(15)
+        back = read_position()
+        if back is not None and abs(back[0] - was[0]) <= 2 and abs(back[1] - was[1]) <= 2:
+            self.log("head jogged back %.3f/%.3f mm to its start" % (-dx, -dy))
+            return "restored (jogged back %.1f/%.1f mm)" % (-dx, -dy)
+        return "failed: counters read %s after the return jog" % back
+
     def _preserved(self, left, captured):
         if not captured:
             return
@@ -356,7 +406,7 @@ class Baseline:
         was = captured.get("position")
         now = read_position()
         if was is not None and now is not None and now != was:
-            left.append(Leftover("position", now, was, "unrestorable"))
+            left.append(Leftover("position", now, was, self._return_head(was, now)))
         was = captured.get("settings")
         if was:
             st, body = self.fc_get("/settings")

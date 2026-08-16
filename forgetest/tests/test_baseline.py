@@ -119,7 +119,8 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(set(items), {"pic/lid_led", "position"})
         self.assertEqual(items["pic/lid_led"].action, "restored")
         self.assertEqual(self._read("pic/lid_led"), "132")
-        self.assertEqual(items["position"].action, "unrestorable")
+        # no GRBL controller on the host: the head cannot be jogged back
+        self.assertTrue(items["position"].action.startswith("unrestorable"), items["position"].action)
         self.assertEqual(items["position"].found, [1000, 0, 0])
 
     def test_session_resting_lamp_from_boot_reference(self):
