@@ -7,6 +7,7 @@ import time
 
 from ..catalog import test
 from .. import hw
+from ..baseline import read_position
 
 _CLOUD_COVERS = [("forgefirm-app", "**"), ("python3-gfhardware", "**"), ("python3-gfutilities", "**"),
                  ("forgectrl", "src/super.c"), ("forgectrl", "src/main.c")]
@@ -387,6 +388,15 @@ def lid_abort(ctx):
                       ev["edge_to_stop_ms"])
         ctx.check(got["start return home"] and got["return home complete"],
                   "the park did not run to completion with the lid open")
+        # the machine, not the client: the job started at counters (0,0,0)
+        # (cloud clears them at every job start), so a completed park reads
+        # back there - stale ring bytes replayed ahead of the park would not
+        ctx.check(ctx.forgectrl.wait_idle(15, abort=ctx.aborted), "machine not idle after the park")
+        kpos = read_position()
+        ev["kernel_counters_after_park"] = kpos
+        ctx.log("kernel counters after the park: %s", kpos)
+        ctx.check(kpos is not None and abs(kpos[0]) <= 3 and abs(kpos[1]) <= 3,
+                  "the head did not come back to the job start (kernel counters %s)", kpos)
         ctx.check(got[CANCELLED], "the print did not end ':cancelled'")
         st, cs = ctx.forgectrl.get("/cool/status")
         ev["armed_after"] = cs.get("armed") if isinstance(cs, dict) else None
