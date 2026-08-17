@@ -339,6 +339,23 @@ def leave_cloud(ctx, lamp0):
         hw.sysfs_write("pic/lid_led", lamp0)
 
 
+def wait_print_running(ctx, offset, timeout):
+    """The PRINT is running: a "starting run" line after the print's button
+    wait (the connect-time hunt and the service's moves before it are runs
+    too, and must not be mistaken for the print). Returns the line or None."""
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        ctx.checkpoint()
+        lines = log_lines_since(GFCLOUD_LOG, offset)
+        wait_i = next((i for i, ln in enumerate(lines) if "waiting for button" in ln), None)
+        if wait_i is not None:
+            run = next((ln for ln in lines[wait_i:] if "starting run" in ln), None)
+            if run:
+                return run
+        time.sleep(0.5)
+    return None
+
+
 def latch_locked():
     ilk = hw.sysfs_int("cnc/interlock_circuit")
     return ilk is not None and bool(ilk & (1 << 3))
@@ -368,8 +385,8 @@ def lid_abort(ctx):
     offset, lamp0 = enter_cloud(ctx)
     try:
         ctx.instruct(APP_PRINT_CUE)
-        got = wait_log(ctx, offset, ["starting run"], 300)
-        ctx.check(got["starting run"], "no run started within 300 s (print not started, or button not pressed)")
+        got = wait_print_running(ctx, offset, 300)
+        ctx.check(got, "the print never reached its run within 300 s (not started, or the button not pressed)")
         ctx.instruct("The head is moving. Open the lid NOW, then click Done. Leave it open until the head "
                      "has returned to the corner.")
         needles = ["lid opened", "lid opened mid-run; stopping motion", "start return home",
@@ -379,8 +396,17 @@ def lid_abort(ctx):
         for k, v in got.items():
             ctx.log("  %s: %s", k, "seen" if v else "MISSING")
         ctx.check(got["lid opened mid-run; stopping motion"], "the lid open did not stop the run")
-        t_edge = line_time(got["lid opened"]) if got["lid opened"] else None
-        t_stop = line_time(got["lid opened mid-run; stopping motion"])
+        # The lid edge that stopped the run is the LAST "lid opened" edge line
+        # before the stop line (an earlier open, e.g. to place the scrap, is
+        # not the one).
+        lines = log_lines_since(GFCLOUD_LOG, offset)
+        stop_i = next((i for i, ln in enumerate(lines) if "lid opened mid-run; stopping motion" in ln), None)
+        edge_line = None
+        if stop_i is not None:
+            edge_line = next((ln for ln in reversed(lines[:stop_i])
+                              if "_switch_event lid opened" in ln or ln.rstrip().endswith(" lid opened")), None)
+        t_edge = line_time(edge_line) if edge_line else None
+        t_stop = line_time(lines[stop_i]) if stop_i is not None else None
         if t_edge is not None and t_stop is not None:
             ev["edge_to_stop_ms"] = round((t_stop - t_edge) * 1000, 1)
             ctx.log("lid edge -> stop: %s ms", ev["edge_to_stop_ms"])
@@ -435,9 +461,18 @@ def lid_during_button_wait(ctx):
         ev["log"] = {k: bool(v) for k, v in got.items()}
         ctx.check(got["button wait lid opened - relocking the laser"], "the lid did not end the button wait")
         ctx.check(got[CANCELLED], "the print did not end ':cancelled'")
-        ran = [ln for ln in log_lines_since(GFCLOUD_LOG, offset) if "starting run" in ln]
-        ev["runs_started"] = len(ran)
-        ctx.check(not ran, "a run started despite the lid-open cancel")
+        # No run may start between the button wait and the cancel: the print
+        # itself, or a park (the head never moved, there is nothing to park).
+        # The connect-time hunt and the service's moves BEFORE the print are
+        # legitimate runs and are outside this window.
+        lines = log_lines_since(GFCLOUD_LOG, offset)
+        wait_i = next((i for i, ln in enumerate(lines) if "waiting for button" in ln), None)
+        end_i = next((i for i, ln in enumerate(lines) if wait_i is not None and i > wait_i and CANCELLED in ln),
+                     len(lines))
+        ran = ([ln for ln in lines[wait_i:end_i] if "starting run" in ln]
+               if wait_i is not None else [])
+        ev["runs_started_after_wait"] = len(ran)
+        ctx.check(not ran, "a run started after the lid-open cancel (%d)", len(ran))
         st, cs = ctx.forgectrl.get("/cool/status")
         ev["armed_after"] = cs.get("armed") if isinstance(cs, dict) else None
         ev["latch_locked"] = latch_locked()
@@ -468,13 +503,26 @@ def hunt_lid_open(ctx):
     ctx.check(not sw.get("lid"), "the lid reads closed (%s)", sw)
     offset, lamp0 = enter_cloud(ctx)
     try:
-        got = wait_log(ctx, offset, ["hunt [", COMPLETED], 180)
-        ev["log"] = {k: bool(v) for k, v in got.items()}
-        refused = [ln for ln in log_lines_since(GFCLOUD_LOG, offset) if "unsafe to move" in ln]
-        ev["refusals"] = len(refused)
-        ctx.check(got["hunt ["], "the service sent no hunt within 180 s of the session")
+        # The hunt's own terminal line ("hunt [id]: finished with event ..."):
+        # it must be :completed, and no lid refusal may precede it. Service
+        # motions AFTER the hunt are rightly refused with the lid open and
+        # are outside this window.
+        hunt_line = None
+        t0 = time.time()
+        while time.time() - t0 < 180 and hunt_line is None:
+            ctx.checkpoint()
+            lines = log_lines_since(GFCLOUD_LOG, offset)
+            hunt_i = next((i for i, ln in enumerate(lines) if "hunt [" in ln and "finished with event" in ln), None)
+            if hunt_i is not None:
+                hunt_line = lines[hunt_i]
+                break
+            time.sleep(0.5)
+        ev["hunt_line"] = hunt_line.split(" ", 2)[-1] if hunt_line else None
+        ctx.check(hunt_line, "the service sent no hunt (or it never finished) within 180 s of the session")
+        refused = [ln for ln in lines[:hunt_i] if "unsafe to move" in ln]
+        ev["refusals_before_hunt_end"] = len(refused)
         ctx.check(not refused, "the hunt was refused for the lid (%d 'unsafe to move')", len(refused))
-        ctx.check(got[COMPLETED], "the hunt did not complete")
+        ctx.check(COMPLETED in hunt_line, "the hunt did not complete: %s", ev["hunt_line"])
         ctx.confirm("Did the lens home (Z motion) with the lid open, with no error in the app?")
         ctx.instruct("Close the lid, then click Done.")
         ctx.sleep(3)
@@ -500,8 +548,8 @@ def pause_resume(ctx):
     offset, lamp0 = enter_cloud(ctx)
     try:
         ctx.instruct(APP_PRINT_CUE)
-        got = wait_log(ctx, offset, ["starting run"], 300)
-        ctx.check(got["starting run"], "no run started within 300 s (print not started, or button not pressed)")
+        got = wait_print_running(ctx, offset, 300)
+        ctx.check(got, "the print never reached its run within 300 s (not started, or the button not pressed)")
         ctx.instruct("The head is moving. Press the button once NOW (pause), watch the head stop and back up "
                      "a few millimeters, wait about 3 seconds, press it again (resume), then click Done.")
         got = wait_log(ctx, offset, ["button pressed mid-run; pausing", "paused at",
