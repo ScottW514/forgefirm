@@ -763,19 +763,21 @@ def lid_cancel_home(ctx):
             "reset without alarm, head returned to the start both times", drift, hold_drift)
 
 
-@test("motion.interlock-cancel-park", title="The interlock loop cancels a job like the lid, and the return "
-                                            "home ignores an open lid",
+@test("motion.interlock-cancel-home", title="The interlock loop cancels a job like the lid and returns to "
+                                           "the job start",
       subsystem="motion", kind="operator", est_min=4,
       covers=_LID_COVERS, requires=["motion.lid-cancel-home"],
       steps=["Bed clear; the head needs 60 mm of free +X travel. No laser is involved.",
              "Be able to open the remote-interlock loop: unplug the Pro's interlock plug, or pull the "
              "jumper at J8 on a Basic/Plus. Restore it at the end.",
-             "Open the interlock when told; then open the lid while the head is on its way back."],
+             "Open the interlock when told and leave it open until the head has come back."],
       description="The remote-interlock loop is the lid's equal in the cancel policy: opening it mid-job "
-                  "cancels the job with 'interlock open' named as the reason and sends the head back to "
-                  "the job start. Opening the lid during that return changes nothing - the park hides the "
-                  "door for exactly this reason and runs to completion, as the factory's does.")
-def interlock_cancel_park(ctx):
+                  "cancels the job with 'interlock open' named as the reason - the lid's own message would "
+                  "be wrong here - and sends the head back to the job start with the loop still open. "
+                  "(An open lid not stopping the park is the lid test's park, which runs with the lid open "
+                  "throughout; in GRBL mode the park is a rapid too short to open a lid during, so the "
+                  "mid-park lid edge is the cloud test's.)")
+def interlock_cancel_home(ctx):
     ev = ctx.evidence
     policy = (ctx.forgectrl.settings() or {}).get("lid_policy") or "cancel"
     ev["lid_policy"] = policy
@@ -799,17 +801,14 @@ def interlock_cancel_park(ctx):
         ev["interlock_ok_after_pull"] = sw.get("interlock_ok")
         ctx.check(sw.get("interlock_ok") is False,
                   "the interlock still reads closed - the loop was not opened (switches: %s)", sw)
-        # The head is now on its way back. The lid goes up during that park:
-        # nothing may stop it.
-        ctx.instruct("The job is cancelling and the head is returning. Open the LID now as well, then "
-                     "click Done - leave both open until the head has stopped.")
         drift = expect_cancel_and_return(ctx, g, ev, start, k0, "interlock open", "interlock")
         sw = (ctx.forgectrl.status().get("switches") or {})
         ev["switches_at_return"] = {"lid": sw.get("lid"), "interlock_ok": sw.get("interlock_ok")}
         ctx.log("at the end of the park: %s", ev["switches_at_return"])
-        ctx.check(sw.get("lid") is False,
-                  "the lid was not open at the end of the park - the park's immunity was not exercised")
-        ctx.instruct("Close the lid and restore the interlock loop (plug/jumper back in), then click Done.")
+        ctx.check(sw.get("interlock_ok") is False,
+                  "the interlock was closed again before the park finished - the park ran with the loop "
+                  "restored, not open")
+        ctx.instruct("Restore the interlock loop (plug/jumper back in), then click Done.")
         ctx.sleep(1)
         sw = (ctx.forgectrl.status().get("switches") or {})
         ev["restored"] = {"lid": sw.get("lid"), "interlock_ok": sw.get("interlock_ok")}
@@ -821,8 +820,8 @@ def interlock_cancel_park(ctx):
         wait_idle(ctx, g, 15)
         g.command("G90")
     machine_idle(ctx)
-    ctx.log("PASS: interlock open cancelled the job and the head returned to the start (drift %.3f mm) "
-            "with the lid opened mid-park", drift)
+    ctx.log("PASS: interlock open cancelled the job with its own reason and the head returned to the "
+            "start (drift %.3f mm) with the loop still open", drift)
 
 
 @test("motion.lid-policy-hold", title="lid_policy=hold parks the job in Door and a cycle start resumes it",
