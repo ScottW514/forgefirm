@@ -75,6 +75,52 @@ def stream(g, lines):
         g.send_raw((ln + "\n").encode())
 
 
+MARK_JOB = ["G91", "G21", "M4", "S400",
+            "G1 X40 F200", "G1 Y40 F200", "G1 X-40 F200", "G1 Y-40 F200",
+            "M5", "G90", "M2"]
+
+
+def arm_and_fire(ctx, g, room="40 mm +X and +Y", job=None, timeout=240):
+    """The arm cue, the job, and the wait for the emission witness - the
+    prologue every live test shares. Returns the first sample with emission,
+    or soft-resets and fails: no emission means the arm was refused or the
+    button was never pressed."""
+    ctx.instruct(ARM_CUE % room)
+    stream(g, job or MARK_JOB)
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        ctx.checkpoint()
+        smp = sample(ctx)
+        if smp and smp["emission"] and smp["emission"] > 0:
+            return smp
+        time.sleep(0.15)
+    g.realtime(0x18)
+    raise Failed("no emission seen within %d s (arm refused, or no button press)" % timeout)
+
+
+def kill_trail(ctx, t0, seconds=5.0):
+    """Sample emission / kernel state / armed for `seconds` after a kill."""
+    trail = []
+    for _ in range(int(seconds / 0.12)):
+        s = sample(ctx)
+        if s:
+            trail.append((round(time.time() - t0, 2), s["emission"], s["kstate"], s["armed"]))
+        time.sleep(0.12)
+    return trail
+
+
+def judge_kill(ctx, trail, what):
+    """(first zero, tail stayed zero, kernel stopped running) from a trail."""
+    for t in trail:
+        ctx.log("  post-%s %s", what, t)
+    zero_at = next((t for t, e, _, _ in trail if e == 0), None)
+    tail_zero = all(e == 0 for _, e, _, _ in trail[-16:])
+    not_running = all(k != "running" for _, _, k, _ in trail[-16:])
+    ctx.log("emission first 0 at +%s s; last 2 s all zero: %s; kernel not running: %s",
+            zero_at, tail_zero, not_running)
+    return zero_at, tail_zero, not_running
+
+
 def run_and_sample(ctx, g, job, sample_hz=8, overall_timeout=200):
     """Stream the job; sample forgectrl through arm -> fire -> disarm.
     Completes on: emission seen then Idle > 3 s; or armed then disarmed
@@ -276,63 +322,42 @@ def disarm_in_hold(ctx):
                 "going dark on its own about a minute later?")
 
 
-@test("laser.expected-stop", title="Armed kill on the expected-stop path (POST /controller/stop)",
-      subsystem="laser", kind="live", est_min=4,
+@test("laser.armed-kill", title="Armed kill mid-fire: the expected stop, then a SIGKILL",
+      subsystem="laser", kind="live", est_min=6,
       covers=_LASER_COVERS + [("forgectrl", "src/main.c")],
-      requires=["laser.emission-witness"],
+      requires=["laser.emission-witness", "motion.deadman"],
       steps=["Scrap under the head with 40 mm of free +X and +Y travel; lid closed; exhaust on.",
-             "Press the physical button when it lights white.",
-             "The controller is left stopped until you judge the stop; the test then restarts it."],
-      description="Start a mark job at S400/F200; once emission is live, POST /controller/stop. "
-                  "Emission must drop to 0 within 2.5 s and stay 0, the kernel must not be "
-                  "running, and the supervisor's restart is a separate, operator-judged step "
-                  "(POST /controller/start, no motion, no laser).")
-def expected_stop(ctx):
+             "Press the physical button when it lights white - twice over the test, once per burn.",
+             "After the first burn the controller is left stopped until you judge the stop; the "
+             "test then restarts it and runs the second burn."],
+      description="Both ways an armed job is killed, on one setup. Expected: mid-burn "
+                  "POST /controller/stop - the supervisor writes cnc/stop and relocks before the "
+                  "SIGTERM, so emission drops within 2.5 s and stays 0, the kernel is not running, "
+                  "and the restart is a separate operator-judged step. Unexpected: mid-burn SIGKILL "
+                  "of the controller - the supervisor's exit safing must end the fire tail inside "
+                  "the ring's in-flight window, leave the latch locked, and respawn the controller.")
+def armed_kill(ctx):
     ev = ctx.evidence
     fc = ctx.forgectrl
+
+    # -- 1. the expected stop -------------------------------------------------
     with ctx.grbl() as g, LiveJob(ctx, g):
         prepare(ctx, g)
-        ctx.instruct(ARM_CUE % "40 mm +X and +Y")
-        stream(g, ["G91", "G21", "M4", "S400",
-                   "G1 X40 F200", "G1 Y40 F200", "G1 X-40 F200", "G1 Y-40 F200",
-                   "M5", "G90", "M2"])
-        t0 = time.time()
-        smp = None
-        seen = False
-        while time.time() - t0 < 240:
-            ctx.checkpoint()
-            smp = sample(ctx)
-            if smp and smp["emission"] and smp["emission"] > 0:
-                seen = True
-                break
-            time.sleep(0.15)
-        if not seen:
-            g.realtime(0x18)
-            raise Failed("no emission seen within 240 s (arm refused, or no button press)")
+        smp = arm_and_fire(ctx, g)
         ctx.log("emission live (%s) - stopping the controller NOW", smp["emission"])
         t_stop = time.time()
         code, body = fc.post("/controller/stop")
         post_dt = time.time() - t_stop
         ctx.log("POST /controller/stop -> %s %s (%.2f s)", code, body, post_dt)
-        trail = []
-        for _ in range(40):                 # ~5 s at 8 Hz
-            s = sample(ctx)
-            if s:
-                trail.append((round(time.time() - t_stop, 2), s["emission"], s["kstate"], s["armed"]))
-            time.sleep(0.12)
-        for t in trail:
-            ctx.log("  post-stop %s", t)
-        zero_at = next((t for t, e, _, _ in trail if e == 0), None)
-        tail_zero = all(e == 0 for _, e, _, _ in trail[-16:])
-        not_running = all(k != "running" for _, _, k, _ in trail[-16:])
+        trail = kill_trail(ctx, t_stop)
+        zero_at, tail_zero, not_running = judge_kill(ctx, trail, "stop")
         st_mode, mode = fc.get("/mode")
-        ev.update({"post_status": code, "post_s": round(post_dt, 2), "zero_at_s": zero_at,
-                   "tail_zero": tail_zero, "kernel_not_running": not_running, "mode_after_stop": mode,
-                   "trail": trail})
-        ctx.log("emission first 0 at +%s s; last 2 s all zero: %s; kernel not running: %s; /mode %s",
-                zero_at, tail_zero, not_running, mode)
+        ev["expected"] = {"post_status": code, "post_s": round(post_dt, 2), "zero_at_s": zero_at,
+                          "tail_zero": tail_zero, "kernel_not_running": not_running,
+                          "mode_after_stop": mode, "trail": trail}
     ctx.check(code == 200, "POST /controller/stop -> %s", code)
-    ctx.check(zero_at is not None and zero_at < 2.5, "emission did not drop within 2.5 s (first 0 at %s)", zero_at)
+    ctx.check(zero_at is not None and zero_at < 2.5,
+              "emission did not drop within 2.5 s of the stop (first 0 at %s)", zero_at)
     ctx.check(tail_zero, "emission returned after the stop")
     ctx.check(not_running, "the kernel was still running after the stop")
     ctx.instruct("The controller is STOPPED (supervision held). Judge the stop on the scrap - a "
@@ -347,67 +372,32 @@ def expected_stop(ctx):
     ctx.log("/mode after start: %s", mode)
     ctx.check(isinstance(mode, dict) and mode.get("controller") == "running",
               "controller not running after the restart: %s", mode)
-    ctx.log("PASS: stop in %.2f s, emission 0 at +%s s, controller restarted", post_dt, zero_at)
+    ctx.log("expected stop PASS: returned in %.2f s, emission 0 at +%s s, controller restarted",
+            post_dt, zero_at)
 
-
-@test("laser.kill-mid-fire", title="Armed kill: SIGKILL of the controller while emitting",
-      subsystem="laser", kind="live", est_min=4,
-      covers=_LASER_COVERS,
-      requires=["laser.expected-stop", "motion.deadman"],
-      steps=["Scrap under the head with 40 mm of free +X and +Y travel; lid closed; exhaust on.",
-             "Press the physical button when it lights white."],
-      description="Start a mark job at S400/F200; once emission is live, SIGKILL the controller. "
-                  "The supervisor's exit safing must end the fire tail within the ring's in-flight "
-                  "window: emission drops to 0 within 2.5 s and stays 0, the kernel is not "
-                  "running, the latch reads locked, and the controller is respawned.")
-def kill_mid_fire(ctx):
+    # -- 2. the SIGKILL -------------------------------------------------------
+    # The pid is the RESTARTED controller's, not the one phase 1 stopped.
     import os as _os
     import signal as _signal
-    ev = ctx.evidence
-    fc = ctx.forgectrl
     st, m0 = fc.get("/mode")
-    ctx.check(st == 200 and isinstance(m0, dict) and m0.get("controller") == "running", "controller not running: %s", m0)
+    ctx.check(st == 200 and isinstance(m0, dict) and m0.get("controller") == "running",
+              "controller not running before the kill: %s", m0)
     pid = m0.get("pid")
     with ctx.grbl() as g, LiveJob(ctx, g):
         prepare(ctx, g)
-        ctx.instruct(ARM_CUE % "40 mm +X and +Y")
-        stream(g, ["G91", "G21", "M4", "S400",
-                   "G1 X40 F200", "G1 Y40 F200", "G1 X-40 F200", "G1 Y-40 F200",
-                   "M5", "G90", "M2"])
-        t0 = time.time()
-        smp = None
-        seen = False
-        while time.time() - t0 < 240:
-            ctx.checkpoint()
-            smp = sample(ctx)
-            if smp and smp["emission"] and smp["emission"] > 0:
-                seen = True
-                break
-            time.sleep(0.15)
-        if not seen:
-            g.realtime(0x18)
-            raise Failed("no emission seen within 240 s (arm refused, or no button press)")
+        smp = arm_and_fire(ctx, g)
         ctx.log("emission live (%s) - SIGKILL controller pid %s NOW", smp["emission"], pid)
         t_kill = time.time()
         _os.kill(pid, _signal.SIGKILL)
-        trail = []
-        for _ in range(40):                 # ~5 s at 8 Hz
-            s = sample(ctx)
-            if s:
-                trail.append((round(time.time() - t_kill, 2), s["emission"], s["kstate"], s["armed"]))
-            time.sleep(0.12)
-    for t in trail:
-        ctx.log("  post-kill %s", t)
-    zero_at = next((t for t, e, _, _ in trail if e == 0), None)
-    tail_zero = all(e == 0 for _, e, _, _ in trail[-16:])
-    not_running = all(k != "running" for _, _, k, _ in trail[-16:])
+        trail = kill_trail(ctx, t_kill)
+    zero_at, tail_zero, not_running = judge_kill(ctx, trail, "kill")
     ilk = hw.sysfs_int("cnc/interlock_circuit")
     locked = ilk is not None and bool(ilk & (1 << 3))
-    ev.update({"pid": pid, "zero_at_s": zero_at, "tail_zero": tail_zero, "kernel_not_running": not_running,
-               "latch_locked": locked, "trail": trail})
-    ctx.log("emission first 0 at +%s s; last 2 s all zero: %s; kernel not running: %s; latch locked: %s",
-            zero_at, tail_zero, not_running, locked)
-    ctx.check(zero_at is not None and zero_at < 2.5, "emission did not drop within 2.5 s (first 0 at %s)", zero_at)
+    ev["sigkill"] = {"pid": pid, "zero_at_s": zero_at, "tail_zero": tail_zero,
+                     "kernel_not_running": not_running, "latch_locked": locked, "trail": trail}
+    ctx.log("latch locked after the kill: %s", locked)
+    ctx.check(zero_at is not None and zero_at < 2.5,
+              "emission did not drop within 2.5 s of the kill (first 0 at %s)", zero_at)
     ctx.check(tail_zero, "emission returned after the kill")
     ctx.check(not_running, "the kernel was still running after the kill")
     ctx.check(locked, "latch not locked after the kill")
@@ -418,13 +408,14 @@ def kill_mid_fire(ctx):
         if isinstance(m1, dict) and m1.get("controller") == "running" and m1.get("pid") != pid:
             break
         ctx.sleep(1)
-    ev["mode_after"] = m1
+    ev["mode_after_kill"] = m1
     ctx.log("/mode after the kill: %s", m1)
     ctx.check(m1 and m1.get("controller") == "running" and m1.get("pid") != pid,
               "supervisor did not respawn the controller: %s", m1)
-    ctx.confirm("Did the cut end abruptly at the kill (a short line, no run-on), with the machine "
-                "quiet and the button dark now?")
-    ctx.log("PASS: emission 0 at +%s s after SIGKILL, latch locked, controller respawned", zero_at)
+    ctx.confirm("Did both burns end abruptly where they were killed (a short line, no run-on), "
+                "with the machine quiet and the button dark now?")
+    ctx.log("PASS: expected stop 0 at +%s s and SIGKILL 0 at +%s s, latch locked, controller "
+            "respawned", ev["expected"]["zero_at_s"], zero_at)
 
 
 @test("laser.arm-wait-lid", title="Lid open during the arm wait cancels the job",
@@ -497,142 +488,39 @@ def arm_wait_lid(ctx):
     ctx.log("PASS: lid open during the arm wait cancelled the job (clean reset, no alarm), armed=false, latch locked")
 
 
-@test("laser.lid-cancel-mid-fire", title="Lid open mid-burn: beam off in hardware, job cancelled, head home",
-      subsystem="laser", kind="live", est_min=5,
+@test("laser.pause-resume-lid-cancel", title="One live cut: the button pauses and resumes it, the lid "
+                                             "cancels it and sends the head home",
+      subsystem="laser", kind="live", est_min=7,
       covers=_LASER_COVERS + [("grblhal-glowforge", "src/glowforge_switches.c"),
                               ("grblhal-glowforge", "src/glowforge_switch_map.h")],
-      requires=["laser.emission-witness", "motion.lid-cancel-home"],
+      requires=["laser.emission-witness", "motion.lid-cancel-home", "motion.button-hold-resume"],
       steps=["Scrap under the head with 40 mm of free +X and +Y travel; lid closed; exhaust on.",
-             "Press the physical button when it lights white; open the lid once the burn is under way "
-             "and leave it open until the head has come back."],
-      description="Start the S400 square; once emission is live, open the lid. Emission stops in "
-                  "hardware, the job parks and is cancelled (reason reported, controller reset "
-                  "with the position kept), the armed window closes and the kernel latch relocks, "
-                  "the hardware button latch reads SET, and the head returns to the job start "
-                  "with the lid still open.")
-def lid_cancel_mid_fire(ctx):
+             "Press the physical button when it lights white (arm). Once the cut is under way press "
+             "it again (pause), wait about 3 seconds, press it once more (resume), and then open the "
+             "lid and leave it open until the head has come back.",
+             "Keep the pause short: the armed window's idle grace closes it after about a minute in "
+             "a hold, and a job that disarms cannot resume its emission."],
+      description="The machine's own controls during one armed burn, in the order the factory uses "
+                  "them. Press: the job feed-holds, emission stops, and the latch stays UNLOCKED "
+                  "with the armed window open - a pause is not a cancel. Press again: the cut "
+                  "resumes from where it stopped (GRBL has no backtrack; the kernel refuses one on "
+                  "a live-streamed ring). Lid: emission stops in hardware, the job is cancelled "
+                  "with the reason reported, the controller resets with the position kept and no "
+                  "alarm, the armed window closes and the kernel latch relocks, the hardware button "
+                  "latch reads SET, and the head returns to the job start with the lid still open.")
+def pause_resume_lid_cancel(ctx):
     ev = ctx.evidence
     with ctx.grbl() as g, LiveJob(ctx, g):
         prepare(ctx, g)
         start = g.status_report()["MPos"]
         k0 = kernel_xy_mm(ctx)
-        ev["kernel_start"] = k0
-        ctx.instruct(ARM_CUE % "40 mm +X and +Y")
-        stream(g, ["G91", "G21", "M4", "S400",
-                   "G1 X40 F200", "G1 Y40 F200", "G1 X-40 F200", "G1 Y-40 F200",
-                   "M5", "G90", "M2"])
-        t0 = time.time()
-        smp = None
-        seen = False
-        while time.time() - t0 < 240:
-            ctx.checkpoint()
-            smp = sample(ctx)
-            if smp and smp["emission"] and smp["emission"] > 0:
-                seen = True
-                break
-            time.sleep(0.15)
-        if not seen:
-            g.realtime(0x18)
-            raise Failed("no emission seen within 240 s (arm refused, or no button press)")
-        ctx.log("emission live (%s) - asking the operator to open the lid", smp["emission"])
-        ctx.instruct("The laser is cutting. Open the lid NOW and leave it open, then click Done.")
-        t_lid = time.time()
-        trail = []
-        text = ""
-        while time.time() - t_lid < 8:
-            s = sample(ctx)
-            if s:
-                trail.append((round(time.time() - t_lid, 2), s["emission"], s["kstate"], s["armed"]))
-            text += g.drain()
-            time.sleep(0.12)
-        for t in trail:
-            ctx.log("  post-lid %s", t)
-        ev["messages"] = [ln for ln in text.splitlines() if ln.startswith("[MSG:") or "help]" in ln
-                          or ln.startswith("ALARM")]
-        ctx.log("controller: %s", ev["messages"])
-        zero_at = next((t for t, e, _, _ in trail if e == 0), None)
-        tail_zero = all(e == 0 for _, e, _, _ in trail[-16:])
-        ev.update({"zero_at_s": zero_at, "tail_zero": tail_zero})
-        ctx.check(zero_at is not None and zero_at < 3.0, "emission did not stop after the lid opened (first 0 at %s)", zero_at)
-        ctx.check(tail_zero, "emission returned after the lid opened")
-        ctx.check("lid opened - job cancelled" in text, "the lid open was not reported as cancelling the job")
-        ctx.check("help]" in text, "no reset banner after the cancel")
-        ctx.check("ALARM" not in text, "an alarm was raised on the cancel (position should be kept)")
-        # the head returns to the job start on its own
-        t1 = time.time()
-        returned = "returned to the job start" in text
-        while not returned and time.time() - t1 < 30:
-            ctx.checkpoint()
-            text += g.drain()
-            returned = "returned to the job start" in text
-            time.sleep(0.2)
-        ev["returned_message"] = returned
-        ctx.check(returned, "the head did not report returning to the job start")
-        st = g.status_report()
-        drift = max(abs(st["MPos"][i] - start[i]) for i in range(2))
-        ev["drift_mm"] = round(drift, 3)
-        s = sample(ctx)
-        ev["armed_after"] = s["armed"] if s else None
-        ilk = hw.sysfs_int("cnc/interlock_circuit")
-        ev["latch_locked"] = ilk is not None and bool(ilk & (1 << 3))
-        ev["button_latch"] = hw.sysfs_int("cnc/button_latch")
-        ctx.log("returned: drift %.3f mm; armed=%s latch_locked=%s button_latch=%s", drift,
-                ev["armed_after"], ev["latch_locked"], ev["button_latch"])
-        ctx.check(drift <= 0.05, "head not back at the job start (drift %.3f mm)", drift)
-        # what the MACHINE did: the kernel counters must agree
-        ctx.check(ctx.forgectrl.wait_idle(10, abort=ctx.aborted), "machine not idle after the return")
-        check_kernel_returned(ctx, ev, k0)
-        ctx.check(not ev["armed_after"], "armed window still open after the cancel")
-        ctx.check(ev["latch_locked"], "kernel latch not locked after the cancel")
-        ctx.check(ev["button_latch"] == 1, "hardware button latch not SET after the lid open (%s)", ev["button_latch"])
-        ctx.confirm("Did the burn stop the instant the lid opened, and did the head then go straight back "
-                    "to where the job started with the lid still open, dark?")
-        ctx.instruct("Close the lid, then click Done.")
-        ctx.sleep(1)
-    ctx.log("PASS: lid open mid-burn -> emission 0 at +%s s, cancelled, reset without alarm, returned (drift %.3f mm), "
-            "button latch SET", zero_at, drift)
-
-
-@test("laser.pause-resume-live", title="Button pause and resume mid-burn: emission stops, the window stays "
-                                      "open, the cut continues",
-      subsystem="laser", kind="live", est_min=6,
-      covers=_LASER_COVERS + [("grblhal-glowforge", "src/glowforge_switches.c"),
-                              ("grblhal-glowforge", "src/glowforge_switch_map.h")],
-      requires=["laser.emission-witness", "motion.button-hold-resume"],
-      steps=["Scrap under the head with 60 mm of free +X travel; lid closed; exhaust on.",
-             "Press the physical button when it lights white (arm). A few seconds into the cut press "
-             "it once (pause), wait about 3 seconds, and press it once more (resume). Let the job finish.",
-             "Keep the pause short: the armed window's idle grace closes it after about a minute in a "
-             "hold, and a job that disarms cannot resume its emission."],
-      description="The button's pause/resume during a live cut, the factory's behavior on the machine: "
-                  "the first press feed-holds the job and emission stops, the laser latch stays "
-                  "UNLOCKED and the armed window stays open (a pause is not a cancel), and the second "
-                  "press resumes the cut from where it stopped and the job runs to its end. GRBL mode "
-                  "has no backtrack - the kernel refuses one on a live-streamed ring - so the restart "
-                  "picks up where the deceleration ended.")
-def pause_resume_live(ctx):
-    ev = ctx.evidence
-    with ctx.grbl() as g, LiveJob(ctx, g):
-        prepare(ctx, g)
-        start = g.status_report()["MPos"]
         ev["start"] = start
-        ctx.instruct(ARM_CUE % "60 mm +X")
-        stream(g, ["G91", "G21", "M3", "S400", "G1 X60 F300", "M5", "G90", "M2"])
-        t0 = time.time()
-        smp = None
-        seen = False
-        while time.time() - t0 < 240:
-            ctx.checkpoint()
-            smp = sample(ctx)
-            if smp and smp["emission"] and smp["emission"] > 0:
-                seen = True
-                break
-            time.sleep(0.15)
-        if not seen:
-            g.realtime(0x18)
-            raise Failed("no emission seen within 240 s (arm refused, or no button press)")
+        ev["kernel_start"] = k0
+        smp = arm_and_fire(ctx, g)
         ev["emission_running"] = smp["emission"]
         ctx.log("emission live (%s) - asking the operator to pause", smp["emission"])
+
+        # -- the button pauses ------------------------------------------------
         ctx.instruct("The laser is cutting. Press the button ONCE now (pause), then click Done - "
                      "do not wait long before the next step.")
         st = wait_state(ctx, g, "Hold", 8)
@@ -640,8 +528,6 @@ def pause_resume_live(ctx):
         text = drain_text(g, 0.5)
         ev["hold_state"] = st["state"]
         ev["pause_message"] = "job paused" in text
-        # emission has to be gone, and the window has to still be open: a
-        # pause that relocked would need a fresh arm press to go on.
         paused = []
         t1 = time.time()
         while time.time() - t1 < 4:
@@ -657,12 +543,15 @@ def pause_resume_live(ctx):
         ilk = hw.sysfs_int("cnc/interlock_circuit")
         ev["latch_locked_while_paused"] = ilk is not None and bool(ilk & (1 << 3))
         ctx.log("paused: %s, emission 0 = %s, armed = %s, latch locked = %s", ev["hold_state"],
-                ev["emission_zero_when_paused"], ev["armed_while_paused"], ev["latch_locked_while_paused"])
+                ev["emission_zero_when_paused"], ev["armed_while_paused"],
+                ev["latch_locked_while_paused"])
         ctx.check(ev["emission_zero_when_paused"], "emission did not stop while the job was paused: %s", paused)
         ctx.check(ev["armed_while_paused"], "the armed window closed on the pause (a pause is not a cancel)")
         ctx.check(not ev["latch_locked_while_paused"],
                   "the kernel latch relocked on the pause - the resume could not fire without a new arm press")
-        ctx.instruct("Press the button once more now (resume), then click Done and let the job finish.")
+
+        # -- the button resumes -----------------------------------------------
+        ctx.instruct("Press the button once more now (resume), then click Done.")
         st = wait_state(ctx, g, "Run", 10)
         ev["resumed_state"] = st["state"] if st else g.status_report()["state"]
         ctx.check(st is not None, "the second press did not resume the job (state %s)", ev["resumed_state"])
@@ -682,22 +571,64 @@ def pause_resume_live(ctx):
         ev["resume_trail"] = trail[-6:]
         ctx.log("emission after the resume: %s", trail[-6:])
         ctx.check(back, "emission did not return after the resume: %s", trail[-6:])
-        # the job runs to its end on its own
-        peak, states, st = wait_idle(ctx, g, 60)
-        ev["states_after_resume"] = states
-        ctx.check("TIMEOUT" not in states, "the resumed job did not finish: %s", states)
-        moved = st["MPos"][0] - start[0]
-        ev["moved_mm"] = round(moved, 3)
-        ctx.log("finished: moved %.3f mm of 60 (states %s)", moved, states)
-        ctx.check(abs(moved - 60.0) <= 0.1, "the resumed job did not finish its move (%.3f mm of 60)", moved)
-        ctx.check(ctx.forgectrl.wait_idle(15, abort=ctx.aborted), "machine not idle after the job")
+
+        # -- the lid cancels --------------------------------------------------
+        ctx.instruct("The cut is running again. Open the lid NOW and leave it open, then click Done.")
+        t_lid = time.time()
+        lid_trail = []
+        text = ""
+        while time.time() - t_lid < 8:
+            s = sample(ctx)
+            if s:
+                lid_trail.append((round(time.time() - t_lid, 2), s["emission"], s["kstate"], s["armed"]))
+            text += g.drain()
+            time.sleep(0.12)
+        for t in lid_trail:
+            ctx.log("  post-lid %s", t)
+        ev["messages"] = [ln for ln in text.splitlines() if ln.startswith("[MSG:") or "help]" in ln
+                          or ln.startswith("ALARM")]
+        ctx.log("controller: %s", ev["messages"])
+        zero_at = next((t for t, e, _, _ in lid_trail if e == 0), None)
+        tail_zero = all(e == 0 for _, e, _, _ in lid_trail[-16:])
+        ev.update({"lid_zero_at_s": zero_at, "lid_tail_zero": tail_zero})
+        ctx.check(zero_at is not None and zero_at < 3.0,
+                  "emission did not stop after the lid opened (first 0 at %s)", zero_at)
+        ctx.check(tail_zero, "emission returned after the lid opened")
+        ctx.check("lid opened - job cancelled" in text, "the lid open was not reported as cancelling the job")
+        ctx.check("help]" in text, "no reset banner after the cancel")
+        ctx.check("ALARM" not in text, "an alarm was raised on the cancel (position should be kept)")
+        t3 = time.time()
+        returned = "returned to the job start" in text
+        while not returned and time.time() - t3 < 30:
+            ctx.checkpoint()
+            text += g.drain()
+            returned = "returned to the job start" in text
+            time.sleep(0.2)
+        ev["returned_message"] = returned
+        ctx.check(returned, "the head did not report returning to the job start")
+        st = g.status_report()
+        drift = max(abs(st["MPos"][i] - start[i]) for i in range(2))
+        ev["drift_mm"] = round(drift, 3)
         s = sample(ctx)
-        ev["armed_after_job"] = s["armed"] if s else None
-        ctx.confirm("Did the burn stop on the first press and start again on the second, continuing the "
-                    "same line to its end? (A small mark where it restarted is expected - GRBL mode does "
-                    "not backtrack.)")
-        g.command("$J=G91X-60F1200")
-        wait_idle(ctx, g, 30)
-        g.command("G90")
-    ctx.log("PASS: button paused the burn (emission 0, armed kept, latch unlocked), the next press resumed "
-            "it and the job finished (%.3f mm)", ev["moved_mm"])
+        ev["armed_after"] = s["armed"] if s else None
+        ilk = hw.sysfs_int("cnc/interlock_circuit")
+        ev["latch_locked"] = ilk is not None and bool(ilk & (1 << 3))
+        ev["button_latch"] = hw.sysfs_int("cnc/button_latch")
+        ctx.log("returned: drift %.3f mm; armed=%s latch_locked=%s button_latch=%s", drift,
+                ev["armed_after"], ev["latch_locked"], ev["button_latch"])
+        ctx.check(drift <= 0.05, "head not back at the job start (drift %.3f mm)", drift)
+        ctx.check(ctx.forgectrl.wait_idle(10, abort=ctx.aborted), "machine not idle after the return")
+        check_kernel_returned(ctx, ev, k0)
+        ctx.check(not ev["armed_after"], "armed window still open after the cancel")
+        ctx.check(ev["latch_locked"], "kernel latch not locked after the cancel")
+        ctx.check(ev["button_latch"] == 1, "hardware button latch not SET after the lid open (%s)",
+                  ev["button_latch"])
+        ctx.confirm("Did the burn stop on the first press, start again on the second, then stop the "
+                    "instant the lid opened - and did the head go straight back to where the job "
+                    "started, with the lid still open and dark? (A small mark where the cut "
+                    "restarted is expected - GRBL mode does not backtrack.)")
+        ctx.instruct("Close the lid, then click Done.")
+        ctx.sleep(1)
+    ctx.log("PASS: button paused the burn (emission 0, armed kept, latch unlocked) and resumed it; "
+            "the lid then cancelled it - emission 0 at +%s s, reset without alarm, returned (drift "
+            "%.3f mm), button latch SET", zero_at, drift)

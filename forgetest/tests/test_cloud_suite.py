@@ -338,20 +338,99 @@ class CloudSuiteTests(unittest.TestCase):
         finally:
             cloud.wait_log = saved
 
-    # -- the two lid tests, on their bench excerpts --------------------------------
-    def test_lid_abort_on_the_bench_excerpt(self):
+    # -- the lid/interlock abort and the button-wait tests, on their excerpts ------
+    # -- the merged lid + interlock abort test -------------------------------
+    def abort_parts(self):
+        """The lid-abort excerpt split for the merged test: the print
+        prologue (replayed for both prints), the lid stop + park + cancel,
+        and the same tail with the interlock as the trigger, cut where the
+        test stops to have the lid opened during the park."""
+        lines = fixture("lidabort")
+        pre, rest = cut(lines, "waiting for button")
+        run_pre, rest = cut(rest, "machine:_run_loop starting run")
+        pre, rest = pre + run_pre + [rest[0]], rest[1:]
+        ilk = [l.replace("lid opened mid-run; stopping motion",
+                         "interlock opened mid-run; stopping motion") for l in rest]
+        stop, tail = cut(ilk, "start return home")
+        return pre, rest, stop + [tail[0]], tail[1:]
+
+    def abort_hooks(self, pre, lid_tail, ilk_stop, ilk_park, prints):
+        def next_print():
+            prints.append(1)
+            self.append(pre, delay=0.1)
+
+        def pull_interlock():
+            self.fc.state["status"]["switches"]["interlock_ok"] = False
+            self.append(ilk_stop, delay=0.05)
+
+        def restore():
+            self.lid(True)
+            self.fc.state["status"]["switches"]["interlock_ok"] = True
+        return {"Click Done here": next_print,
+                "Open the lid NOW": lambda: (self.lid(False), self.append(lid_tail, delay=0.05)),
+                "Close the lid, then click Done": lambda: self.lid(True),
+                "Open the INTERLOCK loop now": pull_interlock,
+                "Open the LID now as well": lambda: (self.lid(False),
+                                                     self.append(ilk_park, delay=0.05)),
+                "Close the lid and restore the interlock": restore}
+
+    def test_lid_interlock_abort_on_the_bench_excerpt(self):
         self.in_cloud(pid=1522)
         self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
-        hooks = self.replay_print("lidabort", "Open the lid NOW", "start cool down")
-        run = self.run_test(cloud.lid_abort, hooks=hooks, test_id="cloud.lid-abort")
+        prints = []
+        run = self.run_test(cloud.lid_interlock_abort,
+                            hooks=self.abort_hooks(*self.abort_parts(), prints),
+                            test_id="cloud.lid-interlock-abort")
         ev = run.evidence
+        self.assertEqual(len(prints), 2)                      # two prints, one cue each
+        # print 1: the lid
         self.assertLess(ev["edge_to_stop_ms"], 60)
-        self.assertIn(":cancelled", ev["log"]["print finished"])
-        self.assertEqual(ev["kernel_counters_after_park"], [0, 0, 3])
-        self.assertTrue(ev["latch_locked"])
-        self.assertFalse(ev["armed_after"])
+        self.assertIn(":cancelled", ev["lid_log"]["print finished"])
+        self.assertEqual(ev["lid_counters_after_park"], [0, 0, 3])
+        self.assertTrue(ev["lid_latch_locked"])
+        self.assertFalse(ev["lid_armed_after"])
+        # print 2: the interlock, with the lid opened during the park
+        self.assertFalse(ev["interlock_ok_after_pull"])
+        self.assertIn(":cancelled", ev["interlock_log"]["print finished"])
+        self.assertTrue(ev["interlock_log"]["return home complete"])
+        self.assertEqual(ev["switches_at_return"], {"lid": False, "interlock_ok": False})
+        self.assertEqual(ev["interlock_counters_after_park"], [0, 0, 3])
+        self.assertTrue(ev["interlock_latch_locked"])
+        self.assertEqual(ev["restored"], {"lid": True, "interlock_ok": True})
         self.assertEqual(self.fc.posts, [])
-        self.assertTrue(any("PASS: lid open" in l for l in run.lines))
+        self.assertTrue(any("PASS: lid open" in l for l in run.lines), run.lines)
+
+    def test_lid_interlock_abort_refuses_when_the_loop_is_already_open(self):
+        self.in_cloud(pid=1522)
+        self.fc.state["status"]["switches"]["interlock_ok"] = False
+        self.assertFails(cloud.lid_interlock_abort, "already reads open")
+
+    def test_lid_interlock_abort_fails_when_the_park_stops_at_the_lid(self):
+        # the regression this guards: a park an open lid can interrupt
+        self.in_cloud(pid=1522)
+        self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
+        pre, lid_tail, ilk_stop, ilk_park = self.abort_parts()
+        ilk_park = [l for l in ilk_park if "return home complete" not in l]
+        saved = cloud.wait_log
+
+        def fast_wait_log(ctx, offset, needles, timeout, poll=0.5):
+            return saved(ctx, offset, needles, min(timeout, 1.5), poll=0.1)
+        cloud.wait_log = fast_wait_log
+        try:
+            self.assertFails(cloud.lid_interlock_abort, "did not run to completion",
+                             hooks=self.abort_hooks(pre, lid_tail, ilk_stop, ilk_park, []))
+        finally:
+            cloud.wait_log = saved
+
+    def test_lid_interlock_abort_fails_when_the_lid_stop_is_not_edge_driven(self):
+        # a polled stop (the pre-parity behavior) shows up as a long edge->stop gap
+        self.in_cloud(pid=1522)
+        self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
+        pre, lid_tail, ilk_stop, ilk_park = self.abort_parts()
+        lid_tail = [l.replace("2026-08-17T09:42:30.838627", "2026-08-17T09:42:31.838627")
+                    if "lid opened mid-run; stopping motion" in l else l for l in lid_tail]
+        self.assertFails(cloud.lid_interlock_abort, "not edge-driven",
+                         hooks=self.abort_hooks(pre, lid_tail, ilk_stop, ilk_park, []))
 
     def test_lid_during_button_wait_on_the_bench_excerpt(self):
         self.in_cloud(pid=1927)
@@ -368,81 +447,6 @@ class CloudSuiteTests(unittest.TestCase):
         self.assertTrue(ev["latch_locked"])
         self.assertEqual(self.fc.posts, [])
         self.assertTrue(any("PASS: lid open at the button prompt" in l for l in run.lines))
-
-    # -- interlock abort, and the park through an open lid --------------------
-    def interlock_parts(self):
-        """The lid-abort excerpt with the interlock as the trigger, split at
-        the three operator steps: up to the print's run, the stop through
-        'start return home', and the park itself."""
-        lines = [l.replace("lid opened mid-run; stopping motion",
-                           "interlock opened mid-run; stopping motion")
-                 for l in fixture("lidabort")]
-        pre, rest = cut(lines, "waiting for button")
-        run_pre, rest = cut(rest, "machine:_run_loop starting run")
-        pre, rest = pre + run_pre + [rest[0]], rest[1:]
-        stop, tail = cut(rest, "start return home")
-        return pre, stop + [tail[0]], tail[1:]
-
-    def test_interlock_abort_park_on_the_bench_excerpt(self):
-        self.in_cloud(pid=1522)
-        self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
-        pre, stop, park = self.interlock_parts()
-
-        def pull_interlock():
-            self.fc.state["status"]["switches"]["interlock_ok"] = False
-            self.append(stop, delay=0.05)
-
-        def open_lid():
-            self.lid(False)
-            self.append(park, delay=0.05)
-
-        def restore():
-            self.lid(True)
-            self.fc.state["status"]["switches"]["interlock_ok"] = True
-        run = self.run_test(cloud.interlock_abort_park,
-                            hooks={"Click Done here": lambda: self.append(pre, delay=0.1),
-                                   "Open the INTERLOCK loop now": pull_interlock,
-                                   "Open the LID now as well": open_lid,
-                                   "Close the lid and restore the interlock": restore},
-                            test_id="cloud.interlock-abort-park")
-        ev = run.evidence
-        self.assertFalse(ev["interlock_ok_after_pull"])
-        self.assertIn(":cancelled", ev["log"]["print finished"])
-        self.assertEqual(ev["switches_at_return"], {"lid": False, "interlock_ok": False})
-        self.assertEqual(ev["kernel_counters_after_park"], [0, 0, 3])
-        self.assertTrue(ev["latch_locked"])
-        self.assertFalse(ev["armed_after"])
-        self.assertEqual(ev["restored"], {"lid": True, "interlock_ok": True})
-        self.assertEqual(self.fc.posts, [])
-        self.assertTrue(any("PASS: interlock open" in l for l in run.lines), run.lines)
-
-    def test_interlock_abort_refuses_when_the_loop_is_already_open(self):
-        self.in_cloud(pid=1522)
-        self.fc.state["status"]["switches"]["interlock_ok"] = False
-        self.assertFails(cloud.interlock_abort_park, "already reads open")
-
-    def test_interlock_abort_fails_when_the_park_stops_at_the_lid(self):
-        # the regression this guards: a park that the lid can interrupt
-        self.in_cloud(pid=1522)
-        self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
-        pre, stop, park = self.interlock_parts()
-        park = [l for l in park if "return home complete" not in l]
-        saved = cloud.wait_log
-
-        def fast_wait_log(ctx, offset, needles, timeout, poll=0.5):
-            return saved(ctx, offset, needles, min(timeout, 1.5), poll=0.1)
-        cloud.wait_log = fast_wait_log
-        try:
-            self.assertFails(
-                cloud.interlock_abort_park, "did not run to completion",
-                hooks={"Click Done here": lambda: self.append(pre, delay=0.1),
-                       "Open the INTERLOCK loop now": lambda: (
-                           self.fc.state["status"]["switches"].__setitem__("interlock_ok", False),
-                           self.append(stop, delay=0.05)),
-                       "Open the LID now as well": lambda: (self.lid(False),
-                                                            self.append(park, delay=0.05))})
-        finally:
-            cloud.wait_log = saved
 
     # -- a paused print cancelled by the lid, a running one by the app --------
     def cancel_parts(self):

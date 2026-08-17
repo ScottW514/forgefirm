@@ -294,54 +294,44 @@ def k1_k2(ctx):
 
 # ---------------------------------------------------------------- K3
 
-@test("kernel.k3-unlock", title="Mid-run latch unlock never re-arms FIRE", subsystem="kernel",
-      kind="operator", hardware="takeover", always=True, est_min=2,
-      covers=_KERNEL_COVERS,
-      requires=["kernel.k1-k2"],
-      steps=["If the HV supply reports good the drill asks you to open the lid first (the "
-             "safety chain holds HV off); zero duty throughout."],
-      description="Stream of FIRE bits run with the latch locked (laser-less by the run-start "
-                  "guard); the latch is unlocked during the accel ramp. The unlock drives the "
-                  "latch pin (interlock bit 3 clears) but must not restore the FIRE drive while "
-                  "the run is in flight: laser_enable stays 0 for the entire run.")
-def k3_unlock(ctx):
+def _k3_phase(ctx):
+    """K3: the latch unlocked during the accel ramp must not restore the FIRE
+    drive while the run is in flight. Runs inside the caller's takeover."""
     ev = ctx.evidence
-    require_hv_not_good(ctx)
-    with ctx.takeover():
-        check_hv_not_good(ctx)
-        stream = POWER0 + FIRE * (3 * TICK_HZ) + PAD * (TICK_HZ // 2)
-        ctx.log("K3: %d bytes = %.1f s of FIRE bits; ramp_rate 10000 Hz/s (~0.9 s accel "
-                "window); unlock at t=+0.15 s", len(stream), len(stream) / TICK_HZ)
-        snap(ctx, "K3 pre")
-        wr("cnc/motor_lock", 15)
+    check_hv_not_good(ctx)
+    stream = POWER0 + FIRE * (3 * TICK_HZ) + PAD * (TICK_HZ // 2)
+    ctx.log("K3: %d bytes = %.1f s of FIRE bits; ramp_rate 10000 Hz/s (~0.9 s accel "
+            "window); unlock at t=+0.15 s", len(stream), len(stream) / TICK_HZ)
+    snap(ctx, "K3 pre")
+    wr("cnc/motor_lock", 15)
+    wr("cnc/laser_latch", 1)
+    wr("cnc/step_freq", TICK_HZ)
+    wr("cnc/ramp_rate", 10000)
+    try:
+        with PulseDevice(ctx) as dev:
+            dev.rewind()
+            wr("cnc/enable", 1)
+            ctx.sleep(0.5)
+            dev.write(stream)
+            wr("cnc/run", 1)
+            time.sleep(0.15)                # inside the accel ramp
+            wr("cnc/laser_latch", 0)
+            ilk = rd("cnc/interlock_circuit")
+            ctx.log("K3: latch UNLOCKED mid-ramp; interlock=%s (bit 3 should read 0)", ilk)
+            hits, state = watch_laser_until_idle(ctx, 20)
+            snap(ctx, "K3 post")
+            ev["k3"] = {"interlock_after_unlock": ilk, "hits": hits[:10], "end_state": state,
+                        "laser_on_sampled": rd("cnc/laser_on_sampled"),
+                        "underruns": rd("cnc/underruns"), "faults": rd("cnc/faults")}
+    finally:
         wr("cnc/laser_latch", 1)
-        wr("cnc/step_freq", TICK_HZ)
-        wr("cnc/ramp_rate", 10000)
         try:
-            with PulseDevice(ctx) as dev:
-                dev.rewind()
-                wr("cnc/enable", 1)
-                ctx.sleep(0.5)
-                dev.write(stream)
-                wr("cnc/run", 1)
-                time.sleep(0.15)                # inside the accel ramp
-                wr("cnc/laser_latch", 0)
-                ilk = rd("cnc/interlock_circuit")
-                ctx.log("K3: latch UNLOCKED mid-ramp; interlock=%s (bit 3 should read 0)", ilk)
-                hits, state = watch_laser_until_idle(ctx, 20)
-                snap(ctx, "K3 post")
-                ev["k3"] = {"interlock_after_unlock": ilk, "hits": hits[:10], "end_state": state,
-                            "laser_on_sampled": rd("cnc/laser_on_sampled"),
-                            "underruns": rd("cnc/underruns"), "faults": rd("cnc/faults")}
-        finally:
-            wr("cnc/laser_latch", 1)
-            try:
-                wr("cnc/ramp_rate", 125000)
-            except OSError:
-                ctx.log("WARNING: could not restore ramp_rate=125000")
-        ctx.check((int(ilk) & LATCH_BIT) == 0, "K3: the unlock did not drive the latch pin (interlock=%s)", ilk)
-        ctx.check(not hits, "K3: FIRE drive re-armed by a mid-run unlock: %s", hits[:10])
-        ctx.log("K3 PASS: laser_enable stayed 0 for the entire run after the mid-ramp unlock")
+            wr("cnc/ramp_rate", 125000)
+        except OSError:
+            ctx.log("WARNING: could not restore ramp_rate=125000")
+    ctx.check((int(ilk) & LATCH_BIT) == 0, "K3: the unlock did not drive the latch pin (interlock=%s)", ilk)
+    ctx.check(not hits, "K3: FIRE drive re-armed by a mid-run unlock: %s", hits[:10])
+    ctx.log("K3 PASS: laser_enable stayed 0 for the entire run after the mid-ramp unlock")
 
 
 # ---------------------------------------------------------------- FIRE A/B/U
@@ -433,18 +423,23 @@ def _fire_phase(ctx, mode):
     return ev
 
 
-@test("kernel.fire-abu", title="FIRE line: latch locked, unlocked-unarmed, true underrun",
-      subsystem="kernel", kind="operator", hardware="takeover", always=True, est_min=3,
+@test("kernel.fire-line", title="FIRE line: latch locked, unlocked-unarmed, true underrun, and a "
+                               "mid-run unlock",
+      subsystem="kernel", kind="operator", hardware="takeover", always=True, est_min=4,
       covers=_KERNEL_COVERS,
       requires=["kernel.k1-k2"],
-      steps=["Phases B and U unlock the latch with a zero-duty stream: if the HV supply reports "
-             "good the drill asks you to open the lid first (the safety chain holds HV off)."],
-      description="A: latch locked, 40 000 streamed FIRE bits, nothing on the FIRE/LASER_ON "
-                  "nets. B: latch unlocked with the chain unarmed, the FIRE line is driven "
-                  "mid-window and LASER_ON stays off (the safety AND-gate holds), FIRE clear at "
-                  "end-of-data. U: streaming declared, the terminal end-of-data is a true "
-                  "underrun, the backstop drops FIRE and stop acks it.")
-def fire_abu(ctx):
+      steps=["Phases B, U and K3 unlock the latch with a zero-duty stream: if the HV supply "
+             "reports good the drill asks you to open the lid first (the safety chain holds HV "
+             "off)."],
+      description="Four phases behind one takeover of the pulse device, all zero duty. A: latch "
+                  "locked, 40 000 streamed FIRE bits, nothing on the FIRE/LASER_ON nets. B: latch "
+                  "unlocked with the chain unarmed, the FIRE line is driven mid-window and "
+                  "LASER_ON stays off (the safety AND-gate holds), FIRE clear at end-of-data. U: "
+                  "streaming declared, the terminal end-of-data is a true underrun, the backstop "
+                  "drops FIRE and stop acks it. K3: the latch unlocked during the accel ramp "
+                  "drives the latch pin but never restores the FIRE drive to a run already in "
+                  "flight - laser_enable stays 0 for the whole run.")
+def fire_line(ctx):
     ev = ctx.evidence
     require_hv_not_good(ctx)
     with ctx.takeover():
@@ -479,6 +474,8 @@ def fire_abu(ctx):
             ctx.check(u["underruns_after"] == u["underruns_before"] + 1,
                       "U: underrun counter %d -> %d", u["underruns_before"], u["underruns_after"])
             ctx.log("fire U PASS: true underrun, backstop dropped FIRE, stop acked")
+
+            _k3_phase(ctx)
         finally:
             wr("cnc/laser_latch", 1)
             try:
