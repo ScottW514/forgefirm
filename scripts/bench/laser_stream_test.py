@@ -8,7 +8,9 @@ over TCP, then checks the dumps against the kernel feeder contract:
   1. a power byte (bit 7) leads the stream, before any tick byte
   2. no two consecutive power bytes (the SDMA script drops the second)
   3. the first FIRE bit (0x10) comes after a nonzero power byte
-  4. power values match the S words ($30=1000 -> S500 = 63, S1000 = 127)
+  4. power values match the S words through the core's mapping, floor
+     included ($30=1000, $31=0, $35 = the board's floor), and no duty
+     under FIRE falls below that floor
   5. FIRE only spans the cutting moves: none before the job, none during
      the G0 return, none at the tail
   6. step accounting survives the insertions: X returns to net zero and
@@ -22,6 +24,12 @@ over TCP, then checks the dumps against the kernel feeder contract:
   9. rules 7-8 hold across rapid cycle stop/start churn (planner-starve
      shaped jobs), where the FIRE state of the previous cycle must not
      leak into the idle-gap pad bytes
+ 10. a power ladder fires every rung at the duty commanded for it: no
+     FIRE tick rides a duty that was never commanded (a run start resets
+     the hardware duty to ~100 %, so a fire bit reaching the stream
+     ahead of the rung's power byte would burn at full power), and the
+     fire ticks divide evenly across the rungs, which is what fails if a
+     rung's opening ticks carry the previous rung's duty
 
 Usage: laser_stream_test.py [path-to-binary]   (default ./build-native/grblHAL_glowforge)
 """
@@ -39,6 +47,21 @@ import time
 BIN = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else "build-native/grblHAL_glowforge")
 PORT = 2399
 STEPS_PER_MM = 53.333
+
+# The S -> duty mapping the board defaults produce: $30 = 1000, $31 = 0,
+# and a $35 floor (boards/glowforge.h DEFAULT_SPINDLE_PWM_MIN_VALUE)
+# against the hardware's 127-count period. Changing the board's floor
+# changes every expectation below, which is why it is mirrored here
+# rather than inferred from the stream.
+PWM_PERIOD = 127
+PWM_MIN_PCT = 16.0
+PWM_MIN = int(PWM_PERIOD * PWM_MIN_PCT / 100.0)
+RPM_MAX = 1000.0
+
+
+def duty_for(s):
+    """Duty the core computes for an S word, floor included."""
+    return int(s * (PWM_PERIOD - PWM_MIN) / RPM_MAX) + PWM_MIN
 
 # Longest stepless run allowed to carry FIRE, in machine ticks. The
 # slowest legitimate between-step interval in these jobs is the first
@@ -80,6 +103,20 @@ for _ in range(30):
     JOB_CHURN.append(("sleep", 0.02))
 JOB_CHURN.insert(0, "M4 S0")
 JOB_CHURN.append("M5")
+
+# Session D: a power ladder in the shape the bench threshold drill uses -
+# constant power (M3) so the commanded duty is the tested duty, rungs
+# ascending, a dark G0 between them. Full power is deliberately absent
+# from the ladder, so duty 127 under FIRE can only be a leak.
+LADDER_S = (20, 30, 60, 120, 200, 300)
+LADDER_DUTY = tuple(duty_for(s) for s in LADDER_S)
+LADDER_MM = 5.0
+JOB_LADDER = ["G91", "G21", "M3"]
+for _i, _s in enumerate(LADDER_S):
+    JOB_LADDER.append("S%d" % _s)
+    JOB_LADDER.append("G1 X%g F300" % (LADDER_MM if _i % 2 == 0 else -LADDER_MM))
+    JOB_LADDER.append("G0 Y1")
+JOB_LADDER.append("M5")
 
 
 def fail(msg):
@@ -282,10 +319,14 @@ def check_m4_job(data):
         fail("first FIRE bit rides duty 0 (power-before-fire violated)")
 
     powers = sorted(set(p for _, p in fire_ticks))
-    if powers[-1] != 127:
-        fail("S1000 did not reach duty 127 (max %d)" % powers[-1])
-    if not any(60 <= p <= 66 for p in powers):
-        fail("S500 plateau (~63) not seen (powers %s)" % powers[:20])
+    if powers[-1] != PWM_PERIOD:
+        fail("S1000 did not reach duty %d (max %d)" % (PWM_PERIOD, powers[-1]))
+    want = duty_for(500)
+    if not any(abs(p - want) <= 2 for p in powers):
+        fail("S500 plateau (~%d) not seen (powers %s)" % (want, powers[:20]))
+    if powers[0] < PWM_MIN:
+        fail("duty %d under FIRE is below the $35 floor of %d: M4's ramp is "
+             "commanding power the tube cannot lase at" % (powers[0], PWM_MIN))
 
     expect_peak = round(10 * STEPS_PER_MM)
     if abs(x_max - expect_peak) > 2:
@@ -308,6 +349,41 @@ def check_m4_job(data):
         fail("only %d fire-free steps after the last FIRE bit - G0 return not dark" % tail_steps)
 
     return fire_ticks, powers, x_max, tail_steps
+
+
+def check_power_ladder(name, data, expect):
+    """Rule 10: every FIRE tick rides the duty commanded for its rung."""
+    cur = None
+    order = []                      # duties in the order they carry FIRE
+    counts = {}
+    for b in data:
+        if b & 0x80:
+            cur = b & 0x7F
+            continue
+        if b & 0x10:
+            if cur is None:
+                fail("[%s] FIRE bit ahead of any power byte" % name)
+            counts[cur] = counts.get(cur, 0) + 1
+            if not order or order[-1] != cur:
+                order.append(cur)
+
+    stray = sorted(d for d in counts if d not in expect)
+    if stray:
+        fail("[%s] FIRE rode uncommanded duty %s (commanded %s): power the "
+             "job never asked for is uncommanded energy"
+             % (name, stray, list(expect)))
+    if order != list(expect):
+        fail("[%s] duty sequence under FIRE was %s, expected %s"
+             % (name, order, list(expect)))
+
+    # Equal-length rungs at one feed burn equal numbers of fire ticks.
+    # A rung whose opening ticks carry the previous rung's duty shows up
+    # here as a surplus on one duty and a deficit on the next.
+    lo, hi = min(counts.values()), max(counts.values())
+    if hi > lo * 1.05:
+        fail("[%s] fire ticks per rung uneven (%d..%d, %s): a rung is "
+             "firing at its neighbor's duty" % (name, lo, hi, counts))
+    return counts
 
 
 def count_fire(data):
@@ -342,6 +418,15 @@ def main():
     gap_c = check_fire_gaps("churn", data)
     print("PASS [churn]: %d bytes, %d fire ticks, max fire gap %d"
           % (len(data), count_fire(data), gap_c))
+
+    # --- session D: power ladder, rule 10 -------------------------------
+    data = run_session("ladder", JOB_LADDER)
+    counts = check_power_ladder("ladder", data, LADDER_DUTY)
+    check_termination("ladder", data)
+    gap_d = check_fire_gaps("ladder", data)
+    print("PASS [ladder]: %d bytes, duties %s fire ticks %s, max fire gap %d"
+          % (len(data), list(LADDER_DUTY),
+             [counts[d] for d in LADDER_DUTY], gap_d))
 
     print("PASS: all stream emission rules hold")
 

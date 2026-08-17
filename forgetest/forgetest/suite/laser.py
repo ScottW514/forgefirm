@@ -1,6 +1,7 @@
 """laser.* - LIVE laser tests, ported from `scripts/bench/live_fire_drills.py`.
 
-Every test here can emit. The page starts one only with the operator's
+Every test here can emit, except `laser.power-floor`, which only reads
+settings. The page starts a firing one only with the operator's
 eye-protection / fire-watch / exhaust acknowledgment; the test then
 prompts for the scrap and the button, streams a small job through the
 controller, and the machine fires only after the operator presses the
@@ -23,6 +24,12 @@ from .motion import (kernel_xy_mm, kernel_start, check_kernel_returned, wait_sta
 _LASER_COVERS = [("grblhal-glowforge", "src/**"), ("kernel-module-glowforge", "**"),
                  ("forgectrl", "src/super.c"), ("forgectrl", "src/cool.c"),
                  ("forgectrl", "src/status.c"), ("forgectrl", "src/main.c")]
+
+# boards/glowforge.h: DEFAULT_SPINDLE_PWM_MIN_VALUE against the hardware's
+# 127-count PWM period. The tube's measured lasing threshold is PWMSAR 20.
+POWER_FLOOR_PCT = 16.0
+PWM_PERIOD = 127
+PWMSAR_FLOOR_MIN = 20
 
 ARM_CUE = ("LIVE FIRE. Eye protection on, exhaust running, fire watch and extinguisher in reach, "
            "scrap under the head with room to move (%s), lid closed. When the job starts the "
@@ -216,6 +223,48 @@ def wait_disarm(ctx, timeout):
             return time.time() - t0
         time.sleep(0.5)
     return None
+
+
+@test("laser.power-floor", title="The shipped duty floor holds commanded power above the lasing threshold",
+      subsystem="laser", kind="auto", est_min=1,
+      covers=[("grblhal-glowforge", "src/**")],
+      description="The tube lases only above ~16 % duty, so $35 must floor every nonzero S there: "
+                  "unfloored, M4's velocity-scaled power falls into the dead band at every corner "
+                  "and reversal and marks nothing. Reads $$ and checks the floor is the "
+                  "commissioned percent, that $31 is 0 (the floor, not $31, sets the bottom of "
+                  "the range), and that the floor lands at or above PWMSAR 20.")
+def power_floor(ctx):
+    ev = ctx.evidence
+    with ctx.grbl() as g:
+        lines = g.command("$$", timeout=5)
+    vals = {}
+    for ln in lines:
+        key, _, val = ln.partition("=")
+        if key.startswith("$"):
+            try:
+                vals[key] = float(val)
+            except ValueError:
+                pass
+    ctx.check(vals, "no $-settings in the response to $$")
+
+    floor_pct = vals.get("$35")
+    rpm_min = vals.get("$31")
+    ev["settings"] = {k: vals.get(k) for k in ("$30", "$31", "$32", "$35", "$36")}
+    ctx.check(floor_pct is not None, "$35 missing from the settings report")
+    counts = int(PWM_PERIOD * floor_pct / 100.0)
+    ev["pwmsar_floor"] = counts
+    ctx.log("$35=%.1f%% -> PWMSAR %d of %d ($31=%s, $32=%s, $36=%s)", floor_pct, counts,
+            PWM_PERIOD, rpm_min, vals.get("$32"), vals.get("$36"))
+
+    ctx.check(abs(floor_pct - POWER_FLOOR_PCT) < 0.05,
+              "$35 is %.1f %%, expected the commissioned %.1f %% - a machine carrying stored "
+              "settings from before the floor needs `$RST=$` once", floor_pct, POWER_FLOOR_PCT)
+    ctx.check(counts >= PWMSAR_FLOOR_MIN,
+              "the floor lands at PWMSAR %d, below the %d the tube needs to lase",
+              counts, PWMSAR_FLOOR_MIN)
+    ctx.check(rpm_min == 0, "$31 is %s, not 0: the bottom of the S range is no longer the floor",
+              rpm_min)
+    ctx.log("PASS: nonzero S never commands less than PWMSAR %d", counts)
 
 
 @test("laser.emission-witness", title="Live emission witness (S400 vector mark) and job-based disarm",

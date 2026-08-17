@@ -2599,6 +2599,182 @@ binned modes, 4.1× and 16.4× fewer bytes, which shortens the stall rather
 than merely spacing stalls out) and the churn re-base (which is what
 would allow a lead beyond 10 ms). Tracked in BRINGUP "Next work" item 16.
 
+## 2026-08-17 — the laser duty threshold ladder
+
+The first owed step of "Next work" item 17: measure where the tube starts
+lasing, so `$35` can stop M4's velocity-scaled power falling below it.
+
+### The run
+
+`live_fire_drills.py pthresh 1000 300` on wood scrap, operator-run on dev
+image `20260817220126`, machine idle and homed, coolant 23.9/24.1 °C. The
+precondition was read off the machine first: `$30`=1000, `$31`=0, `$32`=1,
+**`$35`=0.0**, `$36`=100 — no floor in place to lift the rungs.
+
+Thirteen rungs, 2 %…30 % of full, 25 mm each at F300, constant power (M3),
+3 mm of `+Y` between them. Before firing, the two conversions were checked
+against each other: a rung of *P* % sends `S = 10·P`, which the core maps to
+`floor(127·P/100)` counts, and `$35 = P` computes `min_value =
+(uint)(127·P/100)` — the same integer, so the rung's percent *is* the `$35`
+value exactly, not approximately.
+
+### What came back
+
+Material, counting from the first rung drawn: rung 1 (2 %) nothing at all;
+rungs 2–9 (3–14 %) a tiny spot at the start of each line and a dark line
+after it; rungs 10–13 (16–30 %) continuous marks.
+
+The `hv_current` trace agrees independently. It holds 0 for 19.5 s (arm
+wait), then runs nonzero to 82.8 s, immediately before Idle. Within it the
+laser-off `G0` between rungs reads 0, so the current runs count the rungs:
+**12 segments of ~4.7 s at a ~5.27 s period, not 13.** The last segment ends
+at the job end, so it is rung 13; counting back 12 puts the first current at
+rung 2. Rung 1 drew no measurable discharge current — the same rung that
+left no mark, from a completely separate witness.
+
+So the tube has **two thresholds, far apart**:
+
+| | rung | duty | witness |
+|---|---|---|---|
+| Discharge strikes | 2 (3 %) | PWMSAR 3 | current lifts off; spot only |
+| Sustained lasing | 10 (16 %) | PWMSAR 20 | first continuous mark |
+
+Between them, 3–14 % is a **dead band**: current flows and climbs (per-rung
+means 133 → 289 raw) with essentially no light out. Each line's opening spot
+is the strike transient; the tube lights, drops below lasing gain, and coasts
+dark for the remaining 25 mm.
+
+This falsifies the drill's own guidance, which said the current "lifts off
+baseline at the same rung the material starts marking" — lift-off is rung 2,
+marking is rung 10. The docstring and the printed read-the-material text were
+corrected to name both thresholds and to tell the operator that a rung
+showing only a start-of-line spot is *below* the threshold, not at it.
+
+Raw `hv_current` is a presence/absence witness only. Per-rung means are
+non-monotonic at the top (429 at 20 %, then 311 and 302) and the variance
+collapses on the top two rungs, which is what an aliased point-sample of a
+pulsed current looks like; the signal has no characterized transfer function.
+
+### Ruling out the firmware explanation for the spots
+
+A start-of-line spot is also what a full-power leak would look like: a kernel
+run start resets the hardware duty to ~100 %, so a fire bit reaching the
+stream ahead of its power byte would burn at full power. The material already
+argued against it — rung 1 is the first fire of the run, the likeliest place
+for such a leak, and it is blank — but the stream is the record, so
+`laser_stream_test.py` gained a fourth session (rule 10): a ladder in the same
+shape, full power deliberately absent, asserting that every FIRE tick rides a
+commanded duty and that the fire ticks divide evenly across rungs (a rung
+opening at its neighbor's duty shows up as a surplus on one and a deficit on
+the next).
+
+Result on the native build: duties under FIRE were exactly `[22, 23, 26, 32,
+41, 52]`, nothing else, and **28296 fire ticks on every rung, identical to the
+tick**. No full-power window, no stale-duty window. The spots are the tube and
+supply, not the firmware.
+
+### What landed
+
+- `DEFAULT_SPINDLE_PWM_MIN_VALUE 16.0f` in `boards/glowforge.h` — the
+  measured lasing rung. Chosen over the next rung up (20 %) because the floor
+  is spent at corners, where velocity and dose per unit length already move
+  the wrong way, and because `$35` is a user setting anyone can raise.
+- The harness now derives its expectations from that floor (`duty_for()`), so
+  the M4 session's S500 plateau moved 63 → 73 and its ramp `[44, 52, 63, 127]`
+  → `[57, 64, 73, 127]`, plus a new check that no duty under FIRE falls below
+  the floor. All four sessions pass, as do `switch_map_test`, `laser_arm_test`
+  and `laser_lifecycle_test`.
+- `laser.power-floor`, an auto acceptance test (the suite's only non-firing
+  one): reads `$$` and checks the machine actually carries the commissioned
+  floor, since stored settings beat freshly baked defaults and a machine with
+  an older EEPROM needs `$RST=$` once. Coverage lint clean at 40 tests.
+
+### What it means for the model
+
+The usable analog range is 16–100 %, about 6:1, with the bottom sixth of the
+control range physically dead — and the factory's captured pulse files pin the
+power byte at 127 and modulate dose by dithering the FIRE bit at 6.5–18.8 %
+density. The dead band is why. `$35` is a patch that buys freedom from dropout
+by putting its full 16 % into every corner; dose set by pulse density cannot
+fall below the lasing threshold by construction. Item 17 is now the density
+model itself, with the analog path as the fallback.
+
+## 2026-08-17 — how the factory sets power
+
+Three cloud-mode cuts of the same 1" square, same location, same material,
+same speed, changing only the Glowforge UI power setting: Precision Power 1,
+Precision Power 100, then Full Power. Captures in
+`_RESOURCES/power-settings-20260817/`.
+
+Pulse-file capture ships off (`LOGGING.SAVE_PULS`), and the machine's copy of
+`/data/etc/gfhome.conf` predated the key, so it was enabled for this session
+and turned off afterward. A first attempt appended the key past the last
+section, where `get_cfg('LOGGING.SAVE_PULS')` would never have found it — it
+belongs inside `[LOGGING]`, and was verified through the app's own parser
+rather than by eye.
+
+### The measurement
+
+**Analog duty is not a power control.** All three runs carry the power byte
+exactly three times, always 127: once as the cut begins, then a refresh every
+~27 000 ticks (~2.7 s). Nothing modulates PWMSAR, at any setting.
+
+**Dose is FIRE-bit density on a fixed 7-tick period** — 700 µs at
+`STfr` = 10 000, ~1.43 kHz — with the on-count dithered between adjacent
+integers:
+
+| Setting | on-runs | mean of 7 | density |
+|---|---|---|---|
+| Precision Power 1 | 1 (×359), 2 (×212) | 1.371 | 0.1953 |
+| Precision Power 100 | 5 (×236), 6 (×334) | 5.576 | 0.7952 |
+| Full Power | continuous | 7 | 0.9965 |
+
+The period was exactly 7 in all 570 measured cycles of both dithered runs, and
+the mix of adjacent on-counts matches the fractional part exactly: PP 1 wants
+1.371 on-ticks, and 2-runs are 212 of 571 = 0.371. That is an error
+accumulator, not a repeating pattern.
+
+**The power setting never reaches the machine.** The three headers are
+identical — no key differs — so the model lives entirely in the service, which
+bakes it into the FIRE bits. The motion is identical too: 5420 steps,
+101.62 mm (4 × 25.4), 10.81 s at 9.44 mm/s. Full Power's file is longer only
+in the lead-in before the cut.
+
+**Velocity compensation is real but partial.** Density falls as the head slows
+into a corner, by the same relative factor at every power setting
+(corner/cruise 0.38, 0.38, 0.41). Measured per step interval, though, fire
+ticks per step *rise* from 3.89 at 9.44 mm/s to 7.00 at 1.22 mm/s, so dose per
+unit length still climbs ~1.8× at a corner — against the ~7.7× it would climb
+with no compensation at all. Only ~24 of 5420 step intervals are below cruise
+speed, so the direction and rough magnitude are solid and the exact law is
+not.
+
+On the UI scale, PP 1→100 is linear in density (~0.006 per unit, intercept
+~0.189); Full Power sits off that line, where PP ~134 would land, which fits a
+setting the UI presents as outside the normal range.
+
+### Two corrections to earlier readings
+
+The first pass at the dither sampled the mid-point of the cut, which for a
+square is a corner, and truncated its distributions — it showed 8-on/4-off
+bursts that are corner behavior, not the steady pattern. The first pass at the
+dose law counted every tick as a step, because in this encoding bits 1 and 3
+are *direction*, held for the whole side, and only bits 0 and 2 are step
+pulses; the tell was 2026 mm of travel on a 101.62 mm cut.
+
+### A defect found by using the feature
+
+Deleting the capture directory under a running gfcloud showed that with
+capture enabled, a missing directory or a full disk makes `load_motion` raise
+on the capture write and kills the print. A debug aid must never cost a job:
+the capture open, the per-chunk write and the `.info` write are now each
+non-fatal, dropping the capture with a warning and running the job on
+(`gfutilities`, with a regression test in `tests/test_lifecycle.py`; verified
+in three cases — missing directory still loads the job, a writable directory
+still gets the copy, capture off writes nothing). No acceptance-catalog
+consequence: the path is an off-by-default debug capture with no bearing on
+emission, motion or the release surface.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

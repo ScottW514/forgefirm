@@ -35,12 +35,17 @@ Drills (pass a name):
               ircut [S] [F]             e.g. ircut 1000 300
   pthresh   Laser power-threshold ladder: one line per power level on
             scrap, climbing from 2 % to 30 % of full, at constant power
-            (M3) so nothing scales the duty with velocity. The lowest
-            rung that leaves a mark is the tube's striking threshold,
-            and because $35 is a percent of full duty and the rungs are
-            percents of $30 with $31 = 0, that rung's percent IS the
-            $35 value. Requires $35 = 0 for the run: a floor already in
-            place lifts every rung and hides the threshold.
+            (M3) so nothing scales the duty with velocity. The ladder
+            separates two thresholds that are far apart: the discharge
+            strikes at a duty well below the one the tube lases at, and
+            the rungs between them show only a spot at the line start
+            (the strike transient) with a dark line after it. The
+            lowest rung that leaves a CONTINUOUS mark is the lasing
+            threshold, and because $35 is a percent of full duty and
+            the rungs are percents of $30 with $31 = 0, that rung's
+            percent IS the $35 value. Requires $35 = 0 for the run: a
+            floor already in place lifts every rung and hides both
+            thresholds.
               pthresh [Smax] [F]        e.g. pthresh 1000 300
   expstop   Armed kill on the EXPECTED-stop path: start a mark job,
             then mid-burn POST /controller/stop (the supervisor stops
@@ -467,8 +472,10 @@ def drill_pthresh(g):
     if samples:
         t0 = samples[0]['t']
         print('hv_current trace (t s : raw) - the discharge current is the')
-        print('electrical witness of striking; it lifts off baseline at the')
-        print('same rung the material starts marking:')
+        print('electrical witness of striking, and it lifts off baseline')
+        print('well below the rung that marks. Read it for the rung')
+        print('boundaries: the laser-off G0 between rungs reads 0, so the')
+        print('runs of nonzero current count the rungs that struck at all.')
         line = []
         for s in samples:
             if s['hv'] is None:
@@ -480,11 +487,12 @@ def drill_pthresh(g):
         if line:
             print('  ' + '  '.join(line))
     print('\nRead the material: count rungs from the FIRST one drawn. The')
-    print('lowest rung that leaves any mark is the striking threshold; set')
-    print('$35 to that rung\'s percent (round up to the next rung for')
-    print('margin). Note the emission counter proves the safety chain')
-    print('asserted LASER_ON, not that the tube lased - only the mark and')
-    print('the discharge current say that.')
+    print('lowest rung carrying a CONTINUOUS mark is the lasing threshold;')
+    print('set $35 to that rung\'s percent. A rung showing only a spot at')
+    print('the start of its line struck but did not sustain - it is below')
+    print('the threshold, not at it. Note the emission counter proves the')
+    print('safety chain asserted LASER_ON, not that the tube lased - only')
+    print('the mark and the discharge current say that.')
     return samples
 
 

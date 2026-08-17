@@ -651,6 +651,39 @@ not a release.
 - **Laser PWM**: 39.98 kHz register-verified (divider 13 × 127 counts), scope-
   confirmed at 25.0 µs period across the full duty range, clean at the low end
   (6.4 % measured vs 6.3 % commanded at PWMSAR=8).
+- **Laser duty thresholds** (ladder on scrap at F300, constant power): the
+  tube has two thresholds, far apart. The discharge **strikes between 2 % and
+  3 %** duty — 2 % (PWMSAR 2) draws no measurable `hv_current` and leaves
+  nothing at all, 3 % (PWMSAR 3) draws current — but it does **not lase
+  usefully until 16 %** (PWMSAR 20), the lowest duty leaving a continuous
+  mark. Between them (3–14 %) is a **dead band**: current flows and climbs,
+  and each line shows only a spot at its start (the strike transient) with a
+  dark line after it. So the usable analog range is ~16–100 %, and `$35`
+  (`DEFAULT_SPINDLE_PWM_MIN_VALUE`) ships at **16** to hold every nonzero S
+  above it. Raw `hv_current` counts are a presence/absence witness only: the
+  per-rung means are non-monotonic at the top of the ladder and the signal
+  has no characterized transfer function.
+- **Factory power model** (three cloud cuts of one 1" square, same location,
+  material and speed, only the UI power setting changed; captures in
+  `_RESOURCES/power-settings-20260817/`): the **power byte is pinned at 127**
+  in all three runs — three occurrences each, one as the cut begins and a
+  refresh every ~27 000 ticks (~2.7 s). Analog duty is never a power control.
+  **Dose is FIRE-bit density on a fixed 7-tick period** (700 µs at
+  `STfr` = 10 000, ~1.43 kHz), the on-count dithered between adjacent integers
+  to reach a fractional duty: Precision Power 1 = 1.371 of 7 (density 0.1953,
+  runs of 1 and 2), PP 100 = 5.576 of 7 (0.7952, runs of 5 and 6), Full Power
+  = 7 of 7 (0.9965, continuous). The period was exactly 7 in all 570 measured
+  cycles of both dithered runs, and the mix of adjacent on-counts matches the
+  fractional part exactly (PP 1 wants 1.371; 2-runs are 212 of 571 = 0.371).
+  The three **headers are identical** — the power setting never reaches the
+  machine, so the whole model is service-side. Motion is identical too: 5420
+  steps, 101.62 mm, 10.81 s at 9.44 mm/s. **Density tracks velocity through
+  corners**, by the same relative factor at every power setting (corner/cruise
+  0.38, 0.38, 0.41), but only partly: fire ticks per step rise 3.89 → 7.00 as
+  speed falls 9.44 → 1.22 mm/s, so dose per unit length rises ~1.8× at a
+  corner instead of the ~7.7× it would rise with no compensation. On the UI
+  scale, PP 1→100 is linear in density (~0.006 per unit, intercept ~0.189) and
+  Full Power sits off that line, where PP ~134 would land.
 - **Cooling operating point**: 40 % heater duty, 50 s window, flow-rise
   threshold 14.4 °C, re-checks every 150 s. Below ~40 % duty the stagnant loop
   sheds the heater's output by convection well enough to mimic flow (at 30 %,
@@ -974,33 +1007,43 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     modes, 4.1× and 16.4× fewer bytes); frame rate only spaces the stalls out,
     and the existing `FORGECTRL_STREAM_FPS` cap skips demosaic and encode but
     still dequeues every frame. Shares the bench slot with item 8.
-17. **Laser power model and the missing duty floor.** grblHAL maps S onto the
+17. **Laser power model: dose by FIRE-bit density.** grblHAL maps S onto the
     analog PWM duty (`$30`/`$31` → `$35`/`$36`, written raw into PWMSAR against
-    the 127-count period), and ForgeFIRM overrides only `$32`, so a shipped
-    machine has `$35` = 0: duty runs linearly to zero with S and nothing stops
-    it falling below the tube's striking threshold. Under M4 the core scales S
-    by velocity, so every corner, every reversal, and every segment shorter
-    than the accelerate-in-and-out distance (~1.6 mm at 2000 mm/min with the
-    default 700 mm/s²) is commanded below the striking point and does not burn
-    at all.
+    the 127-count period). `$35` now ships at 16, the measured lasing
+    threshold (facts bank), which keeps M4's velocity-scaled power out of the
+    dead band at corners, reversals and segments shorter than the
+    accelerate-in-and-out distance (~1.6 mm at 2000 mm/min with the default
+    700 mm/s²) — where an unfloored duty is commanded below the threshold and
+    does not burn at all.
 
-    The factory does not use duty as a power control. All five firing jobs in
-    the captured pulse files pin the power byte at 127 (one also uses 102) and
-    modulate dose entirely by dithering the FIRE bit at the 10 kHz tick, at
-    6.5–18.8 % density. Two consequences: the captures cannot supply a `$35`
-    default, because nothing in them runs anywhere near the threshold; and the
-    duty → optical-power transfer function of this HV supply is unmeasured,
-    because nothing has ever depended on it.
+    The floor is a patch on a model this tube does not fit. Only 16–100 % of
+    the duty range does anything, so analog control has a ~6:1 span, and the
+    floor buys freedom from dropout by putting its full 16 % into corners
+    where velocity — and dose per unit length — goes the other way. The
+    factory does not use duty as a power control at all: all five firing jobs
+    in the captured pulse files pin the power byte at 127 (one also uses 102)
+    and modulate dose entirely by dithering the FIRE bit at the 10 kHz tick,
+    at 6.5–18.8 % density. The measured dead band is why. Dose set by pulse
+    density cannot fall below the lasing threshold by construction, which is
+    what the per-tick FIRE bit exists for, and it is the only power model this
+    tube and supply are known to work well with. The duty → optical-power
+    transfer function is still unmeasured — nothing has ever depended on it.
 
-    Owed, in order: run `live_fire_drills.py pthresh` on scrap with `$35` = 0
-    to find the striking threshold, set `DEFAULT_SPINDLE_PWM_MIN_VALUE` (a
-    percent) in `grblHAL-glowforge/src/boards/glowforge.h` from it — the
-    marking rung's percent is the value — and record the number here. Then the
-    design question behind it: whether to follow the factory and modulate dose
-    by FIRE-bit density at a fixed high duty rather than by analog duty. That
-    is what the per-tick FIRE bit exists for, it cannot fall below the striking
-    threshold by construction, and it is the only power model this tube and
-    supply are known to work well with.
+    The factory's implementation is now measured rather than inferred (facts
+    bank): power byte pinned at 127, dose set by a fixed 7-tick period
+    (~1.43 kHz) whose on-count is dithered between adjacent integers, and a
+    velocity compensation that is real but partial. Two things follow for the
+    ForgeFIRM implementation. The base period is a free parameter — the
+    factory's 700 µs is 7 ticks at its 10 kHz print rate, and GRBL mode ships
+    the stream at 28 160 Hz, so the same PRF is ~20 ticks; the accumulator, not
+    the period, is what recovers fractional density. And velocity scaling
+    arrives for free: under M4 the core already scales S by velocity, so
+    mapping S onto density inherits compensation that is *more* complete than
+    the factory's, which still lets dose per unit length rise ~1.8× at a
+    corner.
+
+    Owed: the density model itself. `$35` and the analog path stay as the
+    fallback until it lands.
 
     What that model means for image engraving, since it decides the design as
     much as cutting does. LightBurn has two image paths. Its 1-bit modes
