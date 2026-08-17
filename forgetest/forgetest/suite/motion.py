@@ -614,6 +614,19 @@ def kernel_xy_mm(ctx):
     return float(pos.get("x", 0.0)), float(pos.get("y", 0.0))
 
 
+def kernel_start(ctx, timeout=15.0):
+    """The kernel counters AT REST, for use as a reference point.
+
+    grblHAL reports Idle when its planner is empty; the kernel is still
+    playing the stream depth and the decel tail behind that. Sampling the
+    counters in that window records a position the head is only passing
+    through, and every later comparison is then measured against a
+    transient - which reads exactly like the failure this reference exists
+    to catch (a move counted but never played)."""
+    machine_idle(ctx, timeout)
+    return kernel_xy_mm(ctx)
+
+
 def check_kernel_returned(ctx, ev, k0, tol_mm=0.1, tag=""):
     """After a return-to-start: the kernel counters must be back where the
     job started too. grbl's own drift can read 0.000 while the head never
@@ -752,8 +765,8 @@ def lid_cancel_home(ctx):
     ctx.check(policy == "cancel", "lid_policy is %r; this test needs cancel", policy)
     with ctx.grbl() as g:
         clean_slate(ctx, g)
+        k0 = kernel_start(ctx)
         start = g.status_report()["MPos"]
-        k0 = kernel_xy_mm(ctx)
         ev["kernel_start"] = k0
         ev["start"] = start
         g.command("M5")
@@ -779,8 +792,11 @@ def lid_cancel_home(ctx):
         # A job paused on the button must not be resumable past a lid open:
         # the armed window and the hardware button latch have to agree, so
         # the lid ends the job here exactly as it does from Run.
+        # The reference for this phase is taken only once the MACHINE is at
+        # rest: the jogs above waited for grblHAL's Idle, which arrives while
+        # the kernel is still playing their tail.
+        k1 = kernel_start(ctx)
         start2 = g.status_report()["MPos"]
-        k1 = kernel_xy_mm(ctx)
         ev["hold_start"] = start2
         g.command("G91")                                  # the reset restored G90
         g.command("G1X40F300", timeout=0.5)
@@ -834,8 +850,8 @@ def interlock_cancel_home(ctx):
     ctx.check(sw.get("interlock_ok"), "the interlock loop already reads open - close it before this test")
     with ctx.grbl() as g:
         clean_slate(ctx, g)
+        k0 = kernel_start(ctx)
         start = g.status_report()["MPos"]
-        k0 = kernel_xy_mm(ctx)
         ev["start"] = start
         ev["kernel_start"] = k0
         g.command("M5")

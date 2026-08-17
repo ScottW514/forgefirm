@@ -17,8 +17,8 @@ import time
 from ..catalog import test
 from .. import hw
 from ..runner import Failed
-from .motion import (kernel_xy_mm, check_kernel_returned, wait_state, wait_state_text,
-                     wait_left_state, wait_idle, drain_text)
+from .motion import (kernel_xy_mm, kernel_start, check_kernel_returned, wait_state,
+                     wait_state_text, wait_left_state, wait_idle, drain_text)
 
 _LASER_COVERS = [("grblhal-glowforge", "src/**"), ("kernel-module-glowforge", "**"),
                  ("forgectrl", "src/super.c"), ("forgectrl", "src/cool.c"),
@@ -536,8 +536,8 @@ def pause_resume_lid_cancel(ctx):
     ev = ctx.evidence
     with ctx.grbl() as g, LiveJob(ctx, g):
         prepare(ctx, g)
+        k0 = kernel_start(ctx)
         start = g.status_report()["MPos"]
-        k0 = kernel_xy_mm(ctx)
         ev["start"] = start
         ev["kernel_start"] = k0
         smp = arm_and_fire(ctx, g, job=MARK_JOB_M3)
