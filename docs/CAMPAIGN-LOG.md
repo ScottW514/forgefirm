@@ -2503,6 +2503,102 @@ The mid-job and start-with-lid-open checks are still open, and the
 session surfaced further LightBurn door-open issues — see Next work
 item 12.
 
+## 2026-08-17 — step timing under CPU contention
+
+Opened by an operator report: the `LB-GF-OG-FM` LightBurn job, GRBL mode
+at 2000 mm/min and 30 % power, ran jerky and lost many steps.
+`cnc/underruns` and `cnc/faults` both read 0 throughout, which is the
+whole reason the condition had gone unnoticed — the kernel ring never
+runs dry, so the stream stays continuous and only its *timing* is wrong.
+
+### What was wrong
+
+The board runs one core. Of grblHAL's four threads only the shipper held
+`SCHED_FIFO`; the producer — which advances virtual time and stamps every
+step onto the pulse grid — ran `SCHED_OTHER` at nice 5, the same class and
+nice as forgectrl's MHD connection threads. forgectrl was measured at
+~41 % of the core serving the panel's MJPEG camera stream, one connection
+thread alone at ~35 %.
+
+When the producer's virtual clock falls behind the ship cursor,
+`gf_stream_pulse` clamps late events forward and the backlog ships one
+step per machine tick: 28 160 steps/s against the 1 778 that 2000 mm/min
+asks for, a ~16× velocity burst no motor follows.
+
+The margin absorbing a stall was **2 ms**, not the 200 ms queue depth it
+appears to be: the shipper's due index carries the same `+ gf.depth` the
+producer's base starts at, so the two cancel and the pacing lead is the
+only slack there is.
+
+### What was changed
+
+- Producer on `SCHED_FIFO` one priority below the shipper, and `core_mx`
+  given priority inheritance — the producer holds it across the stepper
+  callback while the protocol thread also takes it, so promoting without
+  PI would have traded jitter for unbounded inversion (grblHAL 026c169).
+- Producer lead made tunable (`GFSINK_LEAD_MS`) and defaulted to 10 ms;
+  the per-run `LOG_DEBUG` line now reports the **measured** `min margin`
+  in ms against it (grblHAL fd059b3).
+- Clamp count reported per run at `WARNING`, not only cumulatively at
+  process exit.
+
+The lead defaults to 10 rather than higher because of the cycle-churn
+path: `gf_stream_wakeup` re-bases production onto the wall cursor only
+when the cursor has passed it, so a larger lead survives an idle gap,
+skips the re-base and accumulates as dark padding. Measured on the
+`laser_stream_test.py` churn harness: 2 ms and 10 ms both give an
+identical 64 790-byte stream, 15 ms and above inflate it to ~225 k and
+stop being deterministic.
+
+### Bench record
+
+Two `motion.step-timing-under-load` runs 90 s apart on image
+20260817210307, same campaign, camera streaming at 2592×1944 in both,
+plus the test's own nice-5 CPU hog:
+
+- **PASS** — 20 legs, 26.7 s, 0 clamps. Camera not streaming.
+- **FAIL** — 20 legs, 26.7 s, **7 runs clamped, 81 events**, max behind
+  3.9–4.4 ms. Camera streaming.
+
+That isolates it: `SCHED_FIFO` covers a userspace CPU competitor and does
+not cover the camera, whose per-frame cache maintenance over a 4.8 MB
+non-coherent capture buffer is kernel-context work no userspace priority
+can preempt.
+
+On image 20260817220126 with the 10 ms lead, same conditions as the
+failing run (camera at 2592×1944 **and** the CPU hog): **PASS, 0 clamps**,
+worst `min margin` 4.9 ms of 10 across 12 legs.
+
+Then the original `LB-GF-OG-FM` LightBurn job again, operator-run, with
+the video stream live (independently corroborated: forgectrl was holding
+`video0`/`video4` with four `:8080` connections mid-job):
+
+    run: 686850 callbacks in 62.255 s (90.6 us/call incl. pacing),
+    50721 pace sleeps, max behind 4.7 ms, min margin 3.1 ms of 10, clamped 0
+
+Identical callback count and duration to an earlier run of the same job,
+so it is the same work. Operator judgment: ran clean. `underruns` 0,
+`faults` 0, and no clamp warning from the current controller instance.
+
+### What the numbers say
+
+`max behind` is **not** the instrument — it read 0.0 ms on every leg of
+the passing acceptance run while the real margin fell to 4.9 ms, because
+the producer never falls behind its own wakeup epoch; the margin is
+consumed by the offset between that epoch and the shipper's `ship_t0`.
+Only the measured `min margin` shows the condition.
+
+The real job is the harsher adversary: 3.1 ms of 10 remaining, against
+the synthetic test's 4.9 ms, at a *lower* callback rate (11 033/s vs
+13 784/s). Real cut geometry costs more headroom than uniform jog legs.
+
+So the fix holds on the job that prompted it, with ~31 % of the budget
+left at the worst moment. Both remaining levers are unspent: camera
+capture resolution (the mainline `ov5648` offers 1280×960 and 640×480
+binned modes, 4.1× and 16.4× fewer bytes, which shortens the stall rather
+than merely spacing stalls out) and the churn re-base (which is what
+would allow a lead beyond 10 ms). Tracked in BRINGUP "Next work" item 16.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
