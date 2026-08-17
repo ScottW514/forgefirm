@@ -1,6 +1,13 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-08-15** — **unified logging landed in every repo
+Last updated: **2026-08-17** — **the machine now reacts to the lid, the
+remote-interlock loop and the button the way the factory firmware does, in
+both controller modes: a lid or interlock open cancels the job and sends the
+head back to where the job started with the lid still open, the button pauses
+and resumes, and the software armed window and the hardware button latch agree
+by construction. Bench-validated through the acceptance catalog on dev image
+`20260817124714` ("Next work" item 16, which closes items 4 and 12).** Before
+that: **unified logging landed in every repo
 (code-complete, host-verified end to end, pushed, pins bumped): rsyslog
 is the system logger and the only log writer, every ForgeFIRM process
 emits through syslog under its own program name, each logger has its own
@@ -1748,7 +1755,16 @@ dev image (the confirmation campaign's image).**
   451.8 / 455.6 ms; feed period 199.98 ms; the pad-level jog
   characterization dates from 2026-08-07, sampled at 20 ms through X and
   Z jogs, ~70/75 samples). It gates nothing anywhere — it is telemetry (`/status`
-  `switches.hv_enable`, control-panel "HV enable"). Naming note: the
+  `switches.hv_enable`, control-panel "HV enable").
+  **Across a pause and a resume** (measured 2026-08-17 at the pads with
+  `scripts/bench/resume_dark_lead.py`, ~2 kHz through /dev/mem, motion dated
+  from the kernel counters): a pause stops motion 317 ms after the command and
+  HV_ENABLE drops with the watchdog 550 ms after it — the pump feed ends with
+  the run, then t_w runs out — so a pause shorter than about half a second
+  never drops HV at all. On the resume HV_ENABLE and the watchdog are **back
+  within ~3 ms** while motion only restarts at ~219 ms: the chain re-arms
+  roughly 216 ms **before** the first step, so a resumed cut loses nothing to
+  it and no dark dwell is warranted. Naming note: the
   factory design labels this net **E-STOP**, and dated entries below
   written before the rename (through the earlier 2026-08-15 records)
   call it `estop`/`SW_ESTOP` with the pre-rename polarity (the device tree then declared the pin active-high,
@@ -1760,6 +1776,25 @@ dev image (the confirmation campaign's image).**
   line was misread as an e-stop input, and a real e-stop belongs in the
   lid-switch chain (`docs/SAFETY.md`). Doors/door1/door2 stay stable
   during motion.
+- **Factory job behavior on the lid and the button, measured on 2.6.0-2228**
+  (bench session 2026-08-16, log archived at
+  `_RESOURCES/factory-session-20260816/`; this is what ForgeFIRM's parity
+  policy reproduces, "Next work" item 16). Lid open mid-print: `cnc/stop`
+  5-6 ms after the edge, decel to idle in 86-91 ms, the return-home park
+  starting ~300-340 ms after the edge and running to completion **with the lid
+  still open**, the job reported `:cancelled`. A cancel from the app takes the
+  same path. The button pauses a print — controlled stop, then a 2000-tick
+  laser-off backtrack — and resumes it with a 1950-tick laser-off lead; the
+  button **flashes white while paused** (operator-observed). A lid open while
+  paused cancels the job and parks from where it stands. The lens hunt is not
+  lid-gated.
+- **The hardware button latch is what makes the armed window honest.** A lid
+  open SETs it (set-dominant), and it stays SET until the lid is closed, the
+  SoC lock is released **and the button is pressed** (`docs/SAFETY.md`). So a
+  policy that cancels the job on a lid open and re-arms only through a fresh
+  button press keeps software and hardware in agreement by construction; one
+  that resumes a job after a lid open leaves the beam blocked in hardware while
+  software believes it is armed.
 - Machine identity from OCOTP nvmem: HW_OCOTP_MAC0 is the serial,
   base-23-encoded to the factory hostname — fuse-verified on the bench
   against the factory label. The bench machine's actual values are
@@ -2392,11 +2427,10 @@ dev image (the confirmation campaign's image).**
      approaches are near-silent** — belt compliance turns slow-speed
      skipping into sub-threshold grinding — so any contact-sensing
      scheme must strike fast.
-4. **Controller safety mapping — IMPLEMENTED 2026-08-13; the mid-job
-   Door hold described here is superseded by the factory-parity policy of
-   item 16 (lid = cancel + return to the job start; Door hold only with
-   `lid_policy = hold`) — bench validation
-   pending** (`grblHAL-glowforge/src/glowforge_switches.c`). The
+4. **Controller safety mapping — DONE.** The mid-job Door hold described
+   here is the `lid_policy = hold` path; the default is the factory-parity
+   cancel of item 16 (lid or interlock = cancel + return to the job start),
+   bench-validated 2026-08-17 (`grblHAL-glowforge/src/glowforge_switches.c`). The
    controller reads EV_SW with `EVIOCGSW` from the protocol thread's
    realtime hook (no grab — forgectrl polls the same device) and maps:
    - **doors (bit 3) not closed, or interlock (bit 5) loop open →
@@ -2801,20 +2835,14 @@ dev image (the confirmation campaign's image).**
     with the drop both times, i.e. HV_ENABLE = DOORS_OK · WDOG_ALIVE
     observed live. Full write-up of the chain: `docs/SAFETY.md`
     (+ `docs/img/safety-chain.svg`).
-12. **LightBurn door-open handling — further issues (found 2026-08-15,
-    details pending).** With image 20260815154622 (grblHAL a9446fe: door
-    signal hidden while idle/jog/homing) LightBurn connects again after
-    an idle lid cycle, but the same bench session turned up other
-    problems around lid opening in LightBurn that were not characterized
-    on the spot. To be detailed and reproduced in a dedicated testing
-    session: symptoms, whether they involve the mid-job Door hold /
-    Resume path, Start-with-lid-open, or the sender's own handling of the
-    `Door` state, and what the controller reports at each step. Until
-    then the door change stands as partially validated (item 4).
-    **2026-08-16:** the default mid-job lid path is now the factory cancel
-    (item 16), so LightBurn no longer lives in `Door` at all; retest the
-    symptoms with the item-16 tests, and only chase what remains under
-    `lid_policy = hold`.
+12. **LightBurn door-open handling — CLOSED by item 16.** The lid no
+    longer parks a job in `Door` on the default policy: it cancels the job,
+    ends the sender's stream with a clean reset and returns the head to the
+    job start, so LightBurn never lives in `Door` and the Resume convention
+    it used to need is gone. The `Door` residency that remains under
+    `lid_policy = hold` is covered by `motion.lid-policy-hold` (lid parks the
+    job, cycle start after the lid closes finishes the move with its position
+    intact), bench-validated 2026-08-17.
 13. **uSDHC pad strength brought to the factory values (DTS change
     2026-08-15, bench validation pending — ships with the next full image
     flash, per the batched kernel/BSP rule).** Trigger: one
@@ -3001,112 +3029,93 @@ dev image (the confirmation campaign's image).**
     (record in "Release acceptance" above). The flash of `20260816191951`
     exposed the layer-hash over-invalidation (a component pin bump counted
     as a platform change; fixed - pins in `<recipe>-pin.inc`, left out of
-    the layer content; record in "Release acceptance" above). Remaining:
-    (a) the confirmation campaign - a **full** one, on the **first image
-    built with the pin files** (that build is a platform change against
-    every result so far; after it, a component pin bump re-requires only
-    the tests covering that component) - the tool on the bench is the
-    tree, but a hot-patched image is not the image that ships; (b) the
-    bench-tab ports are **code-complete 2026-08-16** (every board-runnable
-    tool is ported: the scope tools, the flow characterization family,
-    the escalation drill, the live drills; record in "Release acceptance"
-    above) - their bench validation rides the same next dev image; (c)
-    the first release runs the full campaign and commits
-    `releases/v<version>/acceptance.json` - **not yet: no release is
-    cut.**
-16. **Lid / button / interlock parity with the factory firmware — CODE-COMPLETE
-    and host-verified 2026-08-16, bench validation pending.** Both controller
-    modes now react to the lid, the interlock loop and the button the way the
-    factory daemon does (its behavior was decoded and then observed on the
-    bench machine booted into factory 2.6.0-2228 the same day: lid open
-    mid-print → `cnc/stop` 5 ms after the edge, immediate return to the job
-    start with the lid still open, `:cancelled`; app cancel the same path;
-    button → pause with a 2000-tick laser-off backtrack, resume with a
-    1950-tick laser-off lead; lid while paused → cancel + park).
-    - **GRBL mode** (`grblHAL-glowforge/src/glowforge_switches.c`,
-      `glowforge_laser.c`): the arm wait cancels on lid or interlock (relock,
-      clean soft reset - no alarm, reason reported; a press with the lid open
-      never arms); the
-      button is the pause/resume toggle outside the arm wait (feed hold /
-      cycle start; the arming press is consumed and never a pause press);
-      lid or interlock mid-job → the core parks the job (planned decel) and
-      the driver cancels it — armed window closed, reason reported, soft
-      reset from the parked state (position kept, no alarm; the sender sees
-      the banner), then a driver-enqueued `G53 G0` back to the position the
-      job started from with the door hidden and the latch locked; the
-      `lid_policy` setting (`cancel` default / `hold` = stock door hold)
-      selects it. Job start = machine position at the Idle → Cycle
-      transition. Test hook: `GF_SWITCH_FILE` (file-backed EV_SW word for
-      null-sink builds).
-    - **Cloud mode** (`python3-gfhardware/gfhardware/machine.py`,
-      `Glowforge-Utilities` basemachine): interlock joins the lid in every
-      gate; the switch thread wakes the run loop on the edge (stop within
-      milliseconds, level read as backstop); the park ignores the lid and
-      the cancel flag; a hunt ignores the lid; a job refused at start ends
-      `:cancelled`; the button pauses/resumes a print exactly as the factory
-      (kernel `resume -2000` / `resume 1950`, `print:paused` / `print:resumed`;
-      `cloud_pause_backtrack_ticks` / `cloud_resume_lead_ticks` settings);
-      hunt honors the cancel flag; every job's terminal event is logged.
-    - **Proof so far (host):** `laser_arm_test` (17 new checks),
-      `laser_lifecycle_test.py` (button-wait, lid/interlock in the wait,
-      button toggle, lid/interlock cancel + return to X=0 without alarm,
-      `lid_policy=hold`), `python3-gfhardware/tests/test_machine_lid_button.py`
-      (22 cases), gfutilities tests (58), forgetest unit + coverage lint;
-      forgectrl builds clean with the three new settings and panel cards.
-    - **First bench run (dev image 20260817000107, 2026-08-17 00:26 UTC):**
-      `laser.lid-cancel-mid-fire` FAILED - the beam stopped and the job was
-      cancelled as designed, grbl reported "returned to the job start" with
-      0.000 mm drift, but the head never moved: the kernel counters stayed at
-      +1440 counts (27 mm, where the lid opened), and the baseline's return
-      jog then moved 54 mm and hit the left rail (counters -1442). Root cause
-      in the stream engine, not the cancel policy: the park's `cnc/run` landed
-      while the kernel was still playing the hold's queued tail (state
-      `running`) - the request was refused with EPERM and `ship_pass` treated
-      "refused, kernel running" as started; the kernel then hit its own
-      end-of-data and idled with the park bytes stranded in the ring, and the
-      NEXT run (the baseline jog) played them first (stale 27 mm -X) plus
-      the jog. Fixed (grblHAL-glowforge): a refused run on a busy kernel stays
-      *pending* and is re-issued the moment the kernel reads idle
-      (`pending_pass`); a soft reset no longer `stop`s a kernel that is only
-      draining a completed stream, and after a mid-motion reset the unplayed
-      residue is cleared (`lseek 1`) once the stop has played out, before
-      any new bytes ship or the device changes hands; the cancel path waits
-      for the kernel drain before the reset. forgetest: the two lid-cancel
-      tests now check the KERNEL counters returned (grbl's belief is not
-      proof), and the baseline reports unplayed ring bytes as a leftover and
-      refuses to jog while any exist. To re-run: `motion.lid-cancel-home`
-      first, then `laser.lid-cancel-mid-fire`.
-    - **Bench validation pending (acceptance catalog):** `laser.arm-wait-lid`,
-      `motion.button-hold-resume`, `motion.lid-cancel-home`,
-      `laser.lid-cancel-mid-fire` (live), `cloud.lid-abort` (live),
-      `cloud.lid-during-button-wait`, `cloud.hunt-lid-open`,
-      `cloud.pause-resume` (live). Items 4 and 12 above are superseded by
-      this policy (the mid-job Door hold is no longer the default path);
-      close them with these tests.
-      Bench 2026-08-17 (dev image 20260817014132): `cloud.lid-abort` and
-      `cloud.lid-during-button-wait` PASSED; `cloud.hunt-lid-open` reported
-      FAIL for a harness defect - the hunt had completed with the lid open,
-      but the test then insisted on switching back to GRBL while the
-      service was still re-finding the head after the lid closed (`409
-      machine is not idle`). Reworked: the cloud job tests now run **in
-      cloud mode and stay there** (`enter_cloud` reuses a live session,
-      pid-scoped from the client's own websocket lines; the switch is
-      made once from GRBL and declared to the baseline; `wait_quiet`
-      waits the service's follow-up moves out; the hunt test restarts the
-      cloud client through the supervisor's stop/start lever for a fresh
-      connect; every print is judged by its own `print [id]: finished`
-      line), the baseline is mode-aware (cloud mode owns its kernel
-      config, lamp, and counters; `controller_mode` is never restored as
-      a bare setting - that had desynced the persisted mode from the live
-      one), and the page has an **Ignore prerequisites** switch so any
-      test can be started alone. Proof: `tests/test_cloud_suite.py` (15
-      cases, the four tests replayed on the bench's own gfcloud excerpts
-      + the run loop's pause/resume lines), baseline/server tests, and a
-      bench drill of `enter_cloud` (reuse) and of the fresh connect +
-      hunt detection + quiet wait against the live machine (hunt
-      `:completed`, 3 follow-up motions, quiet at 41 s). Left for the
-      operator: `cloud.hunt-lid-open` with the lid actually open,
-      `cloud.pause-resume` (live print + two presses). Still to observe once on the bench: the
-      ~90 ms HV_ENABLE re-arm gap on a GRBL resume (whether a dark dwell
-      lead is wanted), the app's rendering of `print:paused`, and a lid open
-      during the return-to-start motion (should be ignored).
+    the layer content; record in "Release acceptance" above). The catalog
+    has since grown to **35 tests** (item 16's parity work, then a sweep
+    that merged the tests sharing a setup: `kernel.fire-line` runs A/B/U
+    and the mid-ramp unlock behind one takeover, `laser.armed-kill` covers
+    the expected stop and a SIGKILL on one scrap setup,
+    `laser.pause-resume-lid-cancel` pauses, resumes and then cancels one
+    armed burn, and `cloud.lid-interlock-abort` runs the lid and the
+    interlock as two prints; the 17 `auto` tests were left separate, since
+    merging them buys no operator time and costs failure isolation).
+    Every board-runnable bench tool is ported to the page, including
+    `resume_dark_lead.py`. Remaining: the first release runs the campaign
+    and commits `releases/v<version>/acceptance.json` - **not yet: no
+    release is cut.**
+
+16. **Lid / button / interlock parity with the factory firmware — DONE,
+    bench-validated 2026-08-17 on dev image `20260817124714`.** Both controller
+    modes react to the lid, the remote-interlock loop and the button the way the
+    factory daemon does. The factory behavior was decoded and then recorded on
+    the bench machine booted into factory 2.6.0-2228; that session's log is
+    archived under `_RESOURCES/factory-session-20260816/` (with a README indexing
+    its five prints) and its measured numbers are in the facts bank above.
+    - **What the machine does, both modes.** Lid or interlock open during a job,
+      running or paused: motion stops within milliseconds of the edge, the job is
+      **cancelled and not resumable**, the head returns to the position the job
+      started from **with the lid still open**, the kernel laser latch relocks and
+      the armed window closes. The next job re-arms with a button press — the same
+      press the hardware button latch needs, so the software window and the
+      hardware latch agree by construction. The return-home park ignores the lid
+      and always runs to completion. A lid or interlock open during the pre-run
+      button wait cancels the job with the reason named. A lid open during a hunt,
+      homing, a jog or at idle is ignored. The button pauses and resumes a job:
+      in cloud mode with the factory's laser-off backtrack and resume lead
+      (`cloud_pause_backtrack_ticks` 2000 / `cloud_resume_lead_ticks` 1950), in
+      GRBL mode as feed hold / cycle start — the kernel refuses a backtrack on a
+      live-streamed ring, so a resumed GRBL cut picks up where the deceleration
+      ended. A pause is not a cancel: the latch stays unlocked and the armed
+      window open across it. `lid_policy = hold` selects stock grblHAL door
+      behavior (park in Door, cycle start resumes) instead of the cancel.
+    - **GRBL** (`grblHAL-glowforge/src/glowforge_switches.c`, `glowforge_laser.c`):
+      the arm wait cancels on lid or interlock with a clean soft reset — no alarm,
+      reason reported — and a press with the lid open never arms; the button is
+      the pause/resume toggle outside that wait, the arming press consumed so it
+      is never also a pause; a lid or interlock open mid-job parks the job through
+      the core's door state (planned deceleration, spindle off, position kept) and
+      the driver then cancels it, resets from the parked state and enqueues a
+      `G53 G0` back to the job start with the door hidden and the latch locked.
+      The job start is the machine position at the Idle → Cycle transition.
+      `GF_SWITCH_FILE` is the file-backed EV_SW word that lets null-sink builds
+      drive these edges in CI.
+    - **Cloud** (`python3-gfhardware/gfhardware/machine.py`, `Glowforge-Utilities`):
+      the interlock joins the lid in every gate; the switch thread wakes the run
+      loop on the edge, with the level read kept as a backstop; the park ignores
+      the lid and the cancel flag and clears the ring before it moves, so nothing
+      of the abandoned job plays ahead of it; a hunt ignores the lid; a job refused
+      at start ends `:cancelled`, never `:completed`; the button pauses and resumes
+      a print exactly as the factory does (`print:paused` / `print:resumed`), and a
+      lid, interlock or service cancel while paused cancels from where it stands.
+    - **No resume dwell.** The GRBL resume was suspected of losing its first ~90 ms
+      to the HV_ENABLE re-arm. Measured on the pads instead
+      (`scripts/bench/resume_dark_lead.py`, numbers in the facts bank): the chain
+      is back within ~3 ms of the resume and motion only restarts ~219 ms later, so
+      there is nothing for a dark dwell to cover and none was added.
+    - **Proof.** Host: `laser_arm_test`, `laser_lifecycle_test.py` (button wait,
+      lid and interlock in the wait, button toggle, cancel + return without alarm,
+      `lid_policy=hold`), `python3-gfhardware/tests/test_machine_lid_button.py`,
+      the gfutilities suite, and the forgetest unit tests + coverage lint. Bench,
+      through the acceptance catalog: `motion.button-hold-resume`,
+      `motion.lid-cancel-home` (cancel from Run and from a hold),
+      `motion.interlock-cancel-home`, `motion.lid-policy-hold`,
+      `cloud.lid-interlock-abort`, `cloud.lid-during-button-wait`,
+      `cloud.hunt-lid-open`, `cloud.pause-resume`, `cloud.pause-cancel-paths`,
+      `cloud.gfhome-homing` and `cloud.mode-switch` all PASS 2026-08-17; the live
+      arm-wait, mid-burn lid cancel, expected stop and armed-kill drills passed
+      the same day (`laser.arm-wait-lid`, `laser.emission-witness`,
+      `laser.disarm-in-hold`, and the mid-burn lid cancel that the stream-engine
+      fix below made honest).
+    - **The stream-engine defect this work found and fixed.** A mid-burn lid
+      cancel reported a return the machine never made: the park's `cnc/run` landed
+      while the kernel was still playing the hold's queued tail, was refused with
+      EPERM, and "refused, kernel running" was taken for a start — the kernel then
+      idled with the park bytes stranded, and the next run played them first. Fixed
+      in `stepper_stream.c`: a refused run stays *pending* and is re-issued the
+      moment the kernel reads idle; a soft reset never stops a kernel that is only
+      draining a completed stream; a mid-motion reset clears the unplayed residue
+      once the stop has played out, before any new bytes ship or the device changes
+      hands; the cancel path waits for the drain before the reset. The lesson is in
+      the catalog: the lid tests check the **kernel counters**, not grblHAL's
+      belief about them, and the baseline refuses to jog while unplayed ring bytes
+      exist.
+    - Items 4 and 12 above are closed by this policy.
