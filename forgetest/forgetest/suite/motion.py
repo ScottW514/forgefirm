@@ -317,14 +317,18 @@ def _log_offset(path):
         return 0
 
 
-def _probe_lines(path, offset):
+def _log_lines(path, offset, needle):
     try:
         with open(path, "rb") as f:
             f.seek(offset)
             data = f.read().decode("utf-8", "replace")
     except OSError:
         return []
-    return [ln.strip() for ln in data.splitlines() if "liveness probe:" in ln]
+    return [ln.strip() for ln in data.splitlines() if needle in ln]
+
+
+def _probe_lines(path, offset):
+    return _log_lines(path, offset, "liveness probe:")
 
 
 def _liveness_masked_restart(ctx, fc, ev):
@@ -952,3 +956,97 @@ def lid_policy_hold(ctx):
     ctx.check(ev["lid_policy_restored"] == was, "lid_policy was not restored to %r", was)
     ctx.log("PASS: lid_policy=hold parked the job in Door and the cycle start finished it (%.3f mm)",
             ev["moved_mm"])
+
+
+GRBLHAL_LOG = "/data/log/forgefirm/grblhal/grblhal.log"
+SCHED_FIFO = 1
+
+
+def _thread_sched(pid):
+    """(tid, policy, rt_priority) for every thread of pid. Those are fields
+    41 and 40 of /proc/<tid>/stat; comm can hold spaces and parentheses, so
+    the fields are indexed from the last ')' - rest[0] is field 3."""
+    out = []
+    for tid in sorted(os.listdir("/proc/%d/task" % pid)):
+        try:
+            with open("/proc/%d/task/%s/stat" % (pid, tid)) as f:
+                s = f.read()
+        except OSError:
+            continue
+        rest = s[s.rindex(")") + 1:].split()
+        if len(rest) >= 39:
+            out.append((tid, int(rest[38]), int(rest[37])))
+    return out
+
+
+@test("motion.step-timing-under-load",
+      title="Step timing holds while userspace competes for the core",
+      subsystem="motion", kind="auto", est_min=2,
+      covers=_MOTION_COVERS, requires=["kernel.latch-locked-idle", "motion.jog-roundtrip"],
+      steps=["Bed clear, lid closed; the head needs >= 40 mm of free +X travel."],
+      description="The board has one core, so the thread that stamps steps onto the pulse grid "
+                  "has to outrank ordinary userspace: when its virtual clock slips behind wall "
+                  "clock past the queue depth, late events clamp forward and the backlog ships "
+                  "one step per machine tick - a burst no motor follows, while cnc/underruns "
+                  "stays 0 because the ring never runs dry. Asserts the producer and the shipper "
+                  "both hold SCHED_FIFO, then drives 2000 mm/min round trips against a deliberate "
+                  "nice-5 CPU hog and requires the controller to report no clamped events.")
+def step_timing_under_load(ctx):
+    import subprocess
+
+    ev = ctx.evidence
+    pid = controller_pid()
+
+    threads = _thread_sched(pid)
+    rt = sorted(prio for _tid, pol, prio in threads if pol == SCHED_FIFO)
+    ev["threads"] = len(threads)
+    ev["rt_priorities"] = rt
+    ctx.log("controller threads: %d, SCHED_FIFO priorities: %s", len(threads), rt)
+    ctx.check(len(rt) >= 2,
+              "expected the stream producer and the shipper on SCHED_FIFO, found %d of %d "
+              "threads at real time (%s): step timing is exposed to ordinary userspace",
+              len(rt), len(threads), rt)
+
+    off = _log_offset(GRBLHAL_LOG)
+    load = None
+    try:
+        # One SCHED_OTHER hog at the same nice as forgectrl's HTTP threads:
+        # the realistic competitor, and the one the fix must outrank.
+        load = subprocess.Popen(["nice", "-n", "5", "sh", "-c", "while :; do :; done"],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        ctx.log("CPU hog started (pid %d, nice 5)", load.pid)
+        with ctx.grbl() as g:
+            clean_slate(ctx, g)
+            ctrl0 = cpu_ticks(pid)
+            t0 = time.time()
+            legs = 0
+            for _i in range(10):
+                ctx.checkpoint()
+                for jog in ("$J=G91X40F2000", "$J=G91X-40F2000"):
+                    r = g.command(jog)
+                    ctx.check(not any(x.startswith("error") for x in r),
+                              "jog refused under load: %s", r)
+                    _peak, states, _ = wait_idle(ctx, g, 30)
+                    ctx.check("TIMEOUT" not in states, "a leg did not return to Idle under load")
+                    legs += 1
+            elapsed = time.time() - t0
+            hz = os.sysconf("SC_CLK_TCK")
+            ev["legs"] = legs
+            ev["motion_s"] = round(elapsed, 1)
+            ev["controller_cpu_pct"] = round(100.0 * (cpu_ticks(pid) - ctrl0) / (hz * elapsed), 1)
+            ctx.log("%d legs in %.1f s, controller CPU %.1f %%",
+                    legs, elapsed, ev["controller_cpu_pct"])
+            machine_idle(ctx)
+    finally:
+        if load is not None:
+            load.kill()
+            load.wait()
+            ctx.log("CPU hog stopped")
+
+    clamped = _log_lines(GRBLHAL_LOG, off, "late events clamped")
+    ev["clamp_lines"] = clamped
+    ctx.check(not clamped,
+              "step generation was starved while userspace competed for the core: %s",
+              "; ".join(clamped))
+    ctx.log("PASS: %d legs at 2000 mm/min against a nice-5 CPU hog, no clamped events",
+            ev["legs"])

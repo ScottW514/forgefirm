@@ -938,6 +938,84 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     log EV_SW head-bit edges plus `head/beam_detect_digital|_analog` while
     firing.
 
+16. **Step timing under CPU contention.** The board runs one core, and of
+    grblHAL's four threads only the shipper is `SCHED_FIFO`. The producer —
+    the thread that emulates the stepper timer and stamps every step onto the
+    virtual time grid — is `SCHED_OTHER` at nice 5, the same class and nice as
+    forgectrl's MHD connection threads, so a camera stream viewer (~35 % of the
+    core on its own) competes with step generation on equal terms. When the
+    producer's virtual clock falls behind wall clock by more than the ring
+    depth (200 ms), `gf_stream_pulse` clamps late events forward and the
+    backlog ships one step per machine tick: 28 160 steps/s against the 1 778
+    that 2000 mm/min asks for, a ~16× velocity burst the motors cannot follow.
+    `cnc/underruns` stays 0 through all of it, because the ring never goes
+    dry — the stream is continuous and only its timing is wrong, which is
+    exactly what the present counters cannot see. Owed: put the producer on
+    `SCHED_FIFO` just below the shipper; gate or throttle the camera stream
+    while a job runs (forgectrl already holds the run state, so this shares the
+    bench slot with the HTTP surface caps in item 8); and report the clamp
+    count per run instead of only cumulatively at process exit. The per-run
+    `LOG_DEBUG` line is the instrument — a clean 2000 mm/min run with no camera
+    consumer reports `max behind 1.5 ms, clamped 0`.
+17. **Laser power model and the missing duty floor.** grblHAL maps S onto the
+    analog PWM duty (`$30`/`$31` → `$35`/`$36`, written raw into PWMSAR against
+    the 127-count period), and ForgeFIRM overrides only `$32`, so a shipped
+    machine has `$35` = 0: duty runs linearly to zero with S and nothing stops
+    it falling below the tube's striking threshold. Under M4 the core scales S
+    by velocity, so every corner, every reversal, and every segment shorter
+    than the accelerate-in-and-out distance (~1.6 mm at 2000 mm/min with the
+    default 700 mm/s²) is commanded below the striking point and does not burn
+    at all.
+
+    The factory does not use duty as a power control. All five firing jobs in
+    the captured pulse files pin the power byte at 127 (one also uses 102) and
+    modulate dose entirely by dithering the FIRE bit at the 10 kHz tick, at
+    6.5–18.8 % density. Two consequences: the captures cannot supply a `$35`
+    default, because nothing in them runs anywhere near the threshold; and the
+    duty → optical-power transfer function of this HV supply is unmeasured,
+    because nothing has ever depended on it.
+
+    Owed, in order: run `live_fire_drills.py pthresh` on scrap with `$35` = 0
+    to find the striking threshold, set `DEFAULT_SPINDLE_PWM_MIN_VALUE` (a
+    percent) in `grblHAL-glowforge/src/boards/glowforge.h` from it — the
+    marking rung's percent is the value — and record the number here. Then the
+    design question behind it: whether to follow the factory and modulate dose
+    by FIRE-bit density at a fixed high duty rather than by analog duty. That
+    is what the per-tick FIRE bit exists for, it cannot fall below the striking
+    threshold by construction, and it is the only power model this tube and
+    supply are known to work well with.
+
+    What that model means for image engraving, since it decides the design as
+    much as cutting does. LightBurn has two image paths. Its 1-bit modes
+    (Dither, Stucki, Jarvis, Halftone, Ordered) dither in the image domain and
+    emit only `Smax` or 0, so density is solid whenever a dot is on. Grayscale
+    mode emits a level per pixel, and that is the path the present duty model
+    breaks worst: dark pixels map below the striking threshold and mark
+    nothing, so shadows do not fade, they drop out. FIRE-bit density fixes that
+    by construction — a low level becomes sparse full-power pulses, every one
+    of which marks. Three consequences to design around:
+    - **Tonal resolution is set by ticks per pixel**, `rate × pixel_mm ÷
+      speed_mm_s`: 56 ticks at 254 DPI and 3000 mm/min, 14 at 508 DPI and
+      6000 mm/min. Fine, fast rasters have few pulse slots per pixel and lose
+      levels. The factory works at 10 kHz with ~20 ticks per pixel at 254 DPI,
+      so this envelope is livable, not comfortable.
+    - **The dither accumulator must carry across pixels**, so a level too fine
+      to express inside one pixel still averages over a run of them — that
+      spatial averaging is what recovers the levels the arithmetic above
+      loses. It follows that the accumulator resets only on fire-off, run
+      boundaries, disarm and abort, never per pixel.
+    - **A 1-bit image run below full layer power stacks two dithers**, and a
+      plain integer carry repeats on a short period, so it can beat against
+      LightBurn's own pattern as moiré. Perturbing the accumulator removes the
+      short period; the workflow answer is that 1-bit modes belong at 100 %
+      power with darkness set by speed, where density is solid and no second
+      dither exists.
+
+    Rasters also gain from the model directly: a level change costs a power
+    byte in the stream today, and the feeder contract forbids back-to-back
+    power bytes, while under FIRE dithering the duty is a constant sent once
+    per run and a per-pixel level change costs no stream byte at all.
+
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the
 underrun itself alarms and unlinks the anchor). Not in the acceptance catalog

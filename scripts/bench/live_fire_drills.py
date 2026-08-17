@@ -7,7 +7,7 @@ watch, an extinguisher, and the exhaust running. Every drill waits for
 the operator to press the physical arm button before the machine fires;
 nothing here defeats that gate.
 
-Usage: live_fire_drills.py <drill> [S] [F]   (S, F used by ircut)
+Usage: live_fire_drills.py <drill> [S] [F]   (S, F used by ircut, pthresh)
 
 Drills (pass a name):
   witness   Phase 5 A-1/A-2/A-5: a short vector mark at S400. Samples
@@ -33,6 +33,15 @@ Drills (pass a name):
             >= 3 times on representative material; the highest peak
             delta sizes cool_fire_ir_delta.
               ircut [S] [F]             e.g. ircut 1000 300
+  pthresh   Laser power-threshold ladder: one line per power level on
+            scrap, climbing from 2 % to 30 % of full, at constant power
+            (M3) so nothing scales the duty with velocity. The lowest
+            rung that leaves a mark is the tube's striking threshold,
+            and because $35 is a percent of full duty and the rungs are
+            percents of $30 with $31 = 0, that rung's percent IS the
+            $35 value. Requires $35 = 0 for the run: a floor already in
+            place lifts every rung and hides the threshold.
+              pthresh [Smax] [F]        e.g. pthresh 1000 300
   expstop   Armed kill on the EXPECTED-stop path: start a mark job,
             then mid-burn POST /controller/stop (the supervisor stops
             the controller: SIGTERM, reap, exit safing). PASS: emission
@@ -414,6 +423,71 @@ def drill_ircut(g):
     return samples
 
 
+# Power ladder for `pthresh`, in percent of full duty. The spacing is fine
+# at the bottom because that is where the tube stops striking.
+PTHRESH_PCT = (2, 3, 4, 5, 6, 8, 10, 12, 14, 16, 20, 25, 30)
+PTHRESH_LEN = 25.0                      # mm of burn per rung
+PTHRESH_PITCH = 3.0                     # mm between rungs
+
+
+def drill_pthresh(g):
+    smax = int(sys.argv[2]) if len(sys.argv) > 2 else 1000
+    feed = int(sys.argv[3]) if len(sys.argv) > 3 else 300
+    levels = [(p, max(1, int(round(smax * p / 100.0)))) for p in PTHRESH_PCT]
+    print('=== laser power threshold ladder: %d rungs, F%d, %g mm each ==='
+          % (len(levels), feed, PTHRESH_LEN))
+    print('constant power (M3): the commanded duty is the tested duty.')
+    print('PRECONDITION: $35 must be 0 for this run. A floor already in')
+    print('place lifts every rung and the threshold cannot be read.')
+    print('rungs (drawn in order, alternating direction, +Y between):')
+    for i, (pct, s) in enumerate(levels):
+        print('  %2d: %2d%% -> S%d' % (i + 1, pct, s))
+    print('connect: %s' % prepare(g))
+    base = sample_forgectrl()
+    print('pre-fire: %s' % base)
+    arm_cue()
+    print('>>> This ladder reaches %d%% of full power - use scrap you are'
+          % PTHRESH_PCT[-1])
+    print('>>> willing to cut through.\n')
+    job = ['G91', 'G21', 'M3']
+    for i, (_pct, s) in enumerate(levels):
+        job.append('S%d' % s)
+        job.append('G1 X%g F%d' % (PTHRESH_LEN if i % 2 == 0 else -PTHRESH_LEN,
+                                   feed))
+        job.append('G0 Y%g' % PTHRESH_PITCH)
+    job += ['M5', 'G90', 'M2']
+    samples = run_and_sample(g, job, overall_timeout=600)
+    hv_vals = [s['hv'] for s in samples if s['hv'] is not None]
+    emis = [s['emission'] for s in samples if s['emission'] is not None]
+    print('\n--- results ---')
+    print('samples: %d  emission peak=%s' % (len(samples),
+                                             max(emis) if emis else '-'))
+    print('hv_current range: %s..%s' % (min(hv_vals) if hv_vals else '-',
+                                        max(hv_vals) if hv_vals else '-'))
+    if samples:
+        t0 = samples[0]['t']
+        print('hv_current trace (t s : raw) - the discharge current is the')
+        print('electrical witness of striking; it lifts off baseline at the')
+        print('same rung the material starts marking:')
+        line = []
+        for s in samples:
+            if s['hv'] is None:
+                continue
+            line.append('%5.1f:%s' % (s['t'] - t0, s['hv']))
+            if len(line) == 8:
+                print('  ' + '  '.join(line))
+                line = []
+        if line:
+            print('  ' + '  '.join(line))
+    print('\nRead the material: count rungs from the FIRST one drawn. The')
+    print('lowest rung that leaves any mark is the striking threshold; set')
+    print('$35 to that rung\'s percent (round up to the next rung for')
+    print('margin). Note the emission counter proves the safety chain')
+    print('asserted LASER_ON, not that the tube lased - only the mark and')
+    print('the discharge current say that.')
+    return samples
+
+
 def post_ctrl(action):
     # http.client preserves the header-name case exactly as given.
     import http.client
@@ -499,6 +573,7 @@ def main():
     drill = sys.argv[1] if len(sys.argv) > 1 else ''
     drills = {'witness': drill_witness, 'hold': drill_hold,
               'faultpos': drill_faultpos, 'ircut': drill_ircut,
+              'pthresh': drill_pthresh,
               'expstop': drill_expstop, 'ctrlstart': drill_ctrlstart}
     if drill not in drills:
         print(__doc__)
