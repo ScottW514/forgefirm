@@ -1502,7 +1502,13 @@ forgectrl restarts; the fresh-boot dump of this image (uptime 235 s)
 confirmed the fixed values (`motor_lock 8`, `x/y_mode 8`, `x/y_decay 1`,
 `step_freq 28160` - the controller's tick, not the probe's 10000 -
 `ramp_rate 125000`, hold currents 33/5, lamps and button LEDs 0, heater
-and TEC off). Proof: k1-k2 / k3 / fire-abu re-run under the baseline -
+and TEC off). A reference dumped at uptime 30 s on 2026-08-16 showed the
+probe values instead (`motor_lock 0`, `step_freq 10000`, `y_mode 1`): the
+dump raced the controller's init writes - `/mode` reports `running` at the
+spawn, not at the config - so `boot_reference()` now waits for the
+controller's markers (`step_freq`/`motor_lock`/`y_mode` at their fixed
+values, bounded 20 s) before dumping, and retakes a pre-config reference
+while the boot is still fresh. Proof: k1-k2 / k3 / fire-abu re-run under the baseline -
 counters (0,0,0) before and after, the probe verified in 3 s after every
 takeover, no ladder, `post: clean` every time. (2) Two forgectrl items
 for the operator's decision, not changed: the liveness probe should write

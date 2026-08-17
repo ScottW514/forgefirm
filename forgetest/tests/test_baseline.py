@@ -1,6 +1,7 @@
 """The baseline: fixed resting values are restored, preserved values are
 handed back, every deviation is a recorded leftover. Runs against a fake
 sysfs tree; forgectrl is unreachable (service-side checks skip)."""
+import json
 import os
 import shutil
 import struct
@@ -159,6 +160,87 @@ class BaselineTests(unittest.TestCase):
         ref = {"sysfs": {"cnc/motor_lock": "8", "cnc/step_freq": "10000"}}
         diffs = baseline.check_fixed_against(ref, self.lines.append)
         self.assertEqual(diffs, ["cnc/step_freq: boot=10000 constant=28160"])
+
+
+    # -- the reference is taken after the controller applied its config -----
+
+    def _probe_state(self):
+        # what the kernel shows between the supervisor's motion probe and
+        # the GRBL controller's init writes
+        self._attr("cnc/motor_lock", "0")
+        self._attr("cnc/step_freq", "10000")
+        self._attr("cnc/y_mode", "1")
+
+    def test_wait_configured_returns_once_the_controller_wrote_its_config(self):
+        self._probe_state()
+        calls = {"n": 0}
+
+        def sleep(_s):
+            calls["n"] += 1
+            if calls["n"] == 3:             # the controller's init writes land
+                for attr, val in baseline.CONFIGURED_MARKERS:
+                    self._attr(attr, val)
+        ok = baseline.wait_controller_configured(
+            self.lines.append, {"controller": "running", "mode": "grbl", "motion": "verified"},
+            timeout=5, sleep=sleep)
+        self.assertTrue(ok)
+        self.assertTrue(any("controller configured" in l for l in self.lines))
+        self.assertGreaterEqual(calls["n"], 4)      # 3 polls + the settle
+
+    def test_wait_configured_times_out_and_says_so(self):
+        self._probe_state()
+        t = {"now": 0.0}
+        real_time = baseline.time.time
+        baseline.time.time = lambda: t["now"]
+        try:
+            def sleep(s):
+                t["now"] += s
+            ok = baseline.wait_controller_configured(
+                self.lines.append, {"controller": "running", "mode": "grbl"}, timeout=2, sleep=sleep)
+        finally:
+            baseline.time.time = real_time
+        self.assertFalse(ok)
+        self.assertTrue(any("did not apply its config" in l for l in self.lines))
+
+    def test_wait_configured_is_a_noop_outside_grbl_mode(self):
+        self._probe_state()
+        ok = baseline.wait_controller_configured(
+            self.lines.append, {"controller": "running", "mode": "cloud"}, timeout=1,
+            sleep=lambda s: self.fail("slept in cloud mode"))
+        self.assertTrue(ok)
+        ok = baseline.wait_controller_configured(
+            self.lines.append, {"controller": "stopped", "mode": "grbl"}, timeout=1,
+            sleep=lambda s: self.fail("slept with the controller stopped"))
+        self.assertTrue(ok)
+
+    def test_preconfig_reference_is_recognized(self):
+        self.assertTrue(baseline.reference_preconfig(
+            {"sysfs": {"cnc/motor_lock": "0", "cnc/step_freq": "10000", "cnc/y_mode": "1"}}))
+        self.assertFalse(baseline.reference_preconfig(
+            {"sysfs": {"cnc/motor_lock": "8", "cnc/step_freq": "28160", "cnc/y_mode": "8"}}))
+        # a genuinely different single constant is a machine fact, not pre-config
+        self.assertFalse(baseline.reference_preconfig(
+            {"sysfs": {"cnc/motor_lock": "8", "cnc/step_freq": "10000", "cnc/y_mode": "8"}}))
+        self.assertFalse(baseline.reference_preconfig({"sysfs": {}}))
+
+    def test_stale_preconfig_reference_is_retaken_on_a_fresh_boot(self):
+        os.environ["FORGETEST_BOOT_ID"] = "test-boot-2"
+        try:
+            path = os.path.join(self.tmp, "boot-test-boot-2.json")
+            with open(path, "w") as f:
+                json.dump({"ts": "old", "sysfs": {"cnc/motor_lock": "0", "cnc/step_freq": "10000",
+                                                     "cnc/y_mode": "1"}}, f)
+            ref = baseline.boot_reference(self.lines.append, self.tmp)
+            up = baseline.uptime_s()
+            if up is None or up > baseline.BOOT_MAX_AGE_S:
+                # too old to retake: the stale reference stands, marked
+                self.assertTrue(any("predates the controller's config" in l for l in self.lines))
+                self.assertEqual(ref["ts"], "old")
+            else:
+                self.assertTrue(any("retaking" in l for l in self.lines))
+                self.assertEqual(ref["sysfs"]["cnc/motor_lock"], "8")
+        finally:
+            os.environ.pop("FORGETEST_BOOT_ID", None)
 
 
 if __name__ == "__main__":

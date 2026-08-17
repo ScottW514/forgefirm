@@ -517,8 +517,10 @@ def dump_all(bl):
 
 
 def check_fixed_against(ref, log):
-    """Compare the fixed constants with a fresh-boot dump; log the diffs
-    (a differing constant is a fact about this machine, not a leftover)."""
+    """Compare the fixed constants with a fresh-boot dump; log the diffs.
+    With the dump taken after the controller applied its config (see
+    wait_controller_configured) a differing value is a fact about this
+    machine worth a look, not a leftover."""
     diffs = []
     sysfs = ref.get("sysfs") or {}
     for attr, want in FIXED_SYSFS + IDLE_READBACKS:
@@ -530,6 +532,52 @@ def check_fixed_against(ref, log):
     return diffs
 
 
+# The attributes the GRBL controller writes at its own start (its analog
+# config + machine tick): once they read the fixed values the controller
+# has configured the machine. Before that the kernel shows the supervisor's
+# motion-probe leftovers (motor_lock 0, step_freq 10000, y_mode at the
+# module default) - the state /mode already calls "running", because
+# "running" is the spawn, not the config.
+CONFIGURED_MARKERS = [(a, dict(FIXED_SYSFS)[a]) for a in ("cnc/step_freq", "cnc/motor_lock", "cnc/y_mode")]
+CONFIGURED_TIMEOUT_S = 20
+CONFIGURED_SETTLE_S = 1.0
+
+
+def reference_preconfig(ref):
+    """True when a saved reference shows the pre-controller state: every
+    marker present differs from its fixed value (the probe's step_freq /
+    motor_lock and the module's y_mode together), i.e. it was dumped
+    before the controller's init writes landed."""
+    sysfs = (ref or {}).get("sysfs") or {}
+    seen = [(sysfs.get(a), want) for a, want in CONFIGURED_MARKERS if sysfs.get(a) is not None]
+    return bool(seen) and all(got != want for got, want in seen)
+
+
+def wait_controller_configured(log, mode_body, timeout=CONFIGURED_TIMEOUT_S, sleep=time.sleep):
+    """After the supervisor reports the controller running: block until the
+    GRBL controller's init writes have landed (the CONFIGURED_MARKERS read
+    their fixed values), then a short settle. Only the GRBL controller
+    writes those; in any other mode return at once. Bounded: on timeout
+    the caller proceeds and the reference will say so."""
+    if not (isinstance(mode_body, dict) and mode_body.get("controller") == "running"
+            and (mode_body.get("mode") or "grbl") == "grbl"):
+        return True
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        got = [(a, hw.sysfs_read(a)) for a, _ in CONFIGURED_MARKERS]
+        if all(g == want for (a, g), (_, want) in zip(got, CONFIGURED_MARKERS)):
+            sleep(CONFIGURED_SETTLE_S)
+            log("baseline: controller configured %.1f s after running" % (time.time() - t0))
+            return True
+        if any(g is None for _, g in got):
+            return True                 # no kernel sysfs (host run): nothing to wait for
+        sleep(0.25)
+    log("baseline: WARNING - controller did not apply its config within %d s (%s); "
+        "the reference may show the supervisor's probe values"
+        % (timeout, ", ".join("%s=%s" % (a, hw.sysfs_read(a)) for a, _ in CONFIGURED_MARKERS)))
+    return False
+
+
 def boot_reference(log, data_dir):
     """The fresh-boot idle state of this boot: loaded from
     <data_dir>/boot-<boot_id>.json when forgetest already took it, taken
@@ -539,20 +587,33 @@ def boot_reference(log, data_dir):
     if not bid:
         return None
     path = os.path.join(data_dir, "boot-%s.json" % bid)
+    up = uptime_s()
     try:
         with open(path) as f:
             ref = json.load(f)
-        log("baseline: fresh-boot reference loaded (%s, taken %s)" % (path, ref.get("ts")))
-        return ref
+        # A reference dumped before the controller had applied its config
+        # (the supervisor's probe values still showing) is retaken while
+        # the boot is fresh enough; otherwise it stands, marked.
+        if reference_preconfig(ref):
+            if up is not None and up <= BOOT_MAX_AGE_S:
+                log("baseline: fresh-boot reference %s predates the controller's config; retaking" % path)
+                ref = None
+            else:
+                log("baseline: NOTE fresh-boot reference %s predates the controller's config "
+                    "(taken %s); the machine's probe values are in it - power-cycle to retake"
+                    % (path, ref.get("ts")))
+        if ref is not None:
+            log("baseline: fresh-boot reference loaded (%s, taken %s)" % (path, ref.get("ts")))
+            return ref
     except (OSError, ValueError):
         pass
-    up = uptime_s()
     if up is None or up > BOOT_MAX_AGE_S:
         log("baseline: no fresh-boot reference for this boot (uptime %s s > %d s); "
             "power-cycle to take one" % (up, BOOT_MAX_AGE_S))
         return None
     bl = Baseline(log)
-    bl.wait_settled()
+    mode = bl.wait_settled()
+    wait_controller_configured(log, mode)
     ref = dump_all(bl)
     ref.update({"ts": now_ts(), "boot_id": bid, "uptime_s": uptime_s()})
     try:
