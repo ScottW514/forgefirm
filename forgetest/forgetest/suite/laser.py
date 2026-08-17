@@ -79,6 +79,11 @@ MARK_JOB = ["G91", "G21", "M4", "S400",
             "G1 X40 F200", "G1 Y40 F200", "G1 X-40 F200", "G1 Y-40 F200",
             "M5", "G90", "M2"]
 
+# The same square at constant power. M4 scales power with speed, which hides
+# what a restart does to the cut; M3 puts it on the scrap where the operator
+# can see it - the deeper spot where a resumed cut accelerates from zero.
+MARK_JOB_M3 = ["M3" if ln == "M4" else ln for ln in MARK_JOB]
+
 
 def arm_and_fire(ctx, g, room="40 mm +X and +Y", job=None, timeout=240):
     """The arm cue, the job, and the wait for the emission witness - the
@@ -521,7 +526,8 @@ def arm_wait_lid(ctx):
                   "them. Press: the job feed-holds, emission stops, and the latch stays UNLOCKED "
                   "with the armed window open - a pause is not a cancel. Press again: the cut "
                   "resumes from where it stopped (GRBL has no backtrack; the kernel refuses one on "
-                  "a live-streamed ring). Lid: emission stops in hardware, the job is cancelled "
+                  "a live-streamed ring), and the cut is M3 so the restart leaves a mark to "
+                  "look at rather than one M4 hides. Lid: emission stops in hardware, the job is cancelled "
                   "with the reason reported, the controller resets with the position kept and no "
                   "alarm, the armed window closes and the kernel latch relocks, the hardware button "
                   "latch reads SET, and the head returns to the job start with the lid still open.")
@@ -533,7 +539,7 @@ def pause_resume_lid_cancel(ctx):
         k0 = kernel_xy_mm(ctx)
         ev["start"] = start
         ev["kernel_start"] = k0
-        smp = arm_and_fire(ctx, g)
+        smp = arm_and_fire(ctx, g, job=MARK_JOB_M3)
         ev["emission_running"] = smp["emission"]
         ctx.log("emission live (%s) - asking the operator to pause", smp["emission"])
 
