@@ -35,20 +35,10 @@ machine is idle:**
 * A **web control panel** on port 8080: machine status and position, coolant
   and fan telemetry, safety-switch states, camera view, machine settings,
   hardware diagnostics, firmware updates, and boot-slot management.
-* **Unified logging**: every ForgeFIRM component logs through syslog into its
-  own directory under `/data/log/forgefirm`, with per-logger levels for the
-  device and for an optional remote syslog server, a live viewer in the
-  panel, and a one-click log bundle — sanitized of identifying details — for
-  attaching to an issue report.
-* Both **cameras** as MJPEG streams and full-resolution snapshots — the lid
-  camera feeds LightBurn's camera overlay directly.
 * **Camera-referenced homing**: `$H` from any sender runs the factory-style
   camera homing cycle through the Glowforge service (a Glowforge account and a
   live service session are required for `$H`; everything else in GRBL mode
   runs without them), and the machine records where it is.
-* **Installs alongside the factory firmware** in the unused A/B rootfs slot,
-  archiving every factory version first, so the machine can be switched back
-  to stock at any time without the Glowforge cloud.
 
 ## Hardware
 
@@ -57,19 +47,10 @@ The control board is common to Glowforge Basic, Plus, and Pro. The 5 MP
 "HD" units bind but do not capture yet — see the camera note in
 [kas/README.md](kas/README.md).
 
-## Roadmap
-
-* Limit-switch homing as an alternative to camera-referenced homing.
-* Camera lens calibration and bed alignment for the LightBurn overlay.
-* Capture support for the 8 MP (OV8856) camera modules.
-* Cloud mode: stream jobs into the motion ring during the run, lifting the
-  job-length cap that buffering the whole job imposes.
-
 ## Safety
 
-**This machine contains a Class 4 CO₂ laser: it burns, blinds, and starts
-fires.** Never defeat the lid switches or interlock, always vent the exhaust
-outdoors, and never cut PVC or other chlorinated plastics. Never leave a
+**These machines contain a CO₂ laser: it burns, blinds, and starts
+fires.** Never defeat the lid switches or interlock. Never leave a
 running job unattended — keep a fire extinguisher within reach. Read
 [Before you cut — safety](docs/LIGHTBURN.md#before-you-cut--safety-read-this-first)
 before your first job, and the
