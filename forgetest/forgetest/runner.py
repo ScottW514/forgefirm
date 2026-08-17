@@ -203,6 +203,16 @@ class Context:
             self.log("position counters re-zeroed at the starting position; the baseline "
                      "expects (0,0,0) at the end")
 
+    def mode_changed(self, mode):
+        """Declare a deliberate controller-mode change for the operator:
+        the run leaves the machine in `mode` and the baseline keeps it
+        there instead of switching back to the mode the run found (the
+        cloud tests enter cloud mode once and stay)."""
+        cap = self.run.baseline_captured
+        if cap is not None and cap.get("mode") != mode:
+            self.log("controller mode changed to %s for the operator; the baseline keeps it", mode)
+            cap["mode"] = mode
+
 
 class Takeover:
     """Hardware takeover: the controller is stopped through the supervisor,
@@ -391,7 +401,12 @@ class Runner:
         return art
 
     # -- starting -----------------------------------------------------------
-    def start_test(self, test_id, ack_live=False):
+    def start_test(self, test_id, ack_live=False, ignore_requires=False):
+        """Start a test. `requires` gates the start unless the operator
+        set ignore_requires: the test then runs alone, and the run's
+        evidence records which prerequisites were unmet (the release gate
+        needs every test satisfied anyway, so nothing is hidden - the
+        record just says the order was the operator's)."""
         t = _catalog.get(test_id, self.registry)
         if t is None:
             return False, "unknown test"
@@ -400,8 +415,9 @@ class Runner:
                 return False, "a run is in progress"
             state, _ = self.state()
             ts = state["tests"][t.id]
-            if not ts["requires_met"]:
-                return False, "prerequisites not satisfied: %s" % ", ".join(ts["missing_requires"])
+            missing = list(ts["missing_requires"])
+            if missing and not ignore_requires:
+                return False, "prerequisites not satisfied: %s" % ", ".join(missing)
             if t.kind == "live" and not ack_live:
                 return False, "live test: acknowledge eye protection, fire watch, and exhaust first"
             campaign = self._open_campaign_if_needed(state)
@@ -409,6 +425,9 @@ class Runner:
             self.last = self.current
             self.current = run
         run.log("start %s (%s, %s) in campaign %s" % (t.id, t.kind, t.hardware, campaign["id"]))
+        if missing:
+            run.log("prerequisites overridden by the operator - not satisfied: %s" % ", ".join(missing))
+            run.evidence["prerequisites"] = {"overridden": True, "missing": missing, "ts": now_ts()}
         if t.kind == "live":
             run.evidence["operator"] = {"ack_live": True, "ts": now_ts()}
         th = threading.Thread(target=self._exec_test, args=(t, run, campaign), daemon=True,

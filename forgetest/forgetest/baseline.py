@@ -16,6 +16,17 @@ restores it after (on every exit path), so a test cannot hand the next one
 The lid lamp is fixed too, at forgectrl's `lid_lamp_idle` setting (unset =
 236): the daemon asserts it at start and at every controller spawn.
 
+The controller mode in force decides what the baseline owns. In GRBL mode
+everything above applies. In cloud mode the cloud client owns what it
+configures for itself - the GRBL controller's init values (it writes its
+own from each pulse header), the lid lamp (its lid-image level), and the
+position counters (re-zeroed at every service action, so not a preserved
+value) - and the baseline checks the rest: the safety readbacks, the
+latch, the ring, the module defaults, the diagnostics tools, the cooling
+engine. The mode itself is preserved: a run hands back the mode it
+found, unless it declared a deliberate change (Context.mode_changed) -
+the cloud tests enter cloud mode once and stay there.
+
 Everything found off-baseline is a "leftover": logged, kept in the run's
 evidence, and surfaced on the page. The pre-run pass attributes leftovers
 to the previous run; the post-run pass attributes them to the run itself.
@@ -52,6 +63,20 @@ FIXED_SYSFS = [
     ("thermal/heater_pwm", "0"),
     ("thermal/tec_on", "0"),
 ]
+
+# The subset the GRBL controller writes at its start: checked and restored
+# in GRBL mode only. The cloud client sets its own values for these from
+# every pulse header (step_freq 10 kHz, the run currents) and hands the
+# hold currents back at idle; forcing the GRBL values under it would be
+# the baseline configuring another controller's machine.
+GRBL_CONTROLLER_SYSFS = ("cnc/motor_lock", "cnc/x_mode", "cnc/y_mode", "cnc/x_decay", "cnc/y_decay",
+                         "cnc/step_freq", "pic/x_step_current", "pic/y_step_current")
+
+# Settings the baseline never hands back as bare settings: controller_mode
+# is the persisted mirror of the live mode (the mode item restores it
+# through POST /mode, which keeps the two in step; a bare settings write
+# would leave the runtime in one mode and the boot in the other).
+UNPRESERVED_SETTINGS = ("controller_mode",)
 
 # Read-only readbacks with their idle values (no direct restore: the state
 # comes right through forgectrl - see restore_forgectrl - or is fatal).
@@ -149,6 +174,7 @@ class Baseline:
         self.abort = abort or (lambda: False)
         self.captured = None
         self.forgectrl = None
+        self.mode = None            # the controller mode in force (per enforce)
 
     def log(self, msg):
         self._log("baseline: " + msg)
@@ -228,7 +254,8 @@ class Baseline:
             cap["sysfs"][attr] = hw.sysfs_read(attr)
         st, body = self.fc_get("/settings")
         if st == 200 and isinstance(body, dict):
-            cap["settings"] = {k: v for k, v in body.items() if isinstance(v, str)}
+            cap["settings"] = {k: v for k, v in body.items()
+                               if isinstance(v, str) and k not in UNPRESERVED_SETTINGS}
         st, body = self.fc_get("/mode")
         if st == 200 and isinstance(body, dict):
             cap["mode"] = body.get("mode")
@@ -241,7 +268,8 @@ class Baseline:
         phase is 'pre' or 'post' (log wording only). captured is the
         preserved state to hand back (post) - None compares nothing."""
         left = []
-        self._forgectrl_side(left)
+        self.mode = None
+        self._forgectrl_side(left, captured)
         self._kernel_side(left)
         self._lamp_side(left)
         self._preserved(left, captured)
@@ -259,11 +287,15 @@ class Baseline:
             time.sleep(1.0)
         return None
 
-    def _forgectrl_side(self, left):
+    def cloud_mode(self):
+        return self.mode == "cloud"
+
+    def _forgectrl_side(self, left, captured=None):
         st, mode = self.fc_get("/mode")
         if st != 200 or not isinstance(mode, dict):
             self.log("forgectrl not answering - service-side checks skipped")
             return
+        self.mode = mode.get("mode")
         # a diagnostic left running seizes the thermal hardware: abort it
         st, d = self.fc_get("/diag/status")
         if st == 200 and isinstance(d, dict) and d.get("running"):
@@ -278,11 +310,14 @@ class Baseline:
                            CAM_IDLE_S)
             if w is None:
                 left.append(Leftover("cam.running", True, False, "failed: still running"))
-        # supervisor: the captured mode, controller running, motion verified
-        want = (self.captured or {}).get("mode") or mode.get("mode") or "grbl"
+        # supervisor: the mode the run found (or declared), controller
+        # running, motion verified. A mode the run changed without
+        # declaring it is handed back through the switch.
+        want = (captured or {}).get("mode") or mode.get("mode") or "grbl"
         if mode.get("mode") != want:
             st, body = self.fc_post("/mode", data={"controller": want})
             mode = self.wait_settled() or mode
+            self.mode = mode.get("mode")
             left.append(Leftover("mode", mode.get("mode"), want,
                                  "restored" if mode.get("mode") == want else "failed: %s %s" % (st, body)))
         if mode.get("controller") == "motion-fault":
@@ -336,7 +371,10 @@ class Baseline:
                                      "waited" if w is not None else "failed: still %s" % found))
 
     def _lamp_side(self, left):
-        """The lid lamp at forgectrl's idle level (the lid_lamp_idle setting)."""
+        """The lid lamp at forgectrl's idle level (the lid_lamp_idle setting).
+        In cloud mode the cloud client owns the lamp (its lid-image level)."""
+        if self.cloud_mode():
+            return
         st, body = self.fc_get("/settings")
         if st != 200 or not isinstance(body, dict):
             return
@@ -373,6 +411,8 @@ class Baseline:
             left.append(Leftover("pulse ring", "%d unplayed bytes" % residue, "0 (nothing queued)",
                                  "unrestorable: the next run would replay them first"))
         for attr, want in FIXED_SYSFS:
+            if self.cloud_mode() and attr in GRBL_CONTROLLER_SYSFS:
+                continue
             got = hw.sysfs_read(attr)
             if got is None or got == want:
                 continue
@@ -461,9 +501,11 @@ class Baseline:
             except OSError as e:
                 act = "failed: %s" % e
             left.append(Leftover(attr, now, was, act))
+        # In cloud mode the counters are the cloud client's: every service
+        # action re-zeroes them at its start, so they preserve nothing.
         was = captured.get("position")
         now = read_position()
-        if was is not None and now is not None and now != was:
+        if was is not None and now is not None and now != was and not self.cloud_mode():
             left.append(Leftover("position", now, was, self._return_head(was, now)))
         was = captured.get("settings")
         if was:

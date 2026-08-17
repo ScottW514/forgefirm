@@ -181,6 +181,18 @@ class ServerTests(unittest.TestCase):
         st, d = self.call("POST", "/start", {"test": "fake.needs"})
         self.assertEqual(st, 409)
         self.assertIn("prerequisites", d["message"])
+        # the operator's override: the test runs alone and the record says so
+        st, d = self.call("POST", "/start", {"test": "fake.needs", "ignore_requires": True})
+        self.assertEqual(st, 200)
+        state = self.wait_idle()
+        self.assertEqual(state["tests"]["fake.needs"]["status"], "pass")
+        st, rec = self.call("GET", "/result?test=fake.needs")
+        self.assertEqual(rec["evidence"]["prerequisites"]["missing"], ["fake.prompt"])
+        self.assertTrue(rec["evidence"]["prerequisites"]["overridden"])
+        self.assertTrue(any("prerequisites overridden" in l for l in rec["log"]))
+        # its prerequisite is still required for the release
+        self.assertFalse(state["tests"]["fake.prompt"]["satisfied"])
+        self.assertFalse(state["authorized"])
         st, d = self.call("POST", "/start", {"test": "fake.live"})
         self.assertEqual(st, 409)
         self.assertIn("live", d["message"])

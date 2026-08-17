@@ -63,6 +63,10 @@ pre#log{background:#1d1e26;color:#d7dae0;font-family:ui-monospace,Consolas,monos
 .err{color:var(--red);font-size:13px;margin:6px 0}
 .note{background:#fdf3e3;border:1px solid #eccb90;border-radius:6px;padding:8px 12px;margin:8px 0;font-size:13px}
 .ack{display:block;margin:8px 0;font-size:12.5px}
+.switch{display:flex;align-items:center;gap:8px;margin:10px 0 0;font-size:13px}
+.switch input{width:16px;height:16px;margin:0}
+.switch .on{color:var(--warn);font-weight:600}
+.req.over{color:var(--dim)}
 .grp{margin-top:6px}
 .tool .argrow{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
 .tool .argrow label{font-size:12px;color:var(--dim)}
@@ -89,7 +93,10 @@ pre#log{background:#1d1e26;color:#d7dae0;font-family:ui-monospace,Consolas,monos
     <button class='danger' onclick='doInvalidate()'>Invalidate all results</button>
    </div>
    <div id='actmsg'></div>
-   <p class='hint'>A release is authorized when a campaign is open on this image and every catalog test is satisfied - by a PASS in the campaign, or (never for the core) by an earlier PASS whose domain fingerprint is unchanged. A FAIL ends the campaign. Invalidate-all forces a full campaign; give the reason.</p>
+   <label class='switch'><input type='checkbox' id='ignreq' onchange='setIgnoreReq(this.checked)'>
+    <span>Ignore prerequisites - Start any test on its own, whatever its <i>requires</i> list says</span>
+    <span id='ignreqon'></span></label>
+   <p class='hint'>A release is authorized when a campaign is open on this image and every catalog test is satisfied - by a PASS in the campaign, or (never for the core) by an earlier PASS whose domain fingerprint is unchanged. A FAIL ends the campaign. Invalidate-all forces a full campaign; give the reason. A test's <i>requires</i> list only orders the runs: with the switch above on, any test starts alone and its record notes which prerequisites were unmet - the release still needs every test satisfied.</p>
   </div>
   <div id='groups'></div>
  </div>
@@ -114,7 +121,10 @@ pre#log{background:#1d1e26;color:#d7dae0;font-family:ui-monospace,Consolas,monos
 var TOKEN='__TOKEN__';
 var state=null, catalog=null, catalogHash=null, bench=null, tab='acceptance', openDetails={};
 var lastRunKey=null;
+var ignoreReq=false;try{ignoreReq=window.localStorage.getItem('forgetest.ignoreReq')==='1'}catch(e){}
 function $(id){return document.getElementById(id)}
+function setIgnoreReq(on){ignoreReq=!!on;try{window.localStorage.setItem('forgetest.ignoreReq',ignoreReq?'1':'0')}catch(e){}
+ $('ignreq').checked=ignoreReq;$('ignreqon').innerHTML=ignoreReq?"<span class='on'>ON - prerequisites are not enforced</span>":'';if(state&&catalog)renderGroups()}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function api(method,path,body,cb){var x=new XMLHttpRequest();x.open(method,path,true);x.setRequestHeader('X-ForgeFIRM-Token',TOKEN);
  if(body!==undefined&&body!==null){x.setRequestHeader('Content-Type','application/json')}
@@ -151,8 +161,10 @@ function renderGroups(){var groups={},order=[];catalog.forEach(function(t){if(!g
    if(s.required&&s.status!=='running')st+="<br><span class='req'>required: "+esc(s.reason)+"</span>";
    var last=s.last?(esc(s.last.result)+' '+esc(fmtTs(s.last.ts))):'-';
    if(s.status==='inherited'&&s.origin)last+="<br><span class='tid'>from "+esc(s.origin.campaign)+" on "+esc(s.origin.image)+"</span>";
-   var canStart=!busy&&s.requires_met!==false;var why=busy?'a run is in progress':(!s.requires_met?('needs: '+(s.missing_requires||[]).join(', ')):'');
+   var unmet=s.requires_met===false;var canStart=!busy&&(!unmet||ignoreReq);
+   var why=busy?'a run is in progress':(unmet?((ignoreReq?'prerequisites overridden - needs: ':'needs: ')+(s.missing_requires||[]).join(', ')):'');
    var startBtn="<button class='pri' "+(canStart?'':'disabled')+" title='"+esc(why)+"' onclick='startTest(\""+esc(t.id)+"\")'>Start</button>";
+   if(unmet)startBtn+="<div class='req"+(ignoreReq?' over':'')+"'>"+(ignoreReq?'unmet: ':'needs: ')+esc((s.missing_requires||[]).join(', '))+"</div>";
    var det="<div class='details"+(openDetails[t.id]?' on':'')+"' id='det-"+esc(t.id)+"'>"+esc(t.description||'')+
      (t.steps&&t.steps.length?"<br><b>Operator steps:</b><ol>"+t.steps.map(function(x){return '<li>'+esc(x)+'</li>'}).join('')+"</ol>":'')+
      "<b>Requires:</b> "+esc((t.requires||[]).join(', ')||'-')+"<br><b>Covers:</b> "+esc((t.covers||[]).map(function(c){return c[0]+':'+c[1]}).join(', ')||'-')+
@@ -179,6 +191,7 @@ function renderRun(){var r=state.running||state.last_run;var key=r?(r.kind+':'+r
 var benchNeedsRefresh=false;
 function findTest(id){for(var i=0;i<catalog.length;i++)if(catalog[i].id===id)return catalog[i];return null}
 function startTest(id){var t=findTest(id);var body={test:id};
+ if(ignoreReq)body.ignore_requires=true;
  if(t&&t.kind==='live'){if(!confirmLive())return;body.ack_live=true}
  api('POST','/start',body,function(s,d){setMsg('actmsg',d.message||d.error,s!==200)})}
 function confirmLive(){return window.confirm('LIVE LASER TEST.\n\nConfirm before starting:\n - eye protection on, everyone in the room\n - fire watch present, extinguisher at hand\n - exhaust running, lid closed, scrap in place\n - you will press the physical button to arm when prompted\n\nStart the test?')}
@@ -208,6 +221,7 @@ function startTool(id){var t=null;bench.tools.forEach(function(x){if(x.id===id)t
  (t.args||[]).forEach(function(a){var e=$('arg-'+id+'-'+a.name);if(e)args[a.name]=e.value});
  var body={tool:id,args:args};if(t.safety==='live'){if(!confirmLive())return;body.ack_live=true}
  api('POST','/bench/start',body,function(s,d){setMsg('benchmsg',d.message||d.error,s!==200);if(s===200)benchNeedsRefresh=true})}
+setIgnoreReq(ignoreReq);
 poll();
 </script></body></html>
 """

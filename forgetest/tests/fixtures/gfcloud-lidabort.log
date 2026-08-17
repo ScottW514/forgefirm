@@ -1,0 +1,72 @@
+2026-08-17T09:42:09.781500+00:00 gfcloud[1522] INFO gfuiservice:run motion (ready) service action motion
+2026-08-17T09:42:11.281337+00:00 gfcloud[1522] INFO cnc:set_step_freq 28160
+2026-08-17T09:42:11.282627+00:00 gfcloud[1522] INFO cnc:set_x_decay 1
+2026-08-17T09:42:11.283850+00:00 gfcloud[1522] INFO cnc:set_x_mode 8
+2026-08-17T09:42:11.285121+00:00 gfcloud[1522] INFO cnc:set_x_current 135
+2026-08-17T09:42:11.286711+00:00 gfcloud[1522] INFO cnc:set_y_decay 1
+2026-08-17T09:42:11.287977+00:00 gfcloud[1522] INFO cnc:set_y_mode 8
+2026-08-17T09:42:11.289235+00:00 gfcloud[1522] INFO cnc:set_y_current 22
+2026-08-17T09:42:11.297425+00:00 gfcloud[1522] INFO machine:_run_loop starting run
+2026-08-17T09:42:11.299141+00:00 gfcloud[1522] INFO machine:_run_loop current state: MachineState.IDLE
+2026-08-17T09:42:11.303264+00:00 gfcloud[1522] INFO machine:_run_loop current state: MachineState.RUNNING
+2026-08-17T09:42:12.560917+00:00 gfcloud[1522] INFO machine:_run_loop current state: MachineState.IDLE
+2026-08-17T09:42:12.572022+00:00 gfcloud[1522] INFO machine:_run_loop finished run
+2026-08-17T09:42:12.572811+00:00 gfcloud[1522] INFO cnc:laser_latch 1
+2026-08-17T09:42:12.580801+00:00 gfcloud[1522] INFO machine:_motion_locked end positions (actual/expected): X (-10313/-10313), Y (-649/-649), Z (0/0)
+2026-08-17T09:42:12.581620+00:00 gfcloud[1522] INFO machine:_motion_locked motion bytes actual:34952, expected: 34952
+2026-08-17T09:42:12.582366+00:00 gfcloud[1522] INFO machine:_motion_locked start idle
+2026-08-17T09:42:12.583540+00:00 gfcloud[1522] INFO cnc:set_x_current 33
+2026-08-17T09:42:12.584928+00:00 gfcloud[1522] INFO cnc:set_y_current 5
+2026-08-17T09:42:12.593681+00:00 gfcloud[1522] INFO machine:_motion_locked end positions (-10313, -649, 0)
+2026-08-17T09:42:12.604394+00:00 gfcloud[1522] INFO machine:_motion end motion
+2026-08-17T09:42:12.604757+00:00 gfcloud[1522] INFO basemachine:_finish_action motion [1576550503]: finished with event ":completed"
+2026-08-17T09:42:12.605824+00:00 gfcloud[1522] INFO cnc:laser_latch 1
+2026-08-17T09:42:15.672518+00:00 gfcloud[1522] INFO gfuiservice:run service action request: print (ready)
+2026-08-17T09:42:15.676330+00:00 gfcloud[1522] INFO machine:_motion start motion
+2026-08-17T09:42:15.680419+00:00 gfcloud[1522] INFO gfuiservice:run print (ready) service action print
+2026-08-17T09:42:21.975587+00:00 gfcloud[1522] INFO cnc:laser_latch 0
+2026-08-17T09:42:22.001354+00:00 gfcloud[1522] INFO machine:_button_wait waiting for button
+2026-08-17T09:42:24.774117+00:00 gfcloud[1522] INFO machine:_switch_event button pushed
+2026-08-17T09:42:24.778509+00:00 gfcloud[1522] INFO cnc:set_step_freq 10000
+2026-08-17T09:42:24.781114+00:00 gfcloud[1522] INFO cnc:set_x_decay 1
+2026-08-17T09:42:24.783654+00:00 gfcloud[1522] INFO cnc:set_x_mode 8
+2026-08-17T09:42:24.786180+00:00 gfcloud[1522] INFO cnc:set_x_current 135
+2026-08-17T09:42:24.789088+00:00 gfcloud[1522] INFO cnc:set_y_decay 1
+2026-08-17T09:42:24.791559+00:00 gfcloud[1522] INFO cnc:set_y_mode 8
+2026-08-17T09:42:24.794380+00:00 gfcloud[1522] INFO cnc:set_y_current 22
+2026-08-17T09:42:24.815263+00:00 gfcloud[1522] INFO machine:_run_loop starting run
+2026-08-17T09:42:24.816687+00:00 gfcloud[1522] INFO machine:_run_loop current state: MachineState.IDLE
+2026-08-17T09:42:24.820823+00:00 gfcloud[1522] INFO machine:_run_loop current state: MachineState.RUNNING
+2026-08-17T09:42:25.049489+00:00 gfcloud[1522] INFO machine:_switch_event button released
+2026-08-17T09:42:30.832527+00:00 gfcloud[1522] INFO machine:_switch_event lid opened
+2026-08-17T09:42:30.838627+00:00 gfcloud[1522] WARNING machine:_run_loop lid opened mid-run; stopping motion
+2026-08-17T09:42:30.941553+00:00 gfcloud[1522] INFO machine:_run_loop current state: MachineState.IDLE
+2026-08-17T09:42:30.947477+00:00 gfcloud[1522] INFO machine:_run_loop finished run
+2026-08-17T09:42:30.949099+00:00 gfcloud[1522] INFO cnc:laser_latch 1
+2026-08-17T09:42:30.964916+00:00 gfcloud[1522] INFO machine:_motion_locked end positions (actual/expected): X (8454/7573), Y (684/684), Z (3/3)
+2026-08-17T09:42:30.965704+00:00 gfcloud[1522] INFO machine:_motion_locked motion bytes actual:60649, expected: 238043
+2026-08-17T09:42:30.972180+00:00 gfcloud[1522] INFO machine:_return_home start return home
+2026-08-17T09:42:31.847247+00:00 gfcloud[1522] INFO machine:_run_loop starting run
+2026-08-17T09:42:31.848617+00:00 gfcloud[1522] INFO machine:_run_loop current state: MachineState.IDLE
+2026-08-17T09:42:31.852977+00:00 gfcloud[1522] INFO machine:_run_loop current state: MachineState.RUNNING
+2026-08-17T09:42:36.970521+00:00 gfcloud[1522] INFO machine:_run_loop current state: MachineState.IDLE
+2026-08-17T09:42:36.976059+00:00 gfcloud[1522] INFO machine:_run_loop finished run
+2026-08-17T09:42:36.977738+00:00 gfcloud[1522] INFO machine:_return_home return home complete
+2026-08-17T09:42:36.979696+00:00 gfcloud[1522] INFO machine:_motion_locked start cool down
+2026-08-17T09:42:36.998973+00:00 gfcloud[1522] INFO machine:_motion_locked start idle
+2026-08-17T09:42:37.000314+00:00 gfcloud[1522] INFO cnc:set_x_current 33
+2026-08-17T09:42:37.001774+00:00 gfcloud[1522] INFO cnc:set_y_current 5
+2026-08-17T09:42:37.010089+00:00 gfcloud[1522] INFO machine:_motion_locked end positions (0, 0, 3)
+2026-08-17T09:42:37.010885+00:00 gfcloud[1522] INFO machine:_motion end motion
+2026-08-17T09:42:37.011563+00:00 gfcloud[1522] INFO basemachine:_finish_action print [1576550507]: finished with event ":cancelled"
+2026-08-17T09:42:37.013071+00:00 gfcloud[1522] INFO cnc:laser_latch 1
+2026-08-17T09:42:37.449180+00:00 gfcloud[1522] INFO gfuiservice:run service action request: hunt (ready)
+2026-08-17T09:42:37.451286+00:00 gfcloud[1522] INFO z_axis:home starting z homing cycle
+2026-08-17T09:42:37.452782+00:00 gfcloud[1522] INFO gfuiservice:run hunt (ready) service action hunt
+2026-08-17T09:42:37.453691+00:00 gfcloud[1522] INFO z_axis:configure configuring z_enable: True, current: ZCur.HIGH, mode: Microstep.FULL
+2026-08-17T09:42:37.458283+00:00 gfcloud[1522] INFO z_axis:_step_until starting z_step until at_home: False
+2026-08-17T09:42:37.827610+00:00 gfcloud[1522] INFO z_axis:_step_until took -2 z_steps
+2026-08-17T09:42:37.829278+00:00 gfcloud[1522] INFO z_axis:_step_until starting z_step until at_home: True
+2026-08-17T09:42:38.200493+00:00 gfcloud[1522] INFO z_axis:_step_until took 2 z_steps
+2026-08-17T09:42:38.202234+00:00 gfcloud[1522] INFO z_axis:home pass: 1
+2026-08-17T09:42:38.203788+00:00 gfcloud[1522] INFO z_axis:_step_until starting z_step until at_home: False

@@ -30,7 +30,12 @@ Every test declares, in code (`forgetest/forgetest/suite/*.py`):
 - **covers** - the source paths whose content the test stands for, as
   `(component, glob)` pairs;
 - **requires** - tests that must be satisfied first (the emission tests
-  require the motion and readback tests);
+  require the motion and readback tests). This orders the runs; it is not
+  a release condition of its own (the release needs every test satisfied
+  anyway). The page's **Ignore prerequisites** switch lets any test start
+  alone; a run started that way records the unmet prerequisites in its
+  `evidence.prerequisites` and its log, and the prerequisites stay
+  required;
 - **always** - membership in the **always-required core**, which is run
   in every campaign and is never inherited: image health, the kernel
   latch/safety readbacks, and one live emission witness with the
@@ -103,7 +108,16 @@ forces a full campaign; nothing before it can be inherited.
    do not.
 3. Start the required tests. `operator` tests ask questions in the run
    pane; `live` tests need the acknowledgment and the physical arm press;
-   `takeover` tests stop forgectrl for the duration.
+   `takeover` tests stop forgectrl for the duration. A test whose
+   prerequisites are not satisfied is locked until they are - or until
+   the **Ignore prerequisites** switch in the Campaign card is on, which
+   unlocks every Start (the switch is remembered by the browser; a run
+   started under it says so in its record).
+   The `cloud.*` job tests run **in cloud mode and stay there**: the first
+   one switches from GRBL mode (once, its connect-time hunt waited out)
+   and the following ones reuse the live session; nothing switches back -
+   switch on the control panel when done. `cloud.mode-switch` is the one
+   round trip and starts in GRBL mode.
 4. When *Release authorized: YES*, **Export release artifact**, download
    `acceptance.json` and `acceptance.md`, and commit them as
    `releases/v<version>/acceptance.json` and `.md`.
@@ -126,7 +140,16 @@ at forgectrl's `lid_lamp_idle` setting; forgectrl: the controller running
 with motion verified, no diagnostic, the camera engine and cooling engine
 idle), and **preserved** state with no resting policy that a run must
 hand back as it found it (the position counters, the settings map, the
-controller mode). Deviations are
+controller mode). The mode in force decides what the baseline owns: in
+cloud mode the cloud client's own configuration (the GRBL controller's
+init values, which it rewrites from every pulse header; the lid lamp,
+its lid-image level; the position counters, re-zeroed at every service
+action) is left to it, and the safety readbacks, latch, ring, module
+defaults, and forgectrl's engines are checked as always. The mode itself
+is preserved unless the run declared the change (`ctx.mode_changed()`,
+the cloud tests entering cloud mode); the persisted `controller_mode`
+setting is never written back as a bare setting - only the switch keeps
+it in step with the live mode. Deviations are
 **leftovers**: logged in the run pane, kept in the result's `evidence`
 (`baseline.pre` / `baseline.post`), and surfaced in the page's message
 line - a leftover found before a run is attributed to the previous run; one

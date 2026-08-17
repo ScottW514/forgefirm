@@ -15,7 +15,7 @@ Routes
   GET  /result?test&ts      one full result record (log, evidence)
   GET  /log                 the raw JSONL
   GET  /export/acceptance.json | .md   the last export
-  POST /start {test, ack_live}         start an acceptance test
+  POST /start {test, ack_live, ignore_requires}   start an acceptance test
   POST /bench/start {tool, args, ack_live}
   POST /answer {prompt_id, value}
   POST /abort
@@ -219,7 +219,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             if path == "/start":
-                ok, msg = r.start_test(str(body.get("test", "")), ack_live=bool(body.get("ack_live")))
+                ok, msg = r.start_test(str(body.get("test", "")), ack_live=bool(body.get("ack_live")),
+                                       ignore_requires=bool(body.get("ignore_requires")))
                 self._send(200 if ok else 409, {"ok": ok, "message": msg})
             elif path == "/bench/start":
                 args = body.get("args") or {}

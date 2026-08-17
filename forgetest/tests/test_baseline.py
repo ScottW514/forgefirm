@@ -266,3 +266,95 @@ class BaselineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BaselineModeTests(BaselineTests):
+    """The baseline against a fake forgectrl: what the mode in force
+    owns. Reuses the fake sysfs tree of BaselineTests; only the new
+    tests run here (the inherited ones are skipped)."""
+
+    def setUp(self):
+        super().setUp()
+        import helpers
+        self.fc = helpers.FakeForgectrl().start()
+        baseline.Baseline._unreachable_until = 0.0
+
+    def tearDown(self):
+        self.fc.stop()
+        super().tearDown()
+
+    def run(self, result=None):
+        # only this class's own tests, not the base class's
+        if self._testMethodName not in BaselineModeTests.__dict__:
+            return
+        return super().run(result)
+
+    def cloud(self):
+        self.fc.state["mode"] = {"mode": "cloud", "controller": "running", "pid": 7, "motion": "verified"}
+        self.fc.state["settings"]["controller_mode"] = "cloud"
+
+    def test_grbl_mode_restores_the_controller_values_and_the_lamp(self):
+        self._attr("cnc/step_freq", "10000")
+        self._attr("pic/lid_led", "77")
+        left = self.bl().enforce("pre", captured=None)
+        self.assertEqual(sorted(x.item for x in left), ["cnc/step_freq", "pic/lid_led"])
+        self.assertEqual(self._read("cnc/step_freq"), "28160")
+        self.assertEqual(self._read("pic/lid_led"), "236")
+
+    def test_cloud_mode_leaves_the_clients_config_lamp_and_counters(self):
+        self.cloud()
+        self._attr("cnc/step_freq", "10000")          # the cloud client's tick
+        self._attr("pic/x_step_current", "135")
+        self._attr("pic/lid_led", "77")               # its lid-image level
+        b = self.bl()
+        cap = b.capture()
+        self.assertEqual(cap["mode"], "cloud")
+        self.assertNotIn("controller_mode", cap["settings"])
+        self._pos(-13096, -7400, 0)                   # the service re-zeroed and moved
+        self._attr("cnc/streaming", "1")              # NOT the client's: still restored
+        left = b.enforce("post", captured=cap)
+        self.assertEqual([x.item for x in left], ["cnc/streaming"])
+        self.assertEqual(self._read("cnc/step_freq"), "10000")
+        self.assertEqual(self._read("pic/x_step_current"), "135")
+        self.assertEqual(self._read("pic/lid_led"), "77")
+        self.assertEqual(self._read("cnc/streaming"), "0")
+        self.assertEqual(self.fc.posts, [])           # no mode switch, no settings write
+
+    def test_cloud_mode_still_relocks_the_latch(self):
+        self.cloud()
+        self._attr("cnc/interlock_circuit", "37")     # bit 3 clear: unlocked
+        left = self.bl().enforce("post", captured=None)
+        self.assertEqual([x.item for x in left], ["laser_latch"])
+        self.assertEqual(self._read("cnc/laser_latch"), "1")
+
+    def test_undeclared_mode_change_is_handed_back_through_the_switch(self):
+        b = self.bl()
+        cap = b.capture()                             # found in grbl
+        self.assertEqual(cap["mode"], "grbl")
+        self.cloud()                                  # the run left it in cloud, silently
+        left = b.enforce("post", captured=cap)
+        items = {x.item: x for x in left}
+        self.assertIn("mode", items)
+        self.assertEqual(items["mode"].action, "restored")
+        self.assertEqual(self.fc.posts, [("/mode", {"controller": "grbl"})])
+        self.assertEqual(self.fc.state["mode"]["mode"], "grbl")
+
+    def test_declared_mode_change_is_kept(self):
+        b = self.bl()
+        cap = b.capture()
+        self.cloud()
+        cap["mode"] = "cloud"                         # Context.mode_changed("cloud")
+        left = b.enforce("post", captured=cap)
+        self.assertNotIn("mode", [x.item for x in left])
+        self.assertEqual(self.fc.posts, [])
+        self.assertEqual(self.fc.state["mode"]["mode"], "cloud")
+
+    def test_controller_mode_setting_is_never_written_back_bare(self):
+        b = self.bl()
+        cap = b.capture()
+        self.assertNotIn("controller_mode", cap["settings"])
+        self.fc.state["settings"]["controller_mode"] = "cloud"     # a switch persisted it
+        self.fc.state["mode"]["mode"] = "cloud"
+        cap["mode"] = "cloud"
+        b.enforce("post", captured=cap)
+        self.assertEqual([p for p, _ in self.fc.posts if p == "/settings"], [])

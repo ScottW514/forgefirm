@@ -3082,7 +3082,31 @@ dev image (the confirmation campaign's image).**
       `cloud.lid-during-button-wait`, `cloud.hunt-lid-open`,
       `cloud.pause-resume` (live). Items 4 and 12 above are superseded by
       this policy (the mid-job Door hold is no longer the default path);
-      close them with these tests. Still to observe once on the bench: the
+      close them with these tests.
+      Bench 2026-08-17 (dev image 20260817014132): `cloud.lid-abort` and
+      `cloud.lid-during-button-wait` PASSED; `cloud.hunt-lid-open` reported
+      FAIL for a harness defect - the hunt had completed with the lid open,
+      but the test then insisted on switching back to GRBL while the
+      service was still re-finding the head after the lid closed (`409
+      machine is not idle`). Reworked: the cloud job tests now run **in
+      cloud mode and stay there** (`enter_cloud` reuses a live session,
+      pid-scoped from the client's own websocket lines; the switch is
+      made once from GRBL and declared to the baseline; `wait_quiet`
+      waits the service's follow-up moves out; the hunt test restarts the
+      cloud client through the supervisor's stop/start lever for a fresh
+      connect; every print is judged by its own `print [id]: finished`
+      line), the baseline is mode-aware (cloud mode owns its kernel
+      config, lamp, and counters; `controller_mode` is never restored as
+      a bare setting - that had desynced the persisted mode from the live
+      one), and the page has an **Ignore prerequisites** switch so any
+      test can be started alone. Proof: `tests/test_cloud_suite.py` (15
+      cases, the four tests replayed on the bench's own gfcloud excerpts
+      + the run loop's pause/resume lines), baseline/server tests, and a
+      bench drill of `enter_cloud` (reuse) and of the fresh connect +
+      hunt detection + quiet wait against the live machine (hunt
+      `:completed`, 3 follow-up motions, quiet at 41 s). Left for the
+      operator: `cloud.hunt-lid-open` with the lid actually open,
+      `cloud.pause-resume` (live print + two presses). Still to observe once on the bench: the
       ~90 ms HV_ENABLE re-arm gap on a GRBL resume (whether a dark dwell
       lead is wanted), the app's rendering of `print:paused`, and a lid open
       during the return-to-start motion (should be ignored).
