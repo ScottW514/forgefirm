@@ -938,25 +938,42 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     log EV_SW head-bit edges plus `head/beam_detect_digital|_analog` while
     firing.
 
-16. **Step timing under CPU contention.** The board runs one core, and of
-    grblHAL's four threads only the shipper is `SCHED_FIFO`. The producer —
-    the thread that emulates the stepper timer and stamps every step onto the
-    virtual time grid — is `SCHED_OTHER` at nice 5, the same class and nice as
-    forgectrl's MHD connection threads, so a camera stream viewer (~35 % of the
-    core on its own) competes with step generation on equal terms. When the
-    producer's virtual clock falls behind wall clock by more than the ring
-    depth (200 ms), `gf_stream_pulse` clamps late events forward and the
-    backlog ships one step per machine tick: 28 160 steps/s against the 1 778
-    that 2000 mm/min asks for, a ~16× velocity burst the motors cannot follow.
-    `cnc/underruns` stays 0 through all of it, because the ring never goes
-    dry — the stream is continuous and only its timing is wrong, which is
-    exactly what the present counters cannot see. Owed: put the producer on
-    `SCHED_FIFO` just below the shipper; gate or throttle the camera stream
-    while a job runs (forgectrl already holds the run state, so this shares the
-    bench slot with the HTTP surface caps in item 8); and report the clamp
-    count per run instead of only cumulatively at process exit. The per-run
-    `LOG_DEBUG` line is the instrument — a clean 2000 mm/min run with no camera
-    consumer reports `max behind 1.5 ms, clamped 0`.
+16. **Step timing under CPU contention.** The board runs one core. The producer
+    thread advances virtual time and stamps every step onto the pulse grid, so
+    any interval it is kept off the CPU is an interval the grid does not
+    advance; events after it map behind the ship cursor, where
+    `gf_stream_pulse` clamps them forward and the backlog ships one step per
+    machine tick — 28 160 steps/s against the 1 778 that 2000 mm/min asks for,
+    a ~16× velocity burst no motor follows. `cnc/underruns` reads 0 throughout,
+    because the ring never goes dry: the stream is continuous and only its
+    timing is wrong, which is exactly what the kernel counters cannot see.
+
+    The margin absorbing a stall is **not** the 200 ms queue depth. The
+    shipper's due index carries the same `+ gf.depth` the producer's base
+    starts at, so the two cancel and the producer's lead over the cursor is the
+    only slack there is. It was 2 ms. It is now `GFSINK_LEAD_MS`, default 10,
+    and the per-run `LOG_DEBUG` line reports the measured `min margin` in ms
+    against it rather than leaving it to be derived. The ceiling is the
+    cycle-churn path: `gf_stream_wakeup` re-bases production onto the wall
+    cursor only when the cursor has passed it, so a lead that survives an idle
+    gap skips the re-base and accumulates as dark padding — 2 and 10 ms give an
+    identical 64 790-byte churn stream, 15 ms and above inflate it to ~225 k.
+    **Owed:** make the re-base reclaim the overshoot, which is what unlocks a
+    lead beyond 10 ms.
+
+    Done: the producer runs `SCHED_FIFO` one below the shipper, `core_mx`
+    carries priority inheritance to bound the inversion that promotion would
+    otherwise create, and the clamp count is reported per run at `WARNING`.
+    **Still owed: gate or throttle the camera while a job runs.** Priority
+    alone does not cover it — bench runs 90 s apart on one image show a nice-5
+    CPU hog passing clean (20 legs, 0 clamps) while the camera streaming
+    clamped 7 runs, because its per-frame cache maintenance over a 4.8 MB
+    non-coherent capture buffer is kernel-context work no userspace priority
+    can preempt. Measured stall: 3.9–4.4 ms. Capture resolution is the lever
+    that shortens it (the mainline `ov5648` offers 1280×960 and 640×480 binned
+    modes, 4.1× and 16.4× fewer bytes); frame rate only spaces the stalls out,
+    and the existing `FORGECTRL_STREAM_FPS` cap skips demosaic and encode but
+    still dequeues every frame. Shares the bench slot with item 8.
 17. **Laser power model and the missing duty floor.** grblHAL maps S onto the
     analog PWM duty (`$30`/`$31` → `$35`/`$36`, written raw into PWMSAR against
     the 127-count period), and ForgeFIRM overrides only `$32`, so a shipped
