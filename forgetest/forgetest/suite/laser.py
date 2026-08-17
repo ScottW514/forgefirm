@@ -17,7 +17,8 @@ import time
 from ..catalog import test
 from .. import hw
 from ..runner import Failed
-from .motion import kernel_xy_mm, check_kernel_returned, wait_state, wait_idle, drain_text
+from .motion import (kernel_xy_mm, check_kernel_returned, wait_state, wait_state_text,
+                     wait_left_state, wait_idle, drain_text)
 
 _LASER_COVERS = [("grblhal-glowforge", "src/**"), ("kernel-module-glowforge", "**"),
                  ("forgectrl", "src/super.c"), ("forgectrl", "src/cool.c"),
@@ -544,11 +545,11 @@ def pause_resume_lid_cancel(ctx):
         ctx.log("emission live (%s) - asking the operator to pause", smp["emission"])
 
         # -- the button pauses ------------------------------------------------
+        g.drain()                                   # the message window opens at the prompt
         ctx.instruct("The laser is cutting. Press the button ONCE now (pause), then click Done - "
                      "do not wait long before the next step.")
-        st = wait_state(ctx, g, "Hold", 8)
+        st, text = wait_state_text(ctx, g, "Hold", 8)
         ctx.check(st is not None, "the press did not hold the job (state %s)", g.status_report()["state"])
-        text = drain_text(g, 0.5)
         ev["hold_state"] = st["state"]
         ev["pause_message"] = "job paused" in text
         paused = []
@@ -574,10 +575,15 @@ def pause_resume_lid_cancel(ctx):
                   "the kernel latch relocked on the pause - the resume could not fire without a new arm press")
 
         # -- the button resumes -----------------------------------------------
+        g.drain()
         ctx.instruct("Press the button once more now (resume), then click Done.")
-        st = wait_state(ctx, g, "Run", 10)
+        st, text = wait_left_state(ctx, g, "Hold", 10)
         ev["resumed_state"] = st["state"] if st else g.status_report()["state"]
-        ctx.check(st is not None, "the second press did not resume the job (state %s)", ev["resumed_state"])
+        ev["resume_message"] = "job resumed" in text
+        ctx.check(st is not None, "the second press did not resume the job (still held: %s)",
+                  ev["resumed_state"])
+        ctx.check(st["state"].startswith(("Run", "Idle")),
+                  "the job left the hold into %s, not into motion", st["state"])
         back = False
         t2 = time.time()
         trail = []
@@ -596,6 +602,7 @@ def pause_resume_lid_cancel(ctx):
         ctx.check(back, "emission did not return after the resume: %s", trail[-6:])
 
         # -- the lid cancels --------------------------------------------------
+        g.drain()
         ctx.instruct("The cut is running again. Open the lid NOW and leave it open, then click Done.")
         t_lid = time.time()
         lid_trail = []

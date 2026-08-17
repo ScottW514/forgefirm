@@ -49,6 +49,39 @@ def wait_state(ctx, g, prefix, timeout):
     return None
 
 
+def wait_state_text(ctx, g, prefix, timeout):
+    """wait_state, keeping everything the controller said while polling.
+    The driver reports a press with a [MSG:] line the moment it acts on it -
+    inside the poll window - so a test that wants both the state and the
+    message has to collect them together."""
+    end = time.time() + timeout
+    text = ""
+    while time.time() < end:
+        ctx.checkpoint()
+        st = g.status_report()
+        text += g.drain()
+        if st["state"].startswith(prefix):
+            return st, text
+        time.sleep(0.1)
+    return None, text + g.drain()
+
+
+def wait_left_state(ctx, g, prefix, timeout):
+    """The first report whose state is no longer `prefix`, with the text.
+    Leaving a state is what proves a command was acted on; catching the
+    state it moves INTO is a race whenever the remaining work is short."""
+    end = time.time() + timeout
+    text = ""
+    while time.time() < end:
+        ctx.checkpoint()
+        st = g.status_report()
+        text += g.drain()
+        if not st["state"].startswith(prefix):
+            return st, text
+        time.sleep(0.1)
+    return None, text + g.drain()
+
+
 def wait_idle(ctx, g, timeout=30.0, poll=0.05, grace=0.3):
     """Poll until Idle; returns (peak_feed_mm_min, states_seen, final_report).
     An Idle report inside the first `grace` seconds counts only once a
@@ -660,19 +693,32 @@ def button_hold_resume(ctx):
         g.command("G1X40F300", timeout=0.5)               # an 8 s move
         ctx.sleep(0.5)
         ctx.check(g.status_report()["state"].startswith("Run"), "the move did not start")
+        g.drain()                                     # the message window opens at the prompt
         ctx.instruct("The head is moving. Press the button once now, then click Done.")
-        st = wait_state(ctx, g, "Hold", 8)
+        st, text = wait_state_text(ctx, g, "Hold", 8)
         ctx.check(st is not None, "the press did not hold the job (state %s)", g.status_report()["state"])
-        text = drain_text(g, 0.5)
         ev["held_state"] = st["state"]
+        ev["held_at_mm"] = round(st["MPos"][0] - start[0], 3)
         ev["pause_message"] = "job paused" in text
-        ctx.log("held: %s; message seen: %s", st["state"], ev["pause_message"])
+        ctx.log("held: %s at %.3f mm of 40; message seen: %s", st["state"], ev["held_at_mm"],
+                ev["pause_message"])
+        g.drain()
         ctx.instruct("The head is stopped. Press the button once more now, then click Done.")
-        st = wait_state(ctx, g, "Run", 8)
-        ctx.check(st is not None, "the second press did not resume the job (state %s)",
-                  g.status_report()["state"])
-        text = drain_text(g, 0.5)
+        # The press is proven by the job LEAVING the hold. Catching it in Run
+        # is a race: a pause late in the move leaves a fraction of a second of
+        # travel, which can be over before the next poll - the machine did
+        # exactly the right thing and the test would still have called it a
+        # failure.
+        st, text = wait_left_state(ctx, g, "Hold", 10)
+        ev["state_after_resume"] = st["state"] if st else None
         ev["resume_message"] = "job resumed" in text
+        ctx.check(st is not None, "the second press did not resume the job (still held: %s)",
+                  g.status_report()["state"])
+        # Leaving the hold for Run or Idle is the resume; leaving it for Alarm
+        # or Door is something else entirely, and must not read as a pass.
+        ctx.check(st["state"].startswith(("Run", "Idle")),
+                  "the job left the hold into %s, not into motion", st["state"])
+        ctx.log("resumed: %s; message seen: %s", ev["state_after_resume"], ev["resume_message"])
         peak, states, st = wait_idle(ctx, g, 40)
         ctx.check("TIMEOUT" not in states, "the resumed move did not complete: %s", states)
         moved = st["MPos"][0] - start[0]
@@ -715,6 +761,7 @@ def lid_cancel_home(ctx):
         g.command("G1X40F300", timeout=0.5)               # an 8 s move
         ctx.sleep(0.5)
         ctx.check(g.status_report()["state"].startswith("Run"), "the move did not start")
+        g.drain()                                     # the message window opens at the prompt
         ctx.instruct("The head is moving. Open the lid NOW and leave it open, then click Done.")
         drift = expect_cancel_and_return(ctx, g, ev, start, k0, "lid opened", "running")
         sw = (ctx.forgectrl.status().get("switches") or {})
@@ -739,13 +786,14 @@ def lid_cancel_home(ctx):
         g.command("G1X40F300", timeout=0.5)
         ctx.sleep(0.5)
         ctx.check(g.status_report()["state"].startswith("Run"), "the second move did not start")
+        g.drain()
         ctx.instruct("The head is moving again. Press the button once now (pause), then click Done.")
-        st = wait_state(ctx, g, "Hold", 8)
+        st, held = wait_state_text(ctx, g, "Hold", 8)
         ctx.check(st is not None, "the press did not hold the job (state %s)", g.status_report()["state"])
-        held = drain_text(g, 0.5)
         ev["hold_state"] = st["state"]
         ev["hold_pause_message"] = "job paused" in held
         ctx.log("paused: %s; message seen: %s", st["state"], ev["hold_pause_message"])
+        g.drain()
         ctx.instruct("The job is paused. Open the lid NOW and leave it open, then click Done.")
         hold_drift = expect_cancel_and_return(ctx, g, ev, start2, k1, "lid opened", "hold")
         ctx.check(not g.status_report()["state"].startswith("Hold"),
@@ -795,6 +843,7 @@ def interlock_cancel_home(ctx):
         g.command("G1X60F300", timeout=0.5)               # a 12 s move
         ctx.sleep(0.5)
         ctx.check(g.status_report()["state"].startswith("Run"), "the move did not start")
+        g.drain()
         ctx.instruct("The head is moving. Open the INTERLOCK loop now (unplug it / pull the jumper) and "
                      "leave it open, then click Done.")
         sw = (ctx.forgectrl.status().get("switches") or {})
@@ -850,11 +899,11 @@ def lid_policy_hold(ctx):
             g.command("G1X40F300", timeout=0.5)           # an 8 s move
             ctx.sleep(0.5)
             ctx.check(g.status_report()["state"].startswith("Run"), "the move did not start")
+            g.drain()
             ctx.instruct("The head is moving. Open the lid NOW and leave it open, then click Done.")
-            st = wait_state(ctx, g, "Door", 8)
+            st, text = wait_state_text(ctx, g, "Door", 8)
             ev["door_state"] = st["state"] if st else g.status_report()["state"]
             ctx.check(st is not None, "the lid did not park the job in Door (state %s)", ev["door_state"])
-            text = drain_text(g, 1.0)
             ev["messages"] = [ln for ln in text.splitlines() if ln.startswith("[MSG:")]
             ctx.check("job cancelled" not in text, "the job was cancelled under lid_policy=hold: %s", ev["messages"])
             ctx.check("returned to the job start" not in text,

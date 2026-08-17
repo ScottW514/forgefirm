@@ -228,7 +228,8 @@ class Grbl:
                 pass
             self.sock = None
 
-    def drain(self):
+    def _recv(self):
+        """Pull whatever is waiting into the buffer; never blocks long."""
         self.sock.settimeout(0.05)
         try:
             while True:
@@ -238,6 +239,22 @@ class Grbl:
                 self.buf += d
         except (socket.timeout, OSError):
             pass
+
+    def _take_report(self):
+        """Remove every complete <...> report from the buffer and return the
+        last one, keeping the text around them. Status reports are the only
+        thing consumed here: the driver's [MSG:] lines stay for drain()."""
+        last = None
+        while True:
+            i = self.buf.find(b"<")
+            j = self.buf.find(b">", i + 1) if i >= 0 else -1
+            if i < 0 or j <= i:
+                return last
+            last = self.buf[i + 1:j].decode("utf-8", "replace")
+            self.buf = self.buf[:i] + self.buf[j + 1:]
+
+    def drain(self):
+        self._recv()
         out, self.buf = self.buf, b""
         return out.decode("utf-8", "replace")
 
@@ -279,8 +296,12 @@ class Grbl:
         """One '?' report, parsed: {'state': 'Idle', 'MPos': (x,y,z), ...}.
         The '?' is re-sent every 0.5 s until a report arrives: a soft
         reset (^X) flushes the controller's read buffer and eats a '?'
-        that lands in it."""
-        self.drain()
+        that lands in it. Reports already buffered are stale and dropped -
+        but only the reports: anything else the controller said is left in
+        the buffer, so a test that polls for a state does not lose the
+        [MSG:] line that explains it."""
+        self._recv()
+        self._take_report()                 # stale: predates this '?'
         self.send_raw(b"?")
         deadline = time.time() + self.timeout
         resend = time.time() + 0.5
@@ -295,11 +316,8 @@ class Grbl:
             if time.time() >= resend:
                 self.send_raw(b"?")
                 resend = time.time() + 0.5
-            i = self.buf.find(b"<")
-            j = self.buf.find(b">", i + 1) if i >= 0 else -1
-            if i >= 0 and j > i:
-                rep = self.buf[i + 1:j].decode("utf-8", "replace")
-                self.buf = self.buf[j + 1:]
+            rep = self._take_report()
+            if rep is not None:
                 return parse_report(rep)
         raise HwError("no status report from grbl")
 
