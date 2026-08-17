@@ -9,6 +9,8 @@ panel, and a standard Grbl interface.
 * [Installation Instructions](https://github.com/ScottW514/forgefirm/blob/master/INSTALL.md)
 * [Build Instructions](https://github.com/ScottW514/forgefirm/blob/master/BUILD.md)
 * [Connecting LightBurn](https://github.com/ScottW514/forgefirm/blob/master/docs/LIGHTBURN.md)
+* [How motion and the laser are driven](https://github.com/ScottW514/forgefirm/blob/master/docs/MOTION.md)
+* [How cooling and airflow work](https://github.com/ScottW514/forgefirm/blob/master/docs/COOLING.md)
 * [How the laser safing works](https://github.com/ScottW514/forgefirm/blob/master/docs/SAFETY.md)
 * [How a release is accepted](https://github.com/ScottW514/forgefirm/blob/master/docs/ACCEPTANCE.md)
 * [Community Support](https://community.openglow.org)
