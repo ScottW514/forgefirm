@@ -1,8 +1,47 @@
 """camera.* - the lid camera pipeline through forgectrl."""
 from ..catalog import test
 
-_CAM_COVERS = [("forgectrl", "src/cam.*"), ("forgectrl", "src/debayer.*"), ("forgectrl", "src/vpu_jpeg.*"),
+_CAM_COVERS = [("forgectrl", "src/cam.*"), ("forgectrl", "src/camhealth.*"),
+               ("forgectrl", "src/debayer.*"), ("forgectrl", "src/vpu_jpeg.*"),
+               ("forgectrl", "src/main.c"),
                ("python3-gfhardware", "gfhardware/src/**"), ("python3-gfhardware", "gfhardware/cam*")]
+
+# The privacy gate spans the camera path and the lid read it depends on,
+# in both processes that can reach a sensor.
+_PRIVACY_COVERS = _CAM_COVERS + [("forgectrl", "src/status.*"),
+                                 ("python3-gfhardware", "gfhardware/switches.py"),
+                                 ("forgefirm-app", "forgefirm-app/ffmachine.py")]
+
+# The sensors the machine ships with, and the geometry each one implies.
+# A machine reports exactly one of these; anything else means the sensor
+# bound to a driver the capture path has no profile for.
+_SENSOR_GEOMETRY = {
+    "OV5648": (2592, 1944),
+    "OV8856": (3264, 2448),
+}
+
+
+def _jpeg_size(data):
+    """(width, height) from a JPEG's first SOFn marker, or None."""
+    i = 2
+    n = len(data)
+    while i + 3 < n:
+        if data[i] != 0xFF:
+            i += 1
+            continue
+        marker = data[i + 1]
+        if marker in (0xD8, 0xD9) or 0xD0 <= marker <= 0xD7:
+            i += 2
+            continue
+        seglen = (data[i + 2] << 8) | data[i + 3]
+        # SOFn, excluding the non-frame markers in the same range
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            if i + 9 > n:
+                return None
+            return ((data[i + 7] << 8) | data[i + 8],
+                    (data[i + 5] << 8) | data[i + 6])
+        i += 2 + seglen
+    return None
 
 
 @test("camera.snapshot", title="Lid camera snapshot and stream", subsystem="camera",
@@ -50,3 +89,206 @@ def snapshot(ctx):
     ctx.log("cam status after: %s", body)
     ctx.confirm("Open the control panel (port 8080), Status tab: does the lid snapshot show the bed "
                 "(not black, not frozen, roughly the right orientation)?")
+
+
+@test("camera.sensor-profile", title="Camera geometry follows the fitted sensor", subsystem="camera",
+      kind="auto", est_min=1,
+      covers=_CAM_COVERS, requires=["forgectrl.panel-serves"],
+      description="/cam/status names the sensor that bound (OV5648 on a 5 MP machine, OV8856 on an "
+                  "8 MP 'HD' one) and reports the geometry that sensor implies, and the JPEGs it "
+                  "actually returns are that size. A machine that reports 'unknown', or whose frames "
+                  "do not match what it advertises, is running the wrong capture profile.")
+def sensor_profile(ctx):
+    fc = ctx.forgectrl
+    ev = ctx.evidence
+
+    st, body = fc.get("/cam/status")
+    ctx.check(st == 200 and isinstance(body, dict), "GET /cam/status -> %s", st)
+    sensor = body.get("sensor")
+    ev["sensor"] = sensor
+    ctx.log("sensor: %s", sensor)
+    ctx.check(sensor in _SENSOR_GEOMETRY,
+              "sensor %r is not one this build has a capture profile for", sensor)
+
+    want_w, want_h = _SENSOR_GEOMETRY[sensor]
+    snap = body.get("snapshot") or {}
+    stream = body.get("stream") or {}
+    ev["geometry"] = {"snapshot": snap, "stream": stream}
+    ctx.log("advertised: snapshot %sx%s, stream %sx%s",
+            snap.get("width"), snap.get("height"), stream.get("width"), stream.get("height"))
+    ctx.check(snap.get("width") == want_w and snap.get("height") == want_h,
+              "%s should advertise %dx%d snapshots, got %sx%s",
+              sensor, want_w, want_h, snap.get("width"), snap.get("height"))
+    ctx.check(stream.get("width") == want_w // 2 and stream.get("height") == want_h // 2,
+              "%s should advertise %dx%d stream frames, got %sx%s",
+              sensor, want_w // 2, want_h // 2, stream.get("width"), stream.get("height"))
+
+    # What it advertises is what it delivers.
+    for res, (w, h) in (("full", (want_w, want_h)), ("half", (want_w // 2, want_h // 2))):
+        st, data = fc.get("/cam/snapshot", params={"cam": "lid", "res": res}, raw=True)
+        ctx.check(st == 200 and data and data[:2] == b"\xff\xd8",
+                  "%s snapshot -> %s", res, st)
+        got = _jpeg_size(data)
+        ev["jpeg_%s" % res] = got
+        ctx.log("%s snapshot: %s (%d bytes)", res, got, len(data))
+        ctx.check(got == (w, h), "%s snapshot is %s, not %dx%d", res, got, w, h)
+
+
+@test("camera.frame-health", title="Capture delivers whole frames", subsystem="camera",
+      kind="auto", est_min=1,
+      covers=_CAM_COVERS, requires=["forgectrl.panel-serves"],
+      description="The capture queue flags a frame errored when it is short, torn, or arrived "
+                  "after the CSI-2 receiver lost sync; forgectrl drops those rather than "
+                  "demosaicing them, and restarts the stream if they persist. A healthy machine "
+                  "captures a burst with none of them. A nonzero corrupt count here is a real "
+                  "signal - a marginal camera ribbon, a mistimed D-PHY - even though the frames "
+                  "themselves never reach a client.")
+def frame_health(ctx):
+    fc = ctx.forgectrl
+    ev = ctx.evidence
+
+    def health():
+        st, body = fc.get("/cam/status")
+        ctx.check(st == 200 and isinstance(body, dict), "GET /cam/status -> %s", st)
+        h = body.get("health")
+        ctx.check(isinstance(h, dict), "/cam/status carries no health block: %s", body)
+        return h
+
+    before = health()
+    ev["health_before"] = before
+    ctx.log("before: %s", before)
+
+    # A burst, so the count covers a run of frames rather than a single grab.
+    for _ in range(3):
+        st, data = fc.get("/cam/snapshot", params={"cam": "lid", "res": "half"}, raw=True)
+        ctx.check(st == 200 and data and data[:2] == b"\xff\xd8", "snapshot -> %s", st)
+
+    after = health()
+    ev["health_after"] = after
+    ctx.log("after: %s", after)
+
+    captured = (after.get("captured") or 0) - (before.get("captured") or 0)
+    corrupt = (after.get("corrupt") or 0) - (before.get("corrupt") or 0)
+    restarts = (after.get("restarts") or 0) - (before.get("restarts") or 0)
+    ev["captured"] = captured
+    ev["corrupt"] = corrupt
+    ev["restarts"] = restarts
+    ctx.log("captured %d frames, %d corrupt, %d stream restarts", captured, corrupt, restarts)
+
+    ctx.check(captured > 0, "no frames were dequeued during three snapshots")
+    ctx.check(corrupt == 0, "%d of %d captured frames came back errored", corrupt, captured)
+    ctx.check(restarts == 0, "the capture stream was restarted %d time(s)", restarts)
+
+
+@test("camera.lid-privacy", title="Cameras capture only with the lid closed", subsystem="camera",
+      kind="operator", est_min=3,
+      covers=_PRIVACY_COVERS, requires=["forgectrl.panel-serves"],
+      steps=["You will be asked to open the lid, then close it again.",
+             "Nothing moves and the laser is not involved."],
+      description="The privacy gate: with the lid open neither camera captures. A running stream "
+                  "stops within a frame or so of the lid opening, /cam/status reports capture as "
+                  "not allowed, and both the snapshot and the stream are refused with 409 and a "
+                  "reason naming the lid. Closing the lid restores all of it. This is what stops "
+                  "the machine - and in cloud mode the Glowforge service - from imaging the room "
+                  "through an open lid.")
+def lid_privacy(ctx):
+    import urllib.error
+    import urllib.request
+
+    fc = ctx.forgectrl
+    ev = ctx.evidence
+
+    def status():
+        st, body = fc.get("/cam/status")
+        ctx.check(st == 200 and isinstance(body, dict), "GET /cam/status -> %s", st)
+        return body
+
+    def snapshot():
+        """(status, body) for a half-res lid snapshot."""
+        st, data = fc.get("/cam/snapshot", params={"cam": "lid", "res": "half"}, raw=True)
+        return st, data or b""
+
+    # --- lid closed: the baseline the rest is measured against ----------
+    ctx.instruct("Close the lid, then click Done.")
+    body = status()
+    ctx.check(body.get("capture_allowed") is True,
+              "with the lid closed /cam/status should allow capture, got %r",
+              body.get("capture_allowed"))
+    st, data = snapshot()
+    ctx.check(st == 200 and data[:2] == b"\xff\xd8",
+              "snapshot with the lid closed -> %s", st)
+    ev["closed_snapshot_bytes"] = len(data)
+    ctx.log("lid closed: snapshot %d bytes", len(data))
+
+    # --- a live stream must die when the lid opens ----------------------
+    req = urllib.request.Request(fc.base + "/cam/stream?cam=lid",
+                                 headers={"Host": fc.host_header()})
+    stream = urllib.request.urlopen(req, timeout=15)
+    try:
+        first = stream.read(4096)
+        ctx.check(b"\xff\xd8" in first, "the stream did not start before the lid test")
+        ctx.instruct("The stream is running. Open the lid now, then click Done.")
+        # The engine tears the pipeline down on the next frame and the
+        # stream ends. Draining now returns whatever was buffered before
+        # the lid opened and then EOF; what must not happen is frames
+        # continuing to arrive indefinitely.
+        drained, ended = 0, False
+        try:
+            while True:
+                chunk = stream.read(65536)
+                if not chunk:
+                    ended = True
+                    break
+                drained += len(chunk)
+                ctx.check(drained < 8 * 1024 * 1024,
+                          "the stream was still delivering after %d bytes with the lid open",
+                          drained)
+        except Exception as e:  # noqa: BLE001 - a reset connection ends it too
+            ended = True
+            ctx.log("stream ended with %s", type(e).__name__)
+        ev["stream_bytes_after_lid_open"] = drained
+        ctx.log("stream ended after %d further buffered bytes", drained)
+        ctx.check(ended, "the stream never ended after the lid opened")
+    finally:
+        stream.close()
+
+    # --- lid open: everything is refused, and says why ------------------
+    body = status()
+    ev["status_lid_open"] = body
+    ctx.check(body.get("capture_allowed") is False,
+              "with the lid open /cam/status should refuse capture, got %r",
+              body.get("capture_allowed"))
+    ctx.check(body.get("stopped_by_lid") is True,
+              "the engine should record that the lid stopped it, got %r",
+              body.get("stopped_by_lid"))
+    ctx.check(body.get("running") is False,
+              "the capture engine should not still be running with the lid open")
+
+    st, data = snapshot()
+    ev["snapshot_lid_open"] = [st, data[:120].decode("utf-8", "replace")]
+    ctx.log("lid open: snapshot -> %s %s", st, data[:120])
+    ctx.check(st == 409, "snapshot with the lid open should be refused with 409, got %s", st)
+    ctx.check(b"lid" in data.lower(), "the refusal should name the lid: %r", data[:120])
+    ctx.check(data[:2] != b"\xff\xd8", "a JPEG was returned with the lid open")
+
+    st, data = fc.get("/cam/snapshot", params={"cam": "head", "res": "half"}, raw=True)
+    ctx.log("lid open: head snapshot -> %s", st)
+    ctx.check(st == 409, "the head camera should be refused too, got %s", st)
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            ctx.fail("the stream opened with the lid open (%s)", r.status)
+    except urllib.error.HTTPError as e:
+        ctx.log("lid open: stream -> %s", e.code)
+        ctx.check(e.code == 409, "the stream should be refused with 409, got %s", e.code)
+
+    # --- closing the lid restores it -----------------------------------
+    ctx.instruct("Close the lid again, then click Done.")
+    body = status()
+    ctx.check(body.get("capture_allowed") is True,
+              "closing the lid should allow capture again, got %r",
+              body.get("capture_allowed"))
+    st, data = snapshot()
+    ctx.check(st == 200 and data[:2] == b"\xff\xd8",
+              "snapshot after closing the lid -> %s", st)
+    ctx.log("lid closed again: snapshot %d bytes", len(data))

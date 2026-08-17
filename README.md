@@ -11,6 +11,7 @@ panel, and a standard Grbl interface.
 * [Connecting LightBurn](https://github.com/ScottW514/forgefirm/blob/master/docs/LIGHTBURN.md)
 * [How motion and the laser are driven](https://github.com/ScottW514/forgefirm/blob/master/docs/MOTION.md)
 * [How cooling and airflow work](https://github.com/ScottW514/forgefirm/blob/master/docs/COOLING.md)
+* [The cameras and the video stream](https://github.com/ScottW514/forgefirm/blob/master/docs/VIDEO.md)
 * [How the laser safing works](https://github.com/ScottW514/forgefirm/blob/master/docs/SAFETY.md)
 * [How a release is accepted](https://github.com/ScottW514/forgefirm/blob/master/docs/ACCEPTANCE.md)
 * [Community Support](https://community.openglow.org)
@@ -41,13 +42,20 @@ machine is idle:**
   camera homing cycle through the Glowforge service (a Glowforge account and a
   live service session are required for `$H`; everything else in GRBL mode
   runs without them), and the machine records where it is.
+* **Cameras only capture with the lid closed.** The lid camera faces the room
+  once the lid is raised, so ForgeFIRM refuses every capture — live view,
+  snapshot, and anything the Glowforge service asks for in cloud mode — until
+  the enclosure is shut, and stops a running stream the moment the lid opens.
+  See [the cameras and the video stream](https://github.com/ScottW514/forgefirm/blob/master/docs/VIDEO.md).
 
 ## Hardware
 
 The control board is common to Glowforge Basic, Plus, and Pro. The 5 MP
-(OV5648) camera modules are fully supported; the 8 MP (OV8856) modules found in
-"HD" units bind but do not capture yet — see the camera note in
-[kas/README.md](kas/README.md).
+(OV5648) camera modules are fully supported and hardware-validated. The 8 MP
+(OV8856) modules found in "HD" units have a complete capture path — the kernel
+patches, device tree and sensor-aware capture profile they need are all in the
+build — but it has never run on an 8 MP machine, so treat it as untested; see
+the camera note in [kas/README.md](kas/README.md).
 
 ## Safety
 

@@ -16,6 +16,7 @@ Read together with:
 | `forgectrl/docs/SERVICES.md` | the machine-services contract: switch map, hardware ownership, cooling channels, mode supervision, pulse-device ownership, logging |
 | `docs/SAFETY.md` | the hardware safing chain, decoded |
 | `docs/ACCEPTANCE.md` | the release acceptance contract |
+| `docs/VIDEO.md` | the cameras as users meet them: endpoints, delivered geometry, and what the sensors can do that ForgeFIRM does not send |
 | `docs/LIGHTBURN.md`, `docs/UPDATE-SYSTEM.md`, `INSTALL.md`, `BUILD.md`, `kas/README.md` | sender setup, A/B update system, install, build |
 | `python3-gfhardware/forgefirm-app/docs/CLOUD.md` | cloud mode, including its own open items |
 
@@ -375,13 +376,17 @@ One ulfius daemon serves it all:
   `/run/forgefirm/cooling.state` file.
 - `POST /diag/flow-verify|flow-calibrate|abort`, `GET /diag/status` — the
   diagnostics runner (below).
-- `GET /cam/stream?cam=lid|head` — multipart MJPEG at 1296×972 (2×2
-  Bayer-superpixel demosaic, JPEG q75; `FORGECTRL_STREAM_Q` overrides,
-  `FORGECTRL_STREAM_FPS` caps the frame rate, unset/0 = sensor max).
+- `GET /cam/stream?cam=lid|head` — multipart MJPEG at half the sensor's frame
+  in each axis, 1296×972 on a 5 MP machine (2×2 Bayer-superpixel demosaic,
+  JPEG q75; `FORGECTRL_STREAM_Q` overrides, `FORGECTRL_STREAM_FPS` caps the
+  frame rate, unset/0 = sensor max).
 - `GET /cam/snapshot?cam=lid|head&res=full|half&q=1..100` — single JPEG,
-  default full 2592×1944 (own MIT bilinear demosaic).
+  default the sensor's full frame, 2592×1944 on a 5 MP machine (own MIT
+  bilinear demosaic).
 - `GET /cam/status` — JSON (running/cam/clients/frames/fps/fps_cap/encoder/
-  buffers).
+  buffers/sensor, the stream + snapshot geometry the fitted sensor implies,
+  and the privacy gate's `capture_allowed` / `stopped_by_lid`). Stream and
+  snapshot answer 409 while the lid is open.
 - `GET /slots`, `POST /boot`, `POST /update/check|download|apply|upload`,
   `GET /update/status`, `POST /restore/factory`, `POST /system/reboot` — the
   A/B update manager (`docs/UPDATE-SYSTEM.md`). Upload is auth + idle + job
@@ -401,7 +406,23 @@ red while unreferenced, normal once anchored.
 **Camera engine.** One worker owns the V4L2 node persistently (media-ctl /
 v4l2-ctl sequences identical to `gfhardware/cam.py`, factory exposure/gain/WB,
 software hflip in the demosaic); it starts on demand and tears down fully after
-10 s idle so gfhardware one-shot grabs still work. The cameras share the
+10 s idle so gfhardware one-shot grabs still work. **Privacy gate: neither
+camera captures unless the lid is closed** — `machine_lid_closed()` (EV_SW
+bit 3, fail-closed) is checked at every entry point and once per frame, so an
+open lid refuses stream and snapshot with HTTP 409 and a lid opened mid-capture
+tears the pipeline down; `gfhardware.cam.capture()` enforces the same rule for
+the cloud client's direct-V4L2 fallback and raises `LidOpen`. No setting
+disables it, and the factory's lid-open focus hunt now fails as a result
+(`docs/VIDEO.md` §2, `forgectrl/docs/SERVICES.md`). Geometry, Bayer depth and
+the manual control set come from a **sensor profile** chosen by whichever
+driver bound on that camera's I2C bus, so one image serves both the 5 MP
+OV5648 (2592×1944) and the 8 MP OV8856 (3264×2448) — both 8-bit BGGR, so the
+capture word and the demosaic are the same and only the geometry changes;
+`/cam/status` reports the model and the frame sizes that follow from it.
+A frame the capture queue flags errored is dropped rather than demosaiced,
+four in a row cycle the queue, and three cycles with no usable frame stop the
+engine; `/cam/status` carries the running `health` counts (`src/camhealth.c`,
+host test `camhealth_test`). The cameras share the
 hardware video-mux and the NEWEST request wins it: **streams preempt** (the
 current stream's clients end cleanly), **snapshots borrow** (pause, switch,
 grab one frame, switch back — a ~1–2 s freeze). The per-camera lamp
@@ -818,10 +839,19 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
    `gfcloud_home_x/y` against a jog to a known reference if the factory corner
    offset matters.
 6. **Cameras.** Lens calibration / bed alignment (the fisheye needs LightBurn's
-   camera calibration pass); capture support for the 8 MP (OV8856) modules,
-   which bind but do not capture (the clock/DT detail is in `kas/README.md`);
-   the deferred emulator homing-image smoke, now that the emulator can be
-   pointed at live snapshots.
+   camera calibration pass); **first light on an 8 MP (OV8856) machine** — the
+   whole path is written but nothing has run on one, and only that hardware can
+   answer whether the 2-lane RAW8 full-resolution mode locks the D-PHY at
+   720 Mbps/lane and what exposure/gain the sensor wants; the details, the
+   reachable-mode reasoning and the factory fallback configuration are in
+   `kas/README.md` §2. Also unapplied: the factory's **per-unit lens-shading
+   calibration**, an OmniVision LENC register file the factory pushes into the
+   sensor at every stream start (`load_cam_regs.sh` → a `regs` sysfs attribute
+   its driver adds; OV8858 `0x58xx` addresses remapped to the OV8856's
+   `0x59xx`). The files are per-machine data, not in the factory rootfs — look
+   for them under `/data` on a machine booted into the factory slot before
+   deciding whether to reimplement the mechanism. Finally the deferred emulator
+   homing-image smoke, now that the emulator can be pointed at live snapshots.
 7. **Cloud mode.** The remaining gaps are tracked in
    `python3-gfhardware/forgefirm-app/docs/CLOUD.md` "Outstanding items":
    streaming-during-run (would lift the ring-size cap on job length),

@@ -188,13 +188,50 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
      fixed oscillator (matching the factory DTB); avdd/dovdd/dvdd rails are in
      the DT. Both cameras stream live through forgectrl (MJPEG at 15 fps with
      VPU JPEG encode, full-resolution snapshots, mux arbitration).
-     **HD-unit caveat:** the DT lists both `ovti,ov5648` (5 MP) and
-     `ovti,ov8856` (8 MP) at 0x36 so one image covers both, and the driver
-     matching the chip ID wins — but mainline `ov8856` expects a 19.2 MHz
-     xvclk and only warns at 24 MHz, and the capture path is written to
-     ov5648's SBGGR8 2592×1944 format set. 8 MP "HD" modules therefore bind
-     but do not capture; adding 24 MHz PLL modes plus a sensor-aware capture
-     path is the open work.
+     **HD units (8 MP OV8856) — code complete, UNTESTED.** The DT lists both
+     `ovti,ov5648` (5 MP) and `ovti,ov8856` (8 MP) at 0x36 so one image covers
+     both, and the driver matching the chip ID wins. Everything the OV8856
+     needs is in the build: patch 0011 gives it the `get_mbus_config` the
+     IPU-CSI hard-fails without (the same gap 0006 closes for ov5648), patch
+     0012 retunes both PLL multipliers for the board's 24 MHz xvclk (mainline's
+     tables are written for 19.2 MHz, which would run the link 25 % above the
+     frequency the driver publishes), patch 0013 adds the 2-lane RAW8 modes
+     (below), the endpoint's `link-frequencies` list carries the driver's whole
+     2-lane menu (it rejects the endpoint outright if any entry is missing —
+     the old list omitted 720 MHz, so probe would have failed), and forgectrl
+     and gfhardware pick geometry and the sensor's control set from whichever
+     driver bound.
+
+     The capture mode is the **full 3264×2448**, reached in RAW8. The
+     sensor's stock RAW10 full-resolution 2-lane mode asks for 1.44 Gbps/lane
+     and the i.MX6 CSI-2 D-PHY stops at 1 Gbps (`hsfreq_map` in
+     `imx6-mipi-csi2.c` ends at 1000 Mbps and `max_mbps_to_hsfreqrange_sel()`
+     returns `-EINVAL` above it), so `imx6-mipi-csi2` refuses to program it —
+     but 8-bit samples carry the same frame at half the rate, which puts it on
+     the 360 MHz link the binned modes already use, at 180 Mpx/s and 15 fps.
+     Patch 0013 builds those modes from mainline's own 4-lane 3264×2448 and
+     1632×1224 register lists plus a per-mode delta list: `0x3018` for two
+     lanes, `0x3031` for 8-bit readout, and double the HTS because half the
+     lanes carry half a line in the same time. It also makes the sample depth a
+     mode property, so pixel rate, blanking and exposure ranges follow the mode
+     instead of a fixed 10. Side effect worth having: the OV8856 path becomes
+     byte-identical in shape to the OV5648's (8-bit BGGR, one byte per sample),
+     and 3264 is a multiple of 32 so the NEON superpixel converter applies,
+     which 1640 did not allow.
+
+     The values are the factory firmware's: its own OV8856 driver is RAW8-only
+     and ships exactly these two resolutions over two lanes with the same
+     `0x3018`/`0x3031` and the same HTS/VTS pairs. It reaches them through a
+     different PLL divider chain (`0x0302=0x1e`, `0x0303=0x03`, `0x030f=0x07`,
+     `0x0312=0x05`, `0x4837=0x58`) that halves the link again to 180 MHz and
+     the internal SCLK with it — a self-consistent alternative, recorded in the
+     patch header as the configuration to fall back to if the D-PHY will not
+     lock at 720 Mbps/lane on real hardware.
+
+     Open, and only answerable on an 8 MP machine: whether it streams at all at
+     720 Mbps/lane, and exposure/gain/white-balance commissioning — the OV8856
+     driver publishes no red/blue balance controls, so white balance is
+     uncorrected.
 3. **u-boot** — **DONE.** The `glowforge` u-boot is
    a standalone `u-boot_2020.01.bb` (Scarthgap's poky has no u-boot 2020.01
    base recipe to extend). It reuses poky's
