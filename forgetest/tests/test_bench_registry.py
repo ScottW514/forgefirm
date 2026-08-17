@@ -51,6 +51,20 @@ class RegistryTests(unittest.TestCase):
             self.assertTrue(ok, "%s: %s" % (t["id"], err))
             self.assertEqual(argv[1], os.path.join(BENCH, t["script"]))
 
+    def test_flagged_args_build_option_pairs(self):
+        tool = next(t for t in bench_mod.TOOLS if t["id"] == "resume-dark-lead")
+        ok, argv, err = self.bench.command(tool, {"run": "live", "feed": 900})
+        self.assertTrue(ok, err)
+        self.assertIn("--run", argv)
+        self.assertEqual(argv[argv.index("--run") + 1], "live")
+        self.assertEqual(argv[argv.index("--feed") + 1], "900.0")
+        # an empty optional with an empty default is left off entirely
+        self.assertNotIn("--auto", argv)
+        # a choice outside the list is refused before anything runs
+        ok, _argv, err = self.bench.command(tool, {"run": "sideways"})
+        self.assertFalse(ok)
+        self.assertIn("run must be one of", err)
+
     def test_unported_tools_are_host_only(self):
         # what stays unported is what cannot run on the machine at all
         for t in bench_mod.TOOLS:

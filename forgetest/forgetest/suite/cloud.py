@@ -702,3 +702,162 @@ def pause_resume(ctx):
                 "resume on the second, and did the job finish and the app show it complete?")
     settle_cloud(ctx, offset)
     ctx.log("PASS: button pause/resume mid-print, job completed and parked")
+
+
+@test("cloud.interlock-abort-park", title="The interlock loop aborts a cloud print, and the park ignores "
+                                          "the lid",
+      subsystem="cloud", kind="live", est_min=8,
+      covers=_CLOUD_COVERS, requires=["cloud.lid-abort"],
+      steps=[CLOUD_STEP, "The app open in a browser; scrap on the bed and a small engrave/score job ready.",
+             "Be able to open the remote-interlock loop: unplug the Pro's interlock plug, or pull the "
+             "jumper at J8 on a Basic/Plus. Restore it at the end.",
+             "Print from the app and press the button when it lights; open the interlock a few seconds "
+             "into the run, then open the lid while the head is parking."],
+      description="In cloud mode the remote-interlock loop is the lid's equal, and the park is immune to "
+                  "both: opening the loop mid-print stops the run and cancels the job, the head returns "
+                  "to the job start, and opening the lid while that park is running does not interrupt "
+                  "it - the print still ends ':cancelled' with the park reported complete.")
+def interlock_abort_park(ctx):
+    ev = ctx.evidence
+    sw = (ctx.forgectrl.status().get("switches") or {})
+    ctx.check(sw.get("interlock_ok"), "the interlock loop already reads open - close it before this test")
+    offset = enter_cloud(ctx)
+    ctx.instruct(APP_PRINT_CUE)
+    got = wait_print_running(ctx, offset, 300)
+    ctx.check(got, "the print never reached its run within 300 s (not started, or the button not pressed)")
+    ctx.instruct("The head is moving. Open the INTERLOCK loop now (unplug it / pull the jumper), then "
+                 "click Done.")
+    sw = (ctx.forgectrl.status().get("switches") or {})
+    ev["interlock_ok_after_pull"] = sw.get("interlock_ok")
+    ctx.check(sw.get("interlock_ok") is False,
+              "the interlock still reads closed - the loop was not opened (switches: %s)", sw)
+    stop_line = "interlock opened mid-run; stopping motion"
+    got = wait_log(ctx, offset, [stop_line, "start return home"], 90)
+    ctx.check(got[stop_line], "the interlock open did not stop the run")
+    ctx.check(got["start return home"], "the abort did not start the return home")
+    # The lid goes up while the park is running: it must change nothing.
+    ctx.instruct("The head is on its way back. Open the LID now as well, then click Done - leave both "
+                 "open until the head has stopped.")
+    done = wait_log(ctx, offset, ["return home complete"], 90)
+    fin = wait_action_finished(ctx, offset, "print", 60)
+    ev["log"] = {stop_line: message(got[stop_line]),
+                 "start return home": message(got["start return home"]),
+                 "return home complete": message(done["return home complete"]),
+                 "print finished": message(fin)}
+    for k, v in ev["log"].items():
+        ctx.log("  %s: %s", k, "seen" if v else "MISSING")
+    ctx.check(done["return home complete"],
+              "the park did not run to completion with the lid opened during it")
+    sw = (ctx.forgectrl.status().get("switches") or {})
+    ev["switches_at_return"] = {"lid": sw.get("lid"), "interlock_ok": sw.get("interlock_ok")}
+    ctx.check(sw.get("lid") is False,
+              "the lid was not open at the end of the park - the park's immunity was not exercised")
+    ctx.check(ctx.forgectrl.wait_idle(15, abort=ctx.aborted), "machine not idle after the park")
+    kpos = read_position()
+    ev["kernel_counters_after_park"] = kpos
+    ctx.log("kernel counters after the park: %s", kpos)
+    ctx.check(kpos is not None and abs(kpos[0]) <= 3 and abs(kpos[1]) <= 3,
+              "the head did not come back to the job start (kernel counters %s)", kpos)
+    ctx.check(fin and CANCELLED in fin, "the print did not end ':cancelled': %s",
+              message(fin) or "no finish line")
+    st, cs = ctx.forgectrl.get("/cool/status")
+    ev["armed_after"] = cs.get("armed") if isinstance(cs, dict) else None
+    ev["latch_locked"] = latch_locked()
+    ctx.check(not ev["armed_after"], "armed window still open after the abort")
+    ctx.check(ev["latch_locked"], "kernel latch not locked after the abort")
+    ctx.confirm("Did the head stop when the interlock opened and go back to the corner without the open "
+                "lid interrupting it, and does the app show the print as cancelled?")
+    ctx.instruct("Close the lid and restore the interlock loop (plug/jumper back in), then click Done.")
+    sw = (ctx.forgectrl.status().get("switches") or {})
+    ev["restored"] = {"lid": sw.get("lid"), "interlock_ok": sw.get("interlock_ok")}
+    ctx.check(sw.get("interlock_ok"), "the interlock loop is still open - restore it before continuing")
+    settle_cloud(ctx, offset)
+    ctx.log("PASS: interlock open -> stop, cancelled, park completed through an open lid")
+
+
+@test("cloud.pause-cancel-paths", title="A paused cloud print is cancelled by the lid, and a running one "
+                                        "by the app",
+      subsystem="cloud", kind="live", est_min=12,
+      covers=_CLOUD_COVERS, requires=["cloud.pause-resume", "cloud.lid-abort"],
+      steps=[CLOUD_STEP, "The app open in a browser; scrap on the bed and a small engrave/score job "
+                         "ready - the test runs TWO prints.",
+             "Print 1: press the button to start, press it again a few seconds in (pause), then open "
+             "the lid.",
+             "Print 2: press the button to start, then cancel the print from the app while it runs."],
+      description="The two ways a print ends other than finishing, each from the state the factory ends "
+                  "it in: a job paused on the button is cancelled by the lid - there is no resume past a "
+                  "lid open - and a running job is cancelled from the app. Both take the same tail: the "
+                  "motion stops, the head parks back at the job start, the latch relocks and the armed "
+                  "window closes, and the print ends ':cancelled'.")
+def pause_cancel_paths(ctx):
+    ev = ctx.evidence
+    offset = enter_cloud(ctx)
+
+    # -- print 1: paused on the button, then the lid ------------------------
+    ctx.instruct(APP_PRINT_CUE)
+    got = wait_print_running(ctx, offset, 300)
+    ctx.check(got, "print 1 never reached its run within 300 s (not started, or the button not pressed)")
+    ctx.instruct("The head is moving. Press the button once NOW (pause), watch it stop and back up a "
+                 "few millimeters, then click Done.")
+    got = wait_log(ctx, offset, ["button pressed mid-run; pausing", "paused at"], 90)
+    ev["paused"] = {k: bool(v) for k, v in got.items()}
+    ctx.check(got["button pressed mid-run; pausing"], "the press did not pause print 1")
+    ctx.check(got["paused at"], "the pause did not settle (no 'paused at')")
+    ctx.instruct("The print is paused. Open the lid NOW, then click Done - leave it open until the head "
+                 "has returned to the corner.")
+    lid_stop = "lid opened mid-run; stopping motion"
+    got = wait_log(ctx, offset, [lid_stop, "start return home", "return home complete"], 120)
+    fin1 = wait_action_finished(ctx, offset, "print", 60)
+    ev["lid_from_pause"] = {k: message(v) for k, v in got.items()}
+    ev["lid_from_pause"]["print finished"] = message(fin1)
+    for k, v in ev["lid_from_pause"].items():
+        ctx.log("  [print 1] %s: %s", k, "seen" if v else "MISSING")
+    ctx.check(got[lid_stop], "the lid did not end the paused print")
+    ctx.check(got["return home complete"], "the paused print did not park to completion")
+    ctx.check(fin1 and CANCELLED in fin1, "print 1 did not end ':cancelled': %s",
+              message(fin1) or "no finish line")
+    ctx.check(ctx.forgectrl.wait_idle(15, abort=ctx.aborted), "machine not idle after print 1's park")
+    kpos = read_position()
+    ev["counters_after_print1"] = kpos
+    ctx.check(kpos is not None and abs(kpos[0]) <= 3 and abs(kpos[1]) <= 3,
+              "print 1 did not come back to the job start (kernel counters %s)", kpos)
+    st, cs = ctx.forgectrl.get("/cool/status")
+    ev["armed_after_print1"] = cs.get("armed") if isinstance(cs, dict) else None
+    ev["latch_locked_after_print1"] = latch_locked()
+    ctx.check(not ev["armed_after_print1"], "armed window still open after the paused print was cancelled")
+    ctx.check(ev["latch_locked_after_print1"],
+              "kernel latch not locked after the paused print was cancelled")
+    ctx.instruct("Close the lid, then click Done.")
+    settle_cloud(ctx, offset)
+
+    # -- print 2: cancelled from the app ------------------------------------
+    offset = log_size(GFCLOUD_LOG)
+    ctx.instruct(APP_PRINT_CUE)
+    got = wait_print_running(ctx, offset, 300)
+    ctx.check(got, "print 2 never reached its run within 300 s (not started, or the button not pressed)")
+    ctx.instruct("The head is moving. Cancel the print from the app now, then click Done.")
+    svc_stop = "action cancelled mid-run; stopping motion"
+    got = wait_log(ctx, offset, [svc_stop, "start return home", "return home complete"], 120)
+    fin2 = wait_action_finished(ctx, offset, "print", 60)
+    ev["service_cancel"] = {k: message(v) for k, v in got.items()}
+    ev["service_cancel"]["print finished"] = message(fin2)
+    for k, v in ev["service_cancel"].items():
+        ctx.log("  [print 2] %s: %s", k, "seen" if v else "MISSING")
+    ctx.check(got[svc_stop], "the app's cancel did not stop the run")
+    ctx.check(got["return home complete"], "the cancelled print did not park to completion")
+    ctx.check(fin2 and CANCELLED in fin2, "print 2 did not end ':cancelled': %s",
+              message(fin2) or "no finish line")
+    ctx.check(ctx.forgectrl.wait_idle(15, abort=ctx.aborted), "machine not idle after print 2's park")
+    kpos = read_position()
+    ev["counters_after_print2"] = kpos
+    ctx.check(kpos is not None and abs(kpos[0]) <= 3 and abs(kpos[1]) <= 3,
+              "print 2 did not come back to the job start (kernel counters %s)", kpos)
+    st, cs = ctx.forgectrl.get("/cool/status")
+    ev["armed_after_print2"] = cs.get("armed") if isinstance(cs, dict) else None
+    ev["latch_locked_after_print2"] = latch_locked()
+    ctx.check(not ev["armed_after_print2"], "armed window still open after the app cancel")
+    ctx.check(ev["latch_locked_after_print2"], "kernel latch not locked after the app cancel")
+    ctx.confirm("Did both prints end back at the corner, dark, and does the app show both as cancelled?")
+    settle_cloud(ctx, offset)
+    ctx.log("PASS: a paused print cancelled by the lid and a running print cancelled from the app both "
+            "stopped, parked, relocked and reported ':cancelled'")

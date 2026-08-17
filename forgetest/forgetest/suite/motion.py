@@ -339,9 +339,11 @@ def _liveness_masked_restart(ctx, fc, ev):
       covers=_MOTION_COVERS, requires=["motion.pacing"],
       steps=["Bed clear; the head needs 40 mm of free +X travel."],
       description="A jog-cancel (0x85) stops a jog short of its target and returns to Idle with "
-                  "position preserved; a ^X abort mid-move decelerates under control into Alarm "
-                  "with machine position retained, $X recovers to Idle, and a subsequent jog runs "
-                  "(no driver wedge: the rail never cycled).")
+                  "position preserved; a ^X abort mid-move (what the sender's Stop sends) "
+                  "decelerates under control into Alarm with machine position retained, leaves the "
+                  "head where it stopped - no return-to-start, that is the lid policy's move alone - "
+                  "and $X recovers to Idle with a subsequent jog running (no driver wedge: the rail "
+                  "never cycled).")
 def cancel_abort(ctx):
     ev = ctx.evidence
     with ctx.grbl() as g:
@@ -374,6 +376,19 @@ def cancel_abort(ctx):
         ctx.log("$X -> %s", r)
         st = wait_state(ctx, g, "Idle", 5)
         ctx.check(st is not None, "$X did not recover to Idle")
+        # A sender abort is not a lid cancel: it stops where it stopped and
+        # the head stays there. Only the lid/interlock policy returns to the
+        # job start, and an unasked-for return move would be a surprise to
+        # whoever pressed Stop.
+        text = drain_text(g, 2.0)
+        ev["abort_returned_home"] = "returned to the job start" in text
+        p3 = g.status_report()["MPos"]
+        ev["abort_drift_after_recovery_mm"] = round(abs(p3[0] - p2[0]), 3)
+        ctx.log("after $X: %s (moved %.3f mm since the abort)", p3, ev["abort_drift_after_recovery_mm"])
+        ctx.check(not ev["abort_returned_home"], "a sender abort triggered the return-to-start motion")
+        ctx.check(ev["abort_drift_after_recovery_mm"] <= 0.05,
+                  "the head moved %.3f mm on its own after a sender abort",
+                  ev["abort_drift_after_recovery_mm"])
         # a jog after the abort proves the drivers are alive; return to start
         back = -(p2[0] - start[0])
         r = g.command("$J=G91X%.3fF2400" % back)
@@ -566,14 +581,14 @@ def kernel_xy_mm(ctx):
     return float(pos.get("x", 0.0)), float(pos.get("y", 0.0))
 
 
-def check_kernel_returned(ctx, ev, k0, tol_mm=0.1):
+def check_kernel_returned(ctx, ev, k0, tol_mm=0.1, tag=""):
     """After a return-to-start: the kernel counters must be back where the
     job started too. grbl's own drift can read 0.000 while the head never
     moved (a run the kernel did not take), which is exactly the failure
     that must not pass."""
     k1 = kernel_xy_mm(ctx)
     kdrift = max(abs(k1[0] - k0[0]), abs(k1[1] - k0[1]))
-    ev["kernel_drift_mm"] = round(kdrift, 3)
+    ev[(tag + "_" if tag else "") + "kernel_drift_mm"] = round(kdrift, 3)
     ctx.log("kernel counters: start (%.2f, %.2f) -> now (%.2f, %.2f), drift %.3f mm",
             k0[0], k0[1], k1[0], k1[1], kdrift)
     ctx.check(kdrift <= tol_mm,
@@ -589,6 +604,42 @@ def drain_text(g, seconds):
         text += g.drain()
         time.sleep(0.1)
     return text
+
+
+def expect_cancel_and_return(ctx, g, ev, start, k0, why, tag):
+    """The cancel policy's whole tail, shared by every trigger that ends a
+    job this way (lid or interlock, from Run or from a hold): the reason is
+    reported, the controller resets without an alarm and with the position
+    kept, and the head goes back to where the job started - which the KERNEL
+    counters have to confirm, not grbl's belief about them."""
+    text = drain_text(g, 3.0)
+    msgs = [ln for ln in text.splitlines()
+            if ln.startswith("[MSG:") or "help]" in ln or ln.startswith("ALARM")]
+    ev[tag + "_messages"] = msgs
+    ctx.log("[%s] controller: %s", tag, msgs)
+    cancel_msg = "%s - job cancelled" % why
+    ctx.check(cancel_msg in text, "[%s] the job was not cancelled with %r as the reason", tag, why)
+    ctx.check("help]" in text, "[%s] no reset banner after the cancel (the sender must see the job end)", tag)
+    ctx.check("ALARM" not in text, "[%s] an alarm was raised on the cancel (position should be kept)", tag)
+    t0 = time.time()
+    returned = "returned to the job start" in text
+    while not returned and time.time() - t0 < 30:
+        ctx.checkpoint()
+        text += g.drain()
+        returned = "returned to the job start" in text
+        time.sleep(0.2)
+    ev[tag + "_returned_message"] = returned
+    ctx.check(returned, "[%s] the head did not report returning to the job start within 30 s", tag)
+    st = wait_state(ctx, g, "Idle", 5)
+    ctx.check(st is not None, "[%s] not Idle after the return (state %s)", tag,
+              g.status_report()["state"])
+    drift = max(abs(st["MPos"][i] - start[i]) for i in range(2))
+    ev[tag + "_drift_mm"] = round(drift, 3)
+    ctx.log("[%s] back at the job start: drift %.3f mm", tag, drift)
+    ctx.check(drift <= 0.05, "[%s] head not back at the job start (drift %.3f mm)", tag, drift)
+    machine_idle(ctx, 10)
+    check_kernel_returned(ctx, ev, k0, tag=tag)
+    return drift
 
 
 @test("motion.button-hold-resume", title="The button pauses and resumes a job",
@@ -635,16 +686,19 @@ def button_hold_resume(ctx):
     ctx.log("PASS: button press held the job (%s), the next press resumed it, target reached", ev["held_state"])
 
 
-@test("motion.lid-cancel-home", title="Lid open during a job cancels it and returns to the job start",
-      subsystem="motion", kind="operator", est_min=3,
+@test("motion.lid-cancel-home", title="Lid open during a job - running or paused - cancels it and returns "
+                                     "to the job start",
+      subsystem="motion", kind="operator", est_min=5,
       covers=_LID_COVERS, requires=["motion.pacing", "motion.cancel-abort"],
       steps=["Bed clear; the head needs 40 mm of free +X travel. No laser is involved.",
-             "Open the lid when told, and leave it open until the head has come back."],
+             "Open the lid when told, and leave it open until the head has come back (twice: once "
+             "with the job running, once with it paused on the button)."],
       description="A travel job is running when the lid opens: the job parks (planned deceleration), "
                   "the reason is reported, the controller resets (position kept, no alarm - the "
                   "sender's job is over), and the head returns on its own to where the job started "
-                  "with the lid still open; the controller ends Idle at the start position. With "
-                  "lid_policy=cancel (the default).")
+                  "with the lid still open; the controller ends Idle at the start position. The same "
+                  "job paused on the button takes the same path - a lid open from the hold cancels "
+                  "and returns, it never resumes. With lid_policy=cancel (the default).")
 def lid_cancel_home(ctx):
     ev = ctx.evidence
     policy = (ctx.forgectrl.settings() or {}).get("lid_policy") or "cancel"
@@ -662,35 +716,7 @@ def lid_cancel_home(ctx):
         ctx.sleep(0.5)
         ctx.check(g.status_report()["state"].startswith("Run"), "the move did not start")
         ctx.instruct("The head is moving. Open the lid NOW and leave it open, then click Done.")
-        text = drain_text(g, 3.0)
-        ev["messages"] = [ln for ln in text.splitlines() if ln.startswith("[MSG:") or "help]" in ln
-                          or ln.startswith("ALARM")]
-        ctx.log("controller: %s", ev["messages"])
-        ctx.check("lid opened - job cancelled" in text, "the lid open was not reported as cancelling the job")
-        ctx.check("help]" in text, "no reset banner after the cancel (the sender must see the job end)")
-        ctx.check("ALARM" not in text, "an alarm was raised on the cancel (position should be kept)")
-        # the head returns on its own; wait for it to report back
-        t0 = time.time()
-        returned = False
-        while time.time() - t0 < 30:
-            ctx.checkpoint()
-            text += g.drain()
-            if "returned to the job start" in text:
-                returned = True
-                break
-            time.sleep(0.2)
-        ev["returned_message"] = returned
-        ctx.check(returned, "the head did not report returning to the job start within 30 s")
-        st = wait_state(ctx, g, "Idle", 5)
-        ctx.check(st is not None, "not Idle after the return (state %s)", g.status_report()["state"])
-        drift = abs(st["MPos"][0] - start[0])
-        ev["drift_mm"] = round(drift, 3)
-        ctx.log("back at the job start: drift %.3f mm (lid still open)", drift)
-        ctx.check(drift <= 0.05, "head not back at the job start (drift %.3f mm)", drift)
-        # what the MACHINE did: the kernel counters must agree (the return
-        # move must have been played, not only planned)
-        machine_idle(ctx, 10)
-        check_kernel_returned(ctx, ev, k0)
+        drift = expect_cancel_and_return(ctx, g, ev, start, k0, "lid opened", "running")
         sw = (ctx.forgectrl.status().get("switches") or {})
         ev["lid_at_return"] = sw.get("lid")
         ctx.instruct("Close the lid, then click Done.")
@@ -701,7 +727,164 @@ def lid_cancel_home(ctx):
         wait_idle(ctx, g, 15)
         g.command("$J=G91X-5F1200")
         wait_idle(ctx, g, 15)
+
+        # -- the same cancel, entered from a hold ---------------------------
+        # A job paused on the button must not be resumable past a lid open:
+        # the armed window and the hardware button latch have to agree, so
+        # the lid ends the job here exactly as it does from Run.
+        start2 = g.status_report()["MPos"]
+        k1 = kernel_xy_mm(ctx)
+        ev["hold_start"] = start2
+        g.command("G91")                                  # the reset restored G90
+        g.command("G1X40F300", timeout=0.5)
+        ctx.sleep(0.5)
+        ctx.check(g.status_report()["state"].startswith("Run"), "the second move did not start")
+        ctx.instruct("The head is moving again. Press the button once now (pause), then click Done.")
+        st = wait_state(ctx, g, "Hold", 8)
+        ctx.check(st is not None, "the press did not hold the job (state %s)", g.status_report()["state"])
+        held = drain_text(g, 0.5)
+        ev["hold_state"] = st["state"]
+        ev["hold_pause_message"] = "job paused" in held
+        ctx.log("paused: %s; message seen: %s", st["state"], ev["hold_pause_message"])
+        ctx.instruct("The job is paused. Open the lid NOW and leave it open, then click Done.")
+        hold_drift = expect_cancel_and_return(ctx, g, ev, start2, k1, "lid opened", "hold")
+        ctx.check(not g.status_report()["state"].startswith("Hold"),
+                  "the controller is still holding after the lid cancelled the paused job")
+        ctx.instruct("Close the lid, then click Done.")
+        ctx.sleep(1)
+        r = g.command("$J=G91X5F1200")
+        ctx.check(not any(x.startswith("error") for x in r), "jog refused after the paused cancel: %s", r)
+        wait_idle(ctx, g, 15)
+        g.command("$J=G91X-5F1200")
+        wait_idle(ctx, g, 15)
         g.command("G90")
     machine_idle(ctx)
-    ctx.log("PASS: lid open cancelled the job, reset without alarm, head returned to the start (drift %.3f mm)",
-            ev["drift_mm"])
+    ctx.log("PASS: lid open cancelled the job from Run (drift %.3f mm) and from the hold (drift %.3f mm), "
+            "reset without alarm, head returned to the start both times", drift, hold_drift)
+
+
+@test("motion.interlock-cancel-park", title="The interlock loop cancels a job like the lid, and the return "
+                                            "home ignores an open lid",
+      subsystem="motion", kind="operator", est_min=4,
+      covers=_LID_COVERS, requires=["motion.lid-cancel-home"],
+      steps=["Bed clear; the head needs 60 mm of free +X travel. No laser is involved.",
+             "Be able to open the remote-interlock loop: unplug the Pro's interlock plug, or pull the "
+             "jumper at J8 on a Basic/Plus. Restore it at the end.",
+             "Open the interlock when told; then open the lid while the head is on its way back."],
+      description="The remote-interlock loop is the lid's equal in the cancel policy: opening it mid-job "
+                  "cancels the job with 'interlock open' named as the reason and sends the head back to "
+                  "the job start. Opening the lid during that return changes nothing - the park hides the "
+                  "door for exactly this reason and runs to completion, as the factory's does.")
+def interlock_cancel_park(ctx):
+    ev = ctx.evidence
+    policy = (ctx.forgectrl.settings() or {}).get("lid_policy") or "cancel"
+    ev["lid_policy"] = policy
+    ctx.check(policy == "cancel", "lid_policy is %r; this test needs cancel", policy)
+    sw = (ctx.forgectrl.status().get("switches") or {})
+    ctx.check(sw.get("interlock_ok"), "the interlock loop already reads open - close it before this test")
+    with ctx.grbl() as g:
+        clean_slate(ctx, g)
+        start = g.status_report()["MPos"]
+        k0 = kernel_xy_mm(ctx)
+        ev["start"] = start
+        ev["kernel_start"] = k0
+        g.command("M5")
+        g.command("G91")
+        g.command("G1X60F300", timeout=0.5)               # a 12 s move
+        ctx.sleep(0.5)
+        ctx.check(g.status_report()["state"].startswith("Run"), "the move did not start")
+        ctx.instruct("The head is moving. Open the INTERLOCK loop now (unplug it / pull the jumper) and "
+                     "leave it open, then click Done.")
+        sw = (ctx.forgectrl.status().get("switches") or {})
+        ev["interlock_ok_after_pull"] = sw.get("interlock_ok")
+        ctx.check(sw.get("interlock_ok") is False,
+                  "the interlock still reads closed - the loop was not opened (switches: %s)", sw)
+        # The head is now on its way back. The lid goes up during that park:
+        # nothing may stop it.
+        ctx.instruct("The job is cancelling and the head is returning. Open the LID now as well, then "
+                     "click Done - leave both open until the head has stopped.")
+        drift = expect_cancel_and_return(ctx, g, ev, start, k0, "interlock open", "interlock")
+        sw = (ctx.forgectrl.status().get("switches") or {})
+        ev["switches_at_return"] = {"lid": sw.get("lid"), "interlock_ok": sw.get("interlock_ok")}
+        ctx.log("at the end of the park: %s", ev["switches_at_return"])
+        ctx.check(sw.get("lid") is False,
+                  "the lid was not open at the end of the park - the park's immunity was not exercised")
+        ctx.instruct("Close the lid and restore the interlock loop (plug/jumper back in), then click Done.")
+        ctx.sleep(1)
+        sw = (ctx.forgectrl.status().get("switches") or {})
+        ev["restored"] = {"lid": sw.get("lid"), "interlock_ok": sw.get("interlock_ok")}
+        ctx.check(sw.get("interlock_ok"), "the interlock loop is still open - restore it before continuing")
+        r = g.command("$J=G91X5F1200")
+        ctx.check(not any(x.startswith("error") for x in r), "jog refused after the cancel: %s", r)
+        wait_idle(ctx, g, 15)
+        g.command("$J=G91X-5F1200")
+        wait_idle(ctx, g, 15)
+        g.command("G90")
+    machine_idle(ctx)
+    ctx.log("PASS: interlock open cancelled the job and the head returned to the start (drift %.3f mm) "
+            "with the lid opened mid-park", drift)
+
+
+@test("motion.lid-policy-hold", title="lid_policy=hold parks the job in Door and a cycle start resumes it",
+      subsystem="motion", kind="operator", est_min=4,
+      covers=_LID_COVERS + [("forgectrl", "src/settings.*")], requires=["motion.lid-cancel-home"],
+      steps=["Bed clear; the head needs 40 mm of free +X travel. No laser is involved.",
+             "Open the lid when told, then close it when told; the job finishes after that."],
+      description="The other lid policy, kept for senders that expect stock grblHAL: with "
+                  "lid_policy=hold a lid open parks the job in the door state and holds it there - "
+                  "no cancel, no return home - and once the lid is closed a cycle start finishes the "
+                  "move with its position intact. The setting is restored to cancel at the end.")
+def lid_policy_hold(ctx):
+    ev = ctx.evidence
+    fc = ctx.forgectrl
+    was = (fc.settings() or {}).get("lid_policy") or "cancel"
+    ev["lid_policy_before"] = was
+    st, _b = fc.post("/settings", data={"lid_policy": "hold"})
+    ctx.check(st == 200, "could not set lid_policy=hold (%s)", st)
+    ctx.check(((fc.settings() or {}).get("lid_policy")) == "hold", "lid_policy did not take")
+    try:
+        with ctx.grbl() as g:
+            clean_slate(ctx, g)
+            start = g.status_report()["MPos"]
+            g.command("M5")
+            g.command("G91")
+            g.command("G1X40F300", timeout=0.5)           # an 8 s move
+            ctx.sleep(0.5)
+            ctx.check(g.status_report()["state"].startswith("Run"), "the move did not start")
+            ctx.instruct("The head is moving. Open the lid NOW and leave it open, then click Done.")
+            st = wait_state(ctx, g, "Door", 8)
+            ev["door_state"] = st["state"] if st else g.status_report()["state"]
+            ctx.check(st is not None, "the lid did not park the job in Door (state %s)", ev["door_state"])
+            text = drain_text(g, 1.0)
+            ev["messages"] = [ln for ln in text.splitlines() if ln.startswith("[MSG:")]
+            ctx.check("job cancelled" not in text, "the job was cancelled under lid_policy=hold: %s", ev["messages"])
+            ctx.check("returned to the job start" not in text,
+                      "the head returned to the job start under lid_policy=hold")
+            held = g.status_report()["MPos"]
+            ev["parked_at"] = held
+            ctx.log("parked in %s at %s", ev["door_state"], held)
+            ctx.instruct("Close the lid, then click Done.")
+            ctx.sleep(1)
+            ev["state_after_close"] = g.status_report()["state"]
+            ctx.log("after the lid closed: %s (a cycle start is needed)", ev["state_after_close"])
+            g.realtime(0x7E)                              # ~ cycle start
+            peak, states, st = wait_idle(ctx, g, 30)
+            ev["states_after_resume"] = states
+            ctx.check("TIMEOUT" not in states, "the job did not finish after the resume: %s", states)
+            final = st["MPos"]
+            moved = final[0] - start[0]
+            ev["moved_mm"] = round(moved, 3)
+            ctx.log("finished: moved %.3f mm of 40 (states %s)", moved, states)
+            ctx.check(abs(moved - 40.0) <= 0.05,
+                      "the resumed job did not finish its move (%.3f mm of 40)", moved)
+            g.command("$J=G91X-40F1200")
+            wait_idle(ctx, g, 30)
+            g.command("G90")
+        machine_idle(ctx)
+    finally:
+        st, _b = fc.post("/settings", data={"lid_policy": was})
+        ev["lid_policy_restored"] = (fc.settings() or {}).get("lid_policy")
+        ctx.log("lid_policy restored to %s", ev["lid_policy_restored"])
+    ctx.check(ev["lid_policy_restored"] == was, "lid_policy was not restored to %r", was)
+    ctx.log("PASS: lid_policy=hold parked the job in Door and the cycle start finished it (%.3f mm)",
+            ev["moved_mm"])

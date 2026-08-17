@@ -369,6 +369,141 @@ class CloudSuiteTests(unittest.TestCase):
         self.assertEqual(self.fc.posts, [])
         self.assertTrue(any("PASS: lid open at the button prompt" in l for l in run.lines))
 
+    # -- interlock abort, and the park through an open lid --------------------
+    def interlock_parts(self):
+        """The lid-abort excerpt with the interlock as the trigger, split at
+        the three operator steps: up to the print's run, the stop through
+        'start return home', and the park itself."""
+        lines = [l.replace("lid opened mid-run; stopping motion",
+                           "interlock opened mid-run; stopping motion")
+                 for l in fixture("lidabort")]
+        pre, rest = cut(lines, "waiting for button")
+        run_pre, rest = cut(rest, "machine:_run_loop starting run")
+        pre, rest = pre + run_pre + [rest[0]], rest[1:]
+        stop, tail = cut(rest, "start return home")
+        return pre, stop + [tail[0]], tail[1:]
+
+    def test_interlock_abort_park_on_the_bench_excerpt(self):
+        self.in_cloud(pid=1522)
+        self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
+        pre, stop, park = self.interlock_parts()
+
+        def pull_interlock():
+            self.fc.state["status"]["switches"]["interlock_ok"] = False
+            self.append(stop, delay=0.05)
+
+        def open_lid():
+            self.lid(False)
+            self.append(park, delay=0.05)
+
+        def restore():
+            self.lid(True)
+            self.fc.state["status"]["switches"]["interlock_ok"] = True
+        run = self.run_test(cloud.interlock_abort_park,
+                            hooks={"Click Done here": lambda: self.append(pre, delay=0.1),
+                                   "Open the INTERLOCK loop now": pull_interlock,
+                                   "Open the LID now as well": open_lid,
+                                   "Close the lid and restore the interlock": restore},
+                            test_id="cloud.interlock-abort-park")
+        ev = run.evidence
+        self.assertFalse(ev["interlock_ok_after_pull"])
+        self.assertIn(":cancelled", ev["log"]["print finished"])
+        self.assertEqual(ev["switches_at_return"], {"lid": False, "interlock_ok": False})
+        self.assertEqual(ev["kernel_counters_after_park"], [0, 0, 3])
+        self.assertTrue(ev["latch_locked"])
+        self.assertFalse(ev["armed_after"])
+        self.assertEqual(ev["restored"], {"lid": True, "interlock_ok": True})
+        self.assertEqual(self.fc.posts, [])
+        self.assertTrue(any("PASS: interlock open" in l for l in run.lines), run.lines)
+
+    def test_interlock_abort_refuses_when_the_loop_is_already_open(self):
+        self.in_cloud(pid=1522)
+        self.fc.state["status"]["switches"]["interlock_ok"] = False
+        self.assertFails(cloud.interlock_abort_park, "already reads open")
+
+    def test_interlock_abort_fails_when_the_park_stops_at_the_lid(self):
+        # the regression this guards: a park that the lid can interrupt
+        self.in_cloud(pid=1522)
+        self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
+        pre, stop, park = self.interlock_parts()
+        park = [l for l in park if "return home complete" not in l]
+        saved = cloud.wait_log
+
+        def fast_wait_log(ctx, offset, needles, timeout, poll=0.5):
+            return saved(ctx, offset, needles, min(timeout, 1.5), poll=0.1)
+        cloud.wait_log = fast_wait_log
+        try:
+            self.assertFails(
+                cloud.interlock_abort_park, "did not run to completion",
+                hooks={"Click Done here": lambda: self.append(pre, delay=0.1),
+                       "Open the INTERLOCK loop now": lambda: (
+                           self.fc.state["status"]["switches"].__setitem__("interlock_ok", False),
+                           self.append(stop, delay=0.05)),
+                       "Open the LID now as well": lambda: (self.lid(False),
+                                                            self.append(park, delay=0.05))})
+        finally:
+            cloud.wait_log = saved
+
+    # -- a paused print cancelled by the lid, a running one by the app --------
+    def cancel_parts(self):
+        """(print prologue, the pause lines, the lid stop + park + cancel,
+        the same tail with the app's cancel as the trigger)."""
+        lines = fixture("lidabort")
+        pre, rest = cut(lines, "waiting for button")
+        run_pre, rest = cut(rest, "machine:_run_loop starting run")
+        pre, rest = pre + run_pre + [rest[0]], rest[1:]
+        paused = ["2026-08-17T09:42:25.500000+00:00 gfcloud[1522] INFO machine:_run_loop "
+                  "button pressed mid-run; pausing",
+                  "2026-08-17T09:42:26.100000+00:00 gfcloud[1522] INFO machine:_run_loop "
+                  "paused at Position(x=41.2, y=17.0, z=0.0)"]
+        app_cancel = [l.replace("lid opened mid-run; stopping motion",
+                                "action cancelled mid-run; stopping motion") for l in rest]
+        return pre, paused, rest, app_cancel
+
+    def test_pause_cancel_paths_on_the_bench_excerpt(self):
+        self.in_cloud(pid=1522)
+        self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
+        pre, paused, lid_tail, app_tail = self.cancel_parts()
+        prints = []
+
+        def next_print():
+            prints.append(1)
+            self.append(pre, delay=0.1)
+        run = self.run_test(cloud.pause_cancel_paths,
+                            hooks={"Click Done here": next_print,
+                                   "Press the button once NOW": lambda: self.append(paused, delay=0.05),
+                                   "Open the lid NOW": lambda: (self.lid(False),
+                                                                self.append(lid_tail, delay=0.05)),
+                                   "Close the lid, then click Done": lambda: self.lid(True),
+                                   "Cancel the print from the app now": lambda: self.append(app_tail,
+                                                                                            delay=0.05)},
+                            test_id="cloud.pause-cancel-paths")
+        ev = run.evidence
+        self.assertEqual(len(prints), 2)                      # two prints, one cue each
+        self.assertEqual(ev["paused"], {"button pressed mid-run; pausing": True, "paused at": True})
+        self.assertIn(":cancelled", ev["lid_from_pause"]["print finished"])
+        self.assertIn(":cancelled", ev["service_cancel"]["print finished"])
+        self.assertTrue(ev["lid_from_pause"]["return home complete"])
+        self.assertTrue(ev["service_cancel"]["return home complete"])
+        self.assertEqual(ev["counters_after_print1"], [0, 0, 3])
+        self.assertEqual(ev["counters_after_print2"], [0, 0, 3])
+        self.assertTrue(ev["latch_locked_after_print1"] and ev["latch_locked_after_print2"])
+        self.assertFalse(ev["armed_after_print1"] or ev["armed_after_print2"])
+        self.assertEqual(self.fc.posts, [])
+        self.assertTrue(any("PASS: a paused print cancelled by the lid" in l for l in run.lines), run.lines)
+
+    def test_pause_cancel_paths_fails_when_the_paused_print_resumes_instead(self):
+        # a lid that resumed (or was ignored) leaves the print ':completed'
+        self.in_cloud(pid=1522)
+        self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
+        pre, paused, lid_tail, _app = self.cancel_parts()
+        lid_tail = [l.replace(':cancelled"', ':completed"') for l in lid_tail]
+        self.assertFails(
+            cloud.pause_cancel_paths, "print 1 did not end ':cancelled'",
+            hooks={"Click Done here": lambda: self.append(pre, delay=0.1),
+                   "Press the button once NOW": lambda: self.append(paused, delay=0.05),
+                   "Open the lid NOW": lambda: (self.lid(False), self.append(lid_tail, delay=0.05))})
+
     def test_print_finish_is_the_prints_not_another_actions(self):
         # a motion that completes before the print must not satisfy the print's finish
         lines = fixture("lidabort")

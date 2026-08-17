@@ -32,10 +32,14 @@ from .log import data_dir, now_ts
 DEFAULT_TOOL_DIR = "/usr/share/forgetest/bench"
 
 
-def _arg(name, type="str", default=None, help="", choices=None):
+def _arg(name, type="str", default=None, help="", choices=None, flag=None):
+    """One form field. `flag` names the option the value is passed as
+    (--feed 600); without it the value is positional, in registry order."""
     a = {"name": name, "type": type, "default": default, "help": help}
     if choices:
         a["choices"] = list(choices)
+    if flag:
+        a["flag"] = flag
     return a
 
 
@@ -157,6 +161,21 @@ TOOLS = [
      "desc": "Emission witness, disarm grace in Hold, stale-origin refusal, lid-IR characterization cut, armed "
              "kill on the expected-stop path (+ the separate controller restart). The operator's arm press is "
              "required for every drill; eye protection, fire watch, extinguisher, exhaust."},
+    {"id": "resume-dark-lead", "title": "Pause / resume chain timing (dark lead)", "script": "resume_dark_lead.py",
+     "safety": "live", "where": "board", "ported": True,
+     "args": [_arg("run", "choice", "dry", "dry travel, or LIVE FIRE", ["dry", "live"], flag="--run"),
+              _arg("mode", "choice", "m3", "laser mode for a live run", ["m3", "m4"], flag="--mode"),
+              _arg("power", "int", 400, "live: S value", flag="--power"),
+              _arg("feed", "float", 600.0, "feed rate", flag="--feed"),
+              _arg("len", "float", 60.0, "move length in mm (+X)", flag="--len"),
+              _arg("passes", "int", 1, "alternating +X/-X moves", flag="--passes"),
+              _arg("secs", "float", 45.0, "sampling window", flag="--secs"),
+              _arg("auto", "str", "", "dry only: 'P,R' seconds to send ! and ~ unattended", flag="--auto")],
+     "desc": "Samples LASER_ON, FIRE, HV_ENABLE and the charge-pump watchdog straight off the SoC pads "
+             "across a pause and a resume, with motion dated from the kernel counters: how long HV survives "
+             "a pause, how fast the chain re-arms, and - on a live run - the dark lead between FIRE and "
+             "LASER_ON that a resumed cut loses. Dry by default; --run live needs the arm press, eye "
+             "protection, fire watch, extinguisher, exhaust."},
     # -- host-side harnesses (CI) ------------------------------------------------------
     {"id": "laser-stream-test", "title": "Laser pulse-stream emission harness", "script": "laser_stream_test.py",
      "safety": "dry", "where": "host", "ported": False, "args": [],
@@ -201,8 +220,8 @@ class Bench:
         for spec in tool.get("args", []):
             raw = args.get(spec["name"], spec.get("default"))
             if raw is None or raw == "":
-                if spec.get("default") is None:
-                    continue  # optional and absent
+                if spec.get("default") in (None, ""):
+                    continue  # optional and absent: not passed at all
                 raw = spec["default"]
             try:
                 if spec["type"] == "int":
@@ -219,6 +238,8 @@ class Bench:
                         return False, None, "%s: invalid characters" % spec["name"]
             except (TypeError, ValueError):
                 return False, None, "%s: invalid %s" % (spec["name"], spec["type"])
+            if spec.get("flag"):
+                argv.append(spec["flag"])
             argv.append(val)
         argv += list(tool.get("argv_fixed_after", []))
         return True, argv, None

@@ -17,7 +17,7 @@ import time
 from ..catalog import test
 from .. import hw
 from ..runner import Failed
-from .motion import kernel_xy_mm, check_kernel_returned
+from .motion import kernel_xy_mm, check_kernel_returned, wait_state, wait_idle, drain_text
 
 _LASER_COVERS = [("grblhal-glowforge", "src/**"), ("kernel-module-glowforge", "**"),
                  ("forgectrl", "src/super.c"), ("forgectrl", "src/cool.c"),
@@ -591,3 +591,113 @@ def lid_cancel_mid_fire(ctx):
         ctx.sleep(1)
     ctx.log("PASS: lid open mid-burn -> emission 0 at +%s s, cancelled, reset without alarm, returned (drift %.3f mm), "
             "button latch SET", zero_at, drift)
+
+
+@test("laser.pause-resume-live", title="Button pause and resume mid-burn: emission stops, the window stays "
+                                      "open, the cut continues",
+      subsystem="laser", kind="live", est_min=6,
+      covers=_LASER_COVERS + [("grblhal-glowforge", "src/glowforge_switches.c"),
+                              ("grblhal-glowforge", "src/glowforge_switch_map.h")],
+      requires=["laser.emission-witness", "motion.button-hold-resume"],
+      steps=["Scrap under the head with 60 mm of free +X travel; lid closed; exhaust on.",
+             "Press the physical button when it lights white (arm). A few seconds into the cut press "
+             "it once (pause), wait about 3 seconds, and press it once more (resume). Let the job finish.",
+             "Keep the pause short: the armed window's idle grace closes it after about a minute in a "
+             "hold, and a job that disarms cannot resume its emission."],
+      description="The button's pause/resume during a live cut, the factory's behavior on the machine: "
+                  "the first press feed-holds the job and emission stops, the laser latch stays "
+                  "UNLOCKED and the armed window stays open (a pause is not a cancel), and the second "
+                  "press resumes the cut from where it stopped and the job runs to its end. GRBL mode "
+                  "has no backtrack - the kernel refuses one on a live-streamed ring - so the restart "
+                  "picks up where the deceleration ended.")
+def pause_resume_live(ctx):
+    ev = ctx.evidence
+    with ctx.grbl() as g, LiveJob(ctx, g):
+        prepare(ctx, g)
+        start = g.status_report()["MPos"]
+        ev["start"] = start
+        ctx.instruct(ARM_CUE % "60 mm +X")
+        stream(g, ["G91", "G21", "M3", "S400", "G1 X60 F300", "M5", "G90", "M2"])
+        t0 = time.time()
+        smp = None
+        seen = False
+        while time.time() - t0 < 240:
+            ctx.checkpoint()
+            smp = sample(ctx)
+            if smp and smp["emission"] and smp["emission"] > 0:
+                seen = True
+                break
+            time.sleep(0.15)
+        if not seen:
+            g.realtime(0x18)
+            raise Failed("no emission seen within 240 s (arm refused, or no button press)")
+        ev["emission_running"] = smp["emission"]
+        ctx.log("emission live (%s) - asking the operator to pause", smp["emission"])
+        ctx.instruct("The laser is cutting. Press the button ONCE now (pause), then click Done - "
+                     "do not wait long before the next step.")
+        st = wait_state(ctx, g, "Hold", 8)
+        ctx.check(st is not None, "the press did not hold the job (state %s)", g.status_report()["state"])
+        text = drain_text(g, 0.5)
+        ev["hold_state"] = st["state"]
+        ev["pause_message"] = "job paused" in text
+        # emission has to be gone, and the window has to still be open: a
+        # pause that relocked would need a fresh arm press to go on.
+        paused = []
+        t1 = time.time()
+        while time.time() - t1 < 4:
+            s = sample(ctx)
+            if s:
+                paused.append((round(time.time() - t1, 2), s["emission"], s["armed"]))
+            time.sleep(0.2)
+        for p in paused:
+            ctx.log("  paused %s", p)
+        ev["paused_trail"] = paused
+        ev["emission_zero_when_paused"] = all(e == 0 for _t, e, _a in paused[-8:]) if paused else None
+        ev["armed_while_paused"] = paused[-1][2] if paused else None
+        ilk = hw.sysfs_int("cnc/interlock_circuit")
+        ev["latch_locked_while_paused"] = ilk is not None and bool(ilk & (1 << 3))
+        ctx.log("paused: %s, emission 0 = %s, armed = %s, latch locked = %s", ev["hold_state"],
+                ev["emission_zero_when_paused"], ev["armed_while_paused"], ev["latch_locked_while_paused"])
+        ctx.check(ev["emission_zero_when_paused"], "emission did not stop while the job was paused: %s", paused)
+        ctx.check(ev["armed_while_paused"], "the armed window closed on the pause (a pause is not a cancel)")
+        ctx.check(not ev["latch_locked_while_paused"],
+                  "the kernel latch relocked on the pause - the resume could not fire without a new arm press")
+        ctx.instruct("Press the button once more now (resume), then click Done and let the job finish.")
+        st = wait_state(ctx, g, "Run", 10)
+        ev["resumed_state"] = st["state"] if st else g.status_report()["state"]
+        ctx.check(st is not None, "the second press did not resume the job (state %s)", ev["resumed_state"])
+        back = False
+        t2 = time.time()
+        trail = []
+        while time.time() - t2 < 20:
+            ctx.checkpoint()
+            s = sample(ctx)
+            if s:
+                trail.append((round(time.time() - t2, 2), s["emission"]))
+                if s["emission"] and s["emission"] > 0:
+                    back = True
+                    break
+            time.sleep(0.15)
+        ev["emission_back_after_s"] = trail[-1][0] if trail else None
+        ev["resume_trail"] = trail[-6:]
+        ctx.log("emission after the resume: %s", trail[-6:])
+        ctx.check(back, "emission did not return after the resume: %s", trail[-6:])
+        # the job runs to its end on its own
+        peak, states, st = wait_idle(ctx, g, 60)
+        ev["states_after_resume"] = states
+        ctx.check("TIMEOUT" not in states, "the resumed job did not finish: %s", states)
+        moved = st["MPos"][0] - start[0]
+        ev["moved_mm"] = round(moved, 3)
+        ctx.log("finished: moved %.3f mm of 60 (states %s)", moved, states)
+        ctx.check(abs(moved - 60.0) <= 0.1, "the resumed job did not finish its move (%.3f mm of 60)", moved)
+        ctx.check(ctx.forgectrl.wait_idle(15, abort=ctx.aborted), "machine not idle after the job")
+        s = sample(ctx)
+        ev["armed_after_job"] = s["armed"] if s else None
+        ctx.confirm("Did the burn stop on the first press and start again on the second, continuing the "
+                    "same line to its end? (A small mark where it restarted is expected - GRBL mode does "
+                    "not backtrack.)")
+        g.command("$J=G91X-60F1200")
+        wait_idle(ctx, g, 30)
+        g.command("G90")
+    ctx.log("PASS: button paused the burn (emission 0, armed kept, latch unlocked), the next press resumed "
+            "it and the job finished (%.3f mm)", ev["moved_mm"])
