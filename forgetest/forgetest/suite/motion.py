@@ -559,6 +559,28 @@ _LID_COVERS = _MOTION_COVERS + [("grblhal-glowforge", "src/glowforge_switches.c"
                                 ("grblhal-glowforge", "src/glowforge_laser.c")]
 
 
+def kernel_xy_mm(ctx):
+    """The kernel's own position counters, in mm (forgectrl /status pos):
+    what the machine physically did, independent of what grbl believes."""
+    pos = (ctx.forgectrl.status().get("pos") or {})
+    return float(pos.get("x", 0.0)), float(pos.get("y", 0.0))
+
+
+def check_kernel_returned(ctx, ev, k0, tol_mm=0.1):
+    """After a return-to-start: the kernel counters must be back where the
+    job started too. grbl's own drift can read 0.000 while the head never
+    moved (a run the kernel did not take), which is exactly the failure
+    that must not pass."""
+    k1 = kernel_xy_mm(ctx)
+    kdrift = max(abs(k1[0] - k0[0]), abs(k1[1] - k0[1]))
+    ev["kernel_drift_mm"] = round(kdrift, 3)
+    ctx.log("kernel counters: start (%.2f, %.2f) -> now (%.2f, %.2f), drift %.3f mm",
+            k0[0], k0[1], k1[0], k1[1], kdrift)
+    ctx.check(kdrift <= tol_mm,
+              "the kernel counters did not return to the job start (drift %.3f mm) - "
+              "the return move was counted by grbl but not played by the machine", kdrift)
+
+
 def drain_text(g, seconds):
     """Everything the controller said in the next `seconds`."""
     end = time.time() + seconds
@@ -631,6 +653,8 @@ def lid_cancel_home(ctx):
     with ctx.grbl() as g:
         clean_slate(ctx, g)
         start = g.status_report()["MPos"]
+        k0 = kernel_xy_mm(ctx)
+        ev["kernel_start"] = k0
         ev["start"] = start
         g.command("M5")
         g.command("G91")
@@ -663,6 +687,10 @@ def lid_cancel_home(ctx):
         ev["drift_mm"] = round(drift, 3)
         ctx.log("back at the job start: drift %.3f mm (lid still open)", drift)
         ctx.check(drift <= 0.05, "head not back at the job start (drift %.3f mm)", drift)
+        # what the MACHINE did: the kernel counters must agree (the return
+        # move must have been played, not only planned)
+        machine_idle(ctx, 10)
+        check_kernel_returned(ctx, ev, k0)
         sw = (ctx.forgectrl.status().get("switches") or {})
         ev["lid_at_return"] = sw.get("lid")
         ctx.instruct("Close the lid, then click Done.")

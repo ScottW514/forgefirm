@@ -119,6 +119,27 @@ class BaselineTests(unittest.TestCase):
         self.assertTrue(items["position"].action.startswith("unrestorable"), items["position"].action)
         self.assertEqual(items["position"].found, [1000, 0, 0])
 
+    def _pos_bytes(self, x, y, z, processed, total):
+        with open(self.sysfs + "cnc/position", "wb") as f:
+            f.write(struct.pack("<3i2I", x, y, z, processed, total))
+
+    def test_ring_residue_is_a_leftover_and_blocks_the_return_jog(self):
+        b = self.bl()
+        cap = b.capture()
+        # the run left 40 unplayed bytes queued in the kernel ring and the
+        # head 1000 counts out: the residue is reported, and the return jog
+        # is refused (it would replay the residue first)
+        self._pos_bytes(1000, 0, 0, 100, 140)
+        left = b.enforce("post", captured=cap)
+        items = {x.item: x for x in left}
+        self.assertIn("pulse ring", items)
+        self.assertEqual(items["pulse ring"].found, "40 unplayed bytes")
+        self.assertIn("unplayed bytes queued", items["position"].action)
+        self.assertEqual(baseline.read_ring_residue(), 40)
+
+    def test_clean_ring_reads_zero_residue(self):
+        self.assertEqual(baseline.read_ring_residue(), 0)
+
     def test_lamp_needs_forgectrl(self):
         # the lamp's idle level comes from forgectrl's settings: without the
         # daemon there is nothing to compare against

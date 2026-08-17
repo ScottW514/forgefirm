@@ -17,6 +17,7 @@ import time
 from ..catalog import test
 from .. import hw
 from ..runner import Failed
+from .motion import kernel_xy_mm, check_kernel_returned
 
 _LASER_COVERS = [("grblhal-glowforge", "src/**"), ("kernel-module-glowforge", "**"),
                  ("forgectrl", "src/super.c"), ("forgectrl", "src/cool.c"),
@@ -514,6 +515,8 @@ def lid_cancel_mid_fire(ctx):
     with ctx.grbl() as g, LiveJob(ctx, g):
         prepare(ctx, g)
         start = g.status_report()["MPos"]
+        k0 = kernel_xy_mm(ctx)
+        ev["kernel_start"] = k0
         ctx.instruct(ARM_CUE % "40 mm +X and +Y")
         stream(g, ["G91", "G21", "M4", "S400",
                    "G1 X40 F200", "G1 Y40 F200", "G1 X-40 F200", "G1 Y-40 F200",
@@ -576,6 +579,9 @@ def lid_cancel_mid_fire(ctx):
         ctx.log("returned: drift %.3f mm; armed=%s latch_locked=%s button_latch=%s", drift,
                 ev["armed_after"], ev["latch_locked"], ev["button_latch"])
         ctx.check(drift <= 0.05, "head not back at the job start (drift %.3f mm)", drift)
+        # what the MACHINE did: the kernel counters must agree
+        ctx.check(ctx.forgectrl.wait_idle(10, abort=ctx.aborted), "machine not idle after the return")
+        check_kernel_returned(ctx, ev, k0)
         ctx.check(not ev["armed_after"], "armed window still open after the cancel")
         ctx.check(ev["latch_locked"], "kernel latch not locked after the cancel")
         ctx.check(ev["button_latch"] == 1, "hardware button latch not SET after the lid open (%s)", ev["button_latch"])

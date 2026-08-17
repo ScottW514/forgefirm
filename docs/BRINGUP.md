@@ -3053,6 +3053,29 @@ dev image (the confirmation campaign's image).**
       `lid_policy=hold`), `python3-gfhardware/tests/test_machine_lid_button.py`
       (22 cases), gfutilities tests (58), forgetest unit + coverage lint;
       forgectrl builds clean with the three new settings and panel cards.
+    - **First bench run (dev image 20260817000107, 2026-08-17 00:26 UTC):**
+      `laser.lid-cancel-mid-fire` FAILED - the beam stopped and the job was
+      cancelled as designed, grbl reported "returned to the job start" with
+      0.000 mm drift, but the head never moved: the kernel counters stayed at
+      +1440 counts (27 mm, where the lid opened), and the baseline's return
+      jog then moved 54 mm and hit the left rail (counters -1442). Root cause
+      in the stream engine, not the cancel policy: the park's `cnc/run` landed
+      while the kernel was still playing the hold's queued tail (state
+      `running`) - the request was refused with EPERM and `ship_pass` treated
+      "refused, kernel running" as started; the kernel then hit its own
+      end-of-data and idled with the park bytes stranded in the ring, and the
+      NEXT run (the baseline jog) played them first (stale 27 mm -X) plus
+      the jog. Fixed (grblHAL-glowforge): a refused run on a busy kernel stays
+      *pending* and is re-issued the moment the kernel reads idle
+      (`pending_pass`); a soft reset no longer `stop`s a kernel that is only
+      draining a completed stream, and after a mid-motion reset the unplayed
+      residue is cleared (`lseek 1`) once the stop has played out, before
+      any new bytes ship or the device changes hands; the cancel path waits
+      for the kernel drain before the reset. forgetest: the two lid-cancel
+      tests now check the KERNEL counters returned (grbl's belief is not
+      proof), and the baseline reports unplayed ring bytes as a leftover and
+      refuses to jog while any exist. To re-run: `motion.lid-cancel-home`
+      first, then `laser.lid-cancel-mid-fire`.
     - **Bench validation pending (acceptance catalog):** `laser.arm-wait-lid`,
       `motion.button-hold-resume`, `motion.lid-cancel-home`,
       `laser.lid-cancel-mid-fire` (live), `cloud.lid-abort` (live),

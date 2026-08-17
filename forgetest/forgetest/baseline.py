@@ -109,6 +109,20 @@ def read_position():
         return None
 
 
+def read_ring_residue():
+    """Unplayed bytes queued in the kernel pulse ring: total written minus
+    processed (the cnc/position byte counters), or None when unreadable.
+    Anything but 0 at idle is stale motion that the NEXT run would replay
+    before its own bytes."""
+    try:
+        with open(hw.sysfs_root() + "cnc/position", "rb") as f:
+            raw = f.read(32)
+        processed, total = struct.unpack("<2I", raw[12:20])
+        return int(total) - int(processed)
+    except (OSError, struct.error):
+        return None
+
+
 class Leftover:
     def __init__(self, item, found, expected, action):
         self.item = item
@@ -354,6 +368,10 @@ class Baseline:
             except OSError as e:
                 act = "failed: %s" % e
             left.append(Leftover("laser_latch", "unlocked (interlock 0x%x)" % ilk, "locked", act))
+        residue = read_ring_residue()
+        if residue:
+            left.append(Leftover("pulse ring", "%d unplayed bytes" % residue, "0 (nothing queued)",
+                                 "unrestorable: the next run would replay them first"))
         for attr, want in FIXED_SYSFS:
             got = hw.sysfs_read(attr)
             if got is None or got == want:
@@ -386,6 +404,13 @@ class Baseline:
             return "unrestorable (Z only)" if now[2] != was[2] else "restored"
         if abs(dx) > RETURN_MAX_MM or abs(dy) > RETURN_MAX_MM:
             return "unrestorable: %.1f/%.1f mm exceeds %.0f mm" % (dx, dy, RETURN_MAX_MM)
+        # Never jog on top of stale bytes: a run started now would replay
+        # whatever the ring still holds before the jog, in a direction and
+        # for a distance nobody asked for. Report and leave the head.
+        residue = read_ring_residue()
+        if residue:
+            return ("unrestorable: %d unplayed bytes queued in the kernel ring - a jog would "
+                    "replay them; clear the ring (controller restart) before moving" % residue)
         # a controller may be inside a respawn backoff (seconds): wait for it
         mode = None
         deadline = time.time() + 30
