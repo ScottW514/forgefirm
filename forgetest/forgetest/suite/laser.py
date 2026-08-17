@@ -98,6 +98,22 @@ def arm_and_fire(ctx, g, room="40 mm +X and +Y", job=None, timeout=240):
     raise Failed("no emission seen within %d s (arm refused, or no button press)" % timeout)
 
 
+def wait_grbl_port(ctx, timeout=30):
+    """The controller's Grbl listener is accepting again. /mode reporting the
+    process running is not the same thing: the supervisor has spawned it, but
+    the socket may not be bound yet, and a bare connect would fail the test on
+    a race rather than on the behavior it is about."""
+    end = time.time() + timeout
+    while time.time() < end:
+        ctx.checkpoint()
+        try:
+            with ctx.grbl():
+                return True
+        except OSError:
+            time.sleep(1)
+    return False
+
+
 def kill_trail(ctx, t0, seconds=5.0):
     """Sample emission / kernel state / armed for `seconds` after a kill."""
     trail = []
@@ -383,6 +399,7 @@ def armed_kill(ctx):
     ctx.check(st == 200 and isinstance(m0, dict) and m0.get("controller") == "running",
               "controller not running before the kill: %s", m0)
     pid = m0.get("pid")
+    ctx.check(wait_grbl_port(ctx), "the restarted controller never accepted a Grbl connection")
     with ctx.grbl() as g, LiveJob(ctx, g):
         prepare(ctx, g)
         smp = arm_and_fire(ctx, g)
