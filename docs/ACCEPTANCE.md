@@ -99,6 +99,10 @@ cannot be authorized (that is a catalog change, not a skip).
 itself changed - new tube, driver swap, cable work, a judgment call - and
 forces a full campaign; nothing before it can be inherited.
 
+**Inheritance is local.** The history a bench inherits from is its own
+results log; there is no import of a published `acceptance.json`. A second
+bench, or one whose `/data` has been wiped, starts from a full campaign.
+
 ## Running a campaign
 
 1. Boot the dev image on the bench (`forgefirm-image-dev`), open

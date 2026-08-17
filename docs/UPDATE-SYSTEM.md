@@ -3,10 +3,11 @@
 Design and contracts of the ForgeFIRM install/update/recovery system:
 the factory's own A/B slot scheme, signed `.fw` packaging, the GUI
 update manager, factory restore, and the recovery image. The system is
-described in the implementation units ("phases") it is built from; the
-bench status of each lives in `BRINGUP.md`, as does the measured ground
-truth this rests on (eMMC layout, boot0/boot1 maps, saved-env location,
-factory `.fw`/updater internals — "eMMC boot & recovery architecture").
+described in the implementation units ("phases") it is built from. The
+measured ground truth this rests on lives in `BRINGUP.md` (eMMC layout,
+boot0/boot1 maps, saved-env location, factory `.fw`/updater internals —
+"eMMC boot & recovery architecture"), which also carries what is still
+open; the bench record of each phase is in `CAMPAIGN-LOG.md`.
 
 ## Settled decisions
 

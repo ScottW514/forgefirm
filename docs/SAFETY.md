@@ -267,7 +267,7 @@ the same FIRE gating as the live stream.
 ## 4. What is proven, and how
 
 Verified on the bench with a probe on the PSU-connector LASER_ON pin and the
-kernel readbacks (the runbook `BRINGUP.md` holds the drill records):
+kernel readbacks (`CAMPAIGN-LOG.md` holds the drill records):
 
 - Latch **locked**: 40,000 streamed FIRE bits → PSU pin flat, `laser_enable`
   0 — the lock severs the FIRE drive entirely.
