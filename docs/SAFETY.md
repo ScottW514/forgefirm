@@ -151,7 +151,14 @@ would not allow.
 - **Charge pump only while running.** The 200 ms retrigger starts with the
   run and the callback returns without rearming as soon as the state leaves
   `running` (stop, halt, fault, underrun). Stop/disable/unload pin sets force
-  CHG_PUMP low.
+  CHG_PUMP low. A paused job is one of those states, so the chain de-energizes
+  itself behind a pause without anyone asking it to: measured at the pads,
+  motion stops 317 ms after the pause command and HV_ENABLE drops with the
+  watchdog 550 ms after it (the feed ends with the run, then t_w expires) — a
+  pause shorter than about half a second never drops HV at all. On the resume
+  the pump primes with the run and HV_ENABLE is back within ~3 ms, while motion
+  only restarts at ~219 ms: the chain re-arms about 216 ms **before** the first
+  step, so a resumed cut is never waiting on it.
 - **FIRE backstop.** At end-of-data and on underrun the SDMA script drops FIRE
   and the step lines within one tick; the FIRE line is parked Hi-Z at every
   run end and only a latch unlock plus a new run restores it.
@@ -191,7 +198,10 @@ would not allow.
   streaming FIRE bits into a blocked gate.
 - **Disarm.** After `laser_disarm_s` (default 60 s) of no laser use, or on
   program end/abort, the controller relocks the latch, turns the button LED
-  off and stands the cooling profile down. The relock waits for the kernel to
+  off and stands the cooling profile down. A job paused on the button is no
+  laser use: the grace counts down through the hold and closes the window
+  under a job left standing, so a long pause ends with the machine disarmed
+  and the next emission needs a fresh press. The relock waits for the kernel to
   finish the queue tail so a controlled stop can never leave FIRE driven.
 - **Coolant fire gates.** The armed window requires a fresh `fire_ok` verdict
   from the cooling engine (flow verification, over-temperature, lid-IR
@@ -219,7 +229,13 @@ would not allow.
 - **Button.** Outside the arm wait the button is the job pause/resume toggle
   in both controller modes (feed hold / cycle start in GRBL mode; the
   factory's stop-backtrack-hold and lead-in resume in cloud mode); a held
-  button has no further meaning during a job.
+  button has no further meaning during a job. A pause is deliberately **not** a
+  cancel: the latch stays unlocked and the armed window open, which is what
+  lets the next press resume the job. Emission still ends with the pause — the
+  stream stops driving FIRE and the chain drops HV_ENABLE by itself (§3.1) —
+  and the window closes on its own if the pause outlives the disarm grace. A
+  lid or interlock open while paused takes the cancel path, so nothing resumes
+  past an enclosure opening.
 - **Head/motion witnesses.** Position counters are not proof of motion (the
   step-stream drives are open loop); the head accelerometer is the motion
   witness, and `beam_detect_analog` on the head is the live emission witness.

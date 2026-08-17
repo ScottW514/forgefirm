@@ -113,6 +113,14 @@ restart the controller with the head re-parked.)
   queue + deceleration); Resume continues exactly. **The big button does
   the same**: one press while a job runs pauses it (LightBurn shows Hold),
   the next press resumes it — the factory's pause/resume, on the machine.
+  Two things to know before you pause a cut. **Resume where it stopped:**
+  there is no backtrack in GRBL mode, so the beam restarts from where the
+  deceleration ended and accelerates away from a standstill — at constant
+  power (`M3`) that leaves a deeper spot you can see, while `M4` scales power
+  with speed and mostly hides it. **Don't leave it paused:** the armed window
+  has an idle grace (`laser_disarm_s`, default 60 s) that counts down through
+  a hold, so a job left paused disarms itself and the resume asks for the
+  button again before it can fire.
 - **Opening the lid (or a Pro's interlock loop) during a job cancels it**,
   as the factory firmware does: the head parks with a controlled
   deceleration (the hardware cut the beam the instant the lid moved), the
@@ -128,9 +136,11 @@ restart the controller with the head re-parked.)
   material never leaves LightBurn waiting.
 - **Stop** = soft reset: motion aborts with a controlled deceleration
   and grblHAL raises an alarm with **position declared lost** (the
-  stream queue means up to ~40 mm of in-flight difference). Recovery:
-  unlock (`$X` in Console or LightBurn's prompt), jog the head clear,
-  and carry on in Current Position mode. Restart the controller with
+  stream queue means up to ~40 mm of in-flight difference). It leaves the
+  head where it stopped — the return to the job start belongs to the lid
+  and interlock policy alone, so Stop never moves the machine on its own.
+  Recovery: unlock (`$X` in Console or LightBurn's prompt), jog the head
+  clear, and carry on in Current Position mode. Restart the controller with
   the head re-parked if you want a clean absolute frame.
 - **Move tab**: jogging (set a sane speed, e.g. 6000 mm/min), Get
   Position, distance buttons.
