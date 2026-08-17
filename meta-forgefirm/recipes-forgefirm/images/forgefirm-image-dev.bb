@@ -9,6 +9,7 @@ DESCRIPTION = "OpenGlow/ForgeFIRM development image for Glowforge"
 IMAGE_INSTALL += " \
   forgectrl \
   forgetest \
+  htop \
 "
 
 # debug-tweaks (passwordless root, root SSH login) belongs ONLY to the dev

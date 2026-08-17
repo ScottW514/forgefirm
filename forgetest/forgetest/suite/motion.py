@@ -1011,10 +1011,23 @@ def step_timing_under_load(ctx):
     load = None
     try:
         # One SCHED_OTHER hog at the same nice as forgectrl's HTTP threads:
-        # the realistic competitor, and the one the fix must outrank.
-        load = subprocess.Popen(["nice", "-n", "5", "sh", "-c", "while :; do :; done"],
+        # the realistic competitor, and the one the fix must outrank. The
+        # image has no `nice` binary (BusyBox ships renice only), so the
+        # niceness is applied from here once the child exists, and the value
+        # that actually took is recorded - a hog left at nice 0 would be a
+        # harsher test than intended, and one left unset must not pass
+        # silently.
+        load = subprocess.Popen(["sh", "-c", "while :; do :; done"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        ctx.log("CPU hog started (pid %d, nice 5)", load.pid)
+        try:
+            os.setpriority(os.PRIO_PROCESS, load.pid, 5)
+            hog_nice = os.getpriority(os.PRIO_PROCESS, load.pid)
+        except OSError as exc:
+            hog_nice = None
+            ctx.log("could not set the hog niceness: %s", exc)
+        ev["hog_nice"] = hog_nice
+        ctx.check(hog_nice == 5, "CPU hog is at nice %s, expected 5", hog_nice)
+        ctx.log("CPU hog started (pid %d, nice %s)", load.pid, hog_nice)
         with ctx.grbl() as g:
             clean_slate(ctx, g)
             ctrl0 = cpu_ticks(pid)
