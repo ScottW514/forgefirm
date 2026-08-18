@@ -7,7 +7,8 @@ watch, an extinguisher, and the exhaust running. Every drill waits for
 the operator to press the physical arm button before the machine fires;
 nothing here defeats that gate.
 
-Usage: live_fire_drills.py <drill> [S] [F]   (S, F used by ircut, pthresh)
+Usage: live_fire_drills.py <drill> [arg] [F]  (ircut/pthresh take S,
+       dladder takes the base period in machine ticks)
 
 Drills (pass a name):
   witness   Phase 5 A-1/A-2/A-5: a short vector mark at S400. Samples
@@ -47,6 +48,20 @@ Drills (pass a name):
             floor already in place lifts every rung and hides both
             thresholds.
               pthresh [Smax] [F]        e.g. pthresh 1000 300
+  dladder   Density ladder for the FIRE-bit dose model: one line per
+            dose level on scrap, 5 % to 100 %, at constant power (M3)
+            so nothing scales the dose with velocity. Under this model
+            the duty is pinned at full and the level is carried by how
+            many ticks of each base period fire, so a rung's burst is
+            density x period - and the base period is the parameter the
+            host cannot choose for you. Run it at 20, then 40, then 10
+            on the same material: 20 ticks is 710 us, the factory's
+            ~1.43 kHz, and 40 and 10 bracket it. Two questions the
+            material answers: does mark depth track density linearly,
+            and how short a burst still marks. Requires
+            laser_power_model = density and $35 = 0 (a floor lifts every
+            rung); sets laser_pulse_ticks itself when run on the board.
+              dladder [period] [F]      e.g. dladder 20 300
   expstop   Armed kill on the EXPECTED-stop path: start a mark job,
             then mid-burn POST /controller/stop (the supervisor stops
             the controller: SIGTERM, reap, exit safing). PASS: emission
@@ -496,6 +511,183 @@ def drill_pthresh(g):
     return samples
 
 
+# --- density ladder -------------------------------------------------------
+
+# Dose levels in percent of full. Even spacing, because the question is
+# whether mark depth tracks density linearly rather than where it stops.
+DLADDER_PCT = (5, 10, 20, 30, 40, 60, 80, 100)
+DLADDER_LEN = 25.0                      # mm of burn per rung
+DLADDER_PITCH = 3.0                     # mm between rungs
+STREAM_RATE_HZ = 28160                  # machine tick (GFSINK_RATE default)
+PWM_PERIOD = 127                        # 7-bit power byte against PWMSAR
+CONF = os.environ.get('GFHOME_CONF') or '/data/forgefirm.conf'
+
+
+def conf_get(key):
+    """One key from the shared machine config, or None."""
+    try:
+        with open(CONF) as f:
+            for line in f:
+                head = line.split('#', 1)[0]
+                if '=' in head:
+                    k, v = head.split('=', 1)
+                    if k.strip() == key:
+                        return v.strip()
+    except OSError:
+        return None
+    return None
+
+
+def conf_set(key, val):
+    """Set one key, preserving every other line. False when the config is
+    not ours to write - running from a LAN host, say."""
+    try:
+        with open(CONF) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return False
+    out, done = [], False
+    for line in lines:
+        head = line.split('#', 1)[0]
+        if '=' in head and head.split('=', 1)[0].strip() == key:
+            if done:
+                continue
+            out.append('%s = %s' % (key, val))
+            done = True
+        else:
+            out.append(line)
+    if not done:
+        out.append('%s = %s' % (key, val))
+    try:
+        mode = os.stat(CONF).st_mode & 0o777
+        with open(CONF + '.tmp', 'w') as f:
+            f.write('\n'.join(out) + '\n')
+        os.chmod(CONF + '.tmp', mode)
+        os.replace(CONF + '.tmp', CONF)
+    except OSError:
+        return False
+    return True
+
+
+def grbl_setting(g, key):
+    """One $-setting as a float, read from the controller."""
+    for line in g.cmd('$$', timeout=8.0).splitlines():
+        line = line.strip()
+        if line.startswith(key + '='):
+            try:
+                return float(line.split('=', 1)[1])
+            except ValueError:
+                return None
+    return None
+
+
+def drill_dladder(g):
+    period = int(sys.argv[2]) if len(sys.argv) > 2 else 20
+    feed = int(sys.argv[3]) if len(sys.argv) > 3 else 300
+    if period < 1:
+        print('period must be at least 1 machine tick')
+        return 2
+
+    print('=== density ladder: %d rungs, base period %d ticks, F%d, %g mm each ==='
+          % (len(DLADDER_PCT), period, feed, DLADDER_LEN))
+
+    # Preconditions. The model is read at each arm, so it must already be
+    # selected; the floor must be gone, or every rung is lifted off the
+    # bottom of the range this drill exists to explore.
+    model = conf_get('laser_power_model')
+    if model != 'density':
+        print('PRECONDITION FAILED: laser_power_model is %r, need "density".'
+              % (model,))
+        print('Set it in %s and re-run. The model is read at each arm, so' % CONF)
+        print('this key needs no controller restart.')
+        return 2
+    floor = grbl_setting(g, '$35')
+    if floor is None or floor > 0.0:
+        print('PRECONDITION FAILED: $35 is %s, need 0.' % floor)
+        print('Send $35=0 and restart the controller - the S -> duty mapping')
+        print('is precomputed once, when the spindle is enabled, so a runtime')
+        print('write does not reach it.')
+        return 2
+    if conf_set('laser_pulse_ticks', str(period)):
+        print('laser_pulse_ticks = %d (written to %s)' % (period, CONF))
+    else:
+        have = conf_get('laser_pulse_ticks')
+        if have != str(period):
+            print('PRECONDITION FAILED: cannot write %s from here, and' % CONF)
+            print('laser_pulse_ticks is %r, not %d. Set it on the board.'
+                  % (have, period))
+            return 2
+        print('laser_pulse_ticks already %d' % period)
+
+    # What each rung actually emits. The on-count is dithered between
+    # adjacent integers, so the burst below is the mean.
+    print('period %d ticks = %.0f us at %d Hz -> %.0f Hz pulse rate'
+          % (period, period * 1e6 / STREAM_RATE_HZ, STREAM_RATE_HZ,
+             STREAM_RATE_HZ / float(period)))
+    print('rungs (drawn in order, alternating direction, +Y between):')
+    levels = []
+    for pct in DLADDER_PCT:
+        sval = int(round(1000 * pct / 100.0))
+        level = int(sval * PWM_PERIOD / 1000)    # the core's mapping at $35 = 0
+        dens = level / float(PWM_PERIOD)
+        on = dens * period
+        levels.append((pct, sval, dens))
+        # The on-count is a whole number of ticks, dithered between the
+        # two nearest, so quote the pulse the tube actually sees. Below
+        # one tick per period the pulse stays one tick and periods are
+        # skipped instead - that is the short end this drill is for.
+        lo = int(on)
+        tick_us = 1e6 / STREAM_RATE_HZ
+        if lo == 0:
+            burst = '1 tick (%.0f us) on ~%.0f%% of periods' % (tick_us, on * 100)
+        elif on == lo:
+            burst = '%d ticks (%.0f us)' % (lo, lo * tick_us)
+        else:
+            burst = '%d-%d ticks (%.0f-%.0f us)' % (lo, lo + 1, lo * tick_us,
+                                                    (lo + 1) * tick_us)
+        print('  %3d%% -> S%-4d  density %.4f  %5.2f on-ticks  pulse %s'
+              % (pct, sval, dens, on, burst))
+    print('connect: %s' % prepare(g))
+    base = sample_forgectrl()
+    print('pre-fire: %s' % base)
+    arm_cue()
+    print('>>> This ladder reaches FULL dose - use scrap you are willing')
+    print('>>> to cut through.\n')
+
+    job = ['G91', 'G21', 'M3']
+    for i, (_pct, sval, _d) in enumerate(levels):
+        job.append('S%d' % sval)
+        job.append('G1 X%g F%d' % (DLADDER_LEN if i % 2 == 0 else -DLADDER_LEN,
+                                   feed))
+        job.append('G0 Y%g' % DLADDER_PITCH)
+    job += ['M5', 'G90', 'M2']
+    samples = run_and_sample(g, job, overall_timeout=600)
+
+    emis = [s['emission'] for s in samples if s['emission'] is not None]
+    hv_vals = [s['hv'] for s in samples if s['hv'] is not None]
+    print('\n--- results ---')
+    print('samples: %d  emission peak=%s' % (len(samples),
+                                             max(emis) if emis else '-'))
+    print('hv_current range: %s..%s' % (min(hv_vals) if hv_vals else '-',
+                                        max(hv_vals) if hv_vals else '-'))
+    print('Check the controller said "laser armed (density)" - a plain')
+    print('"laser armed" means the analog path ran and this is a duty')
+    print('ladder, not a density one.')
+    print('\nRead the material: count rungs from the FIRST one drawn.')
+    print('Two readings, and the second is the one only the bench can give:')
+    print(' 1. LINEARITY - does depth/darkness track the density column')
+    print('    above, or does the low end mark harder than its share? Every')
+    print('    burst restarts the discharge, so each carries the strike')
+    print('    transient, and dose per burst need not scale with its length.')
+    print(' 2. THE SHORT END - the lowest rung that still marks cleanly. Its')
+    print('    burst length in us is the number to keep; a rung that stops')
+    print('    marking sets the floor this base period can reach.')
+    print('Then run the same ladder at 40 and at 10 on the same material and')
+    print('compare the low rungs across the three: that is what picks the')
+    print('base period. Nothing else in the stack can answer it.')
+    return samples
+
+
 def post_ctrl(action):
     # http.client preserves the header-name case exactly as given.
     import http.client
@@ -581,7 +773,7 @@ def main():
     drill = sys.argv[1] if len(sys.argv) > 1 else ''
     drills = {'witness': drill_witness, 'hold': drill_hold,
               'faultpos': drill_faultpos, 'ircut': drill_ircut,
-              'pthresh': drill_pthresh,
+              'pthresh': drill_pthresh, 'dladder': drill_dladder,
               'expstop': drill_expstop, 'ctrlstart': drill_ctrlstart}
     if drill not in drills:
         print(__doc__)
