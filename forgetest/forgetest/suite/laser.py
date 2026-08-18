@@ -232,7 +232,8 @@ def wait_disarm(ctx, timeout):
                   "unfloored, M4's velocity-scaled power falls into the dead band at every corner "
                   "and reversal and marks nothing. Reads $$ and checks the floor is the "
                   "commissioned percent, that $31 is 0 (the floor, not $31, sets the bottom of "
-                  "the range), and that the floor lands at or above PWMSAR 20.")
+                  "the range), and that the floor lands at or above PWMSAR 20. Reports the "
+                  "stored setting, which is the one in force after any controller start.")
 def power_floor(ctx):
     ev = ctx.evidence
     with ctx.grbl() as g:
@@ -258,7 +259,9 @@ def power_floor(ctx):
 
     ctx.check(abs(floor_pct - POWER_FLOOR_PCT) < 0.05,
               "$35 is %.1f %%, expected the commissioned %.1f %% - a machine carrying stored "
-              "settings from before the floor needs `$RST=$` once", floor_pct, POWER_FLOOR_PCT)
+              "settings from before the floor needs `$35=16` (or `$RST=$`) and then a "
+              "controller restart, since the spindle mapping is precomputed at start",
+              floor_pct, POWER_FLOOR_PCT)
     ctx.check(counts >= PWMSAR_FLOOR_MIN,
               "the floor lands at PWMSAR %d, below the %d the tube needs to lase",
               counts, PWMSAR_FLOOR_MIN)

@@ -30,6 +30,18 @@ over TCP, then checks the dumps against the kernel feeder contract:
      ahead of the rung's power byte would burn at full power), and the
      fire ticks divide evenly across the rungs, which is what fails if a
      rung's opening ticks carry the previous rung's duty
+ 11. under the density dose model no level ever reaches PWMSAR: every
+     power byte carries full duty (one still leads each kernel run), and
+     a level change inside a run costs no stream byte at all
+ 12. density matches the level the core commanded, rung by rung, and no
+     burst is longer than the base period
+ 13. the model is a mask and never a source: run the same job under both
+     models and every FIRE tick of the density run is a FIRE tick of the
+     analog run, on an identical motion grid
+ 14. a laser state change made while the stream is idle survives to the
+     next run: a standalone S word between moves, from a sender slow
+     enough to drain the planner, must still cut at the level it asked
+     for rather than dark at a stale duty
 
 Usage: laser_stream_test.py [path-to-binary]   (default ./build-native/grblHAL_glowforge)
 """
@@ -119,6 +131,42 @@ for _i, _s in enumerate(LADDER_S):
 JOB_LADDER.append("M5")
 
 
+# Sessions E-G: the density dose model. $35 = 0 for the ladder because
+# the floor exists only to keep an analog duty out of the tube's dead
+# band - under density every pulse is full-power, and a floor would just
+# clamp the light end of the range.
+DENSITY_PERIOD = 20
+DENSITY_CONF = ("laser_power_model = density\n"
+                "laser_pulse_ticks = %d\n" % DENSITY_PERIOD)
+DENSITY_LEVEL = tuple(int(x * PWM_PERIOD / RPM_MAX) for x in LADDER_S)
+JOB_DENSITY = ["$35=0"] + JOB_LADDER
+
+# Session H: three levels inside one kernel run. The moves are short and
+# fast so the planner never drains, and each carries its own S word, so
+# the level changes land mid-run. Analog pays a power byte per level;
+# density pays none, because the level rides the FIRE bits.
+JOB_LEVELS = ["G91", "G21", "M3"]
+for _s in (100, 300, 600):
+    for _ in range(20):
+        JOB_LEVELS.append("G1 X0.5 F3000 S%d" % _s)
+JOB_LEVELS.append("M5")
+
+
+# Session I: the levels arrive on their own lines, and the moves are long
+# enough that the planner drains between them, so each S is executed with
+# nothing streaming. The state has no event to ride and must be
+# re-asserted at the next run's first byte.
+IDLE_S_LEVELS = (100, 300, 600)
+IDLE_S_MM = 5.0
+IDLE_S_FEED = 300
+JOB_IDLE_S = ["G91", "G21", "M3"]
+for _i, _s in enumerate(IDLE_S_LEVELS):
+    JOB_IDLE_S.append("S%d" % _s)
+    JOB_IDLE_S.append("G1 X%g F%d" % (IDLE_S_MM if _i % 2 == 0 else -IDLE_S_MM,
+                                      IDLE_S_FEED))
+JOB_IDLE_S.append("M5")
+
+
 def fail(msg):
     print("FAIL: %s" % msg)
     sys.exit(1)
@@ -181,14 +229,26 @@ def publish_verdicts(path, stop):
         stop.wait(0.5)
 
 
-def run_session(name, steps):
-    """Launch the controller, run the job steps, return the dump bytes."""
-    workdir = tempfile.mkdtemp(prefix="laser-test-")
+def run_session(name, steps, conf=None, workdir=None, keep=False,
+                arm_required=True):
+    """Launch the controller, run the job steps, return the dump bytes.
+
+    Pass workdir + keep to chain launches over one settings file: the
+    core precomputes the spindle PWM mapping once, when the spindle is
+    enabled, so a $35 written at runtime only takes effect on the next
+    controller start."""
+    if workdir is None:
+        workdir = tempfile.mkdtemp(prefix="laser-test-")
     dump = os.path.join(workdir, "stream.bin")
     verdict = os.path.join(workdir, "cooling.state")
     env = dict(os.environ, GFSINK_DUMP=dump, GF_VERDICT_FILE=verdict,
                FFLOG_STDERR="1")
     env.pop("GFSINK", None)
+    if conf is not None:
+        conf_path = os.path.join(workdir, "forgefirm.conf")
+        with open(conf_path, "w") as f:
+            f.write(conf)
+        env["GFHOME_CONF"] = conf_path
 
     stop = threading.Event()
     pub = threading.Thread(target=publish_verdicts, args=(verdict, stop), daemon=True)
@@ -226,9 +286,10 @@ def run_session(name, steps):
         # is wall-paced), then for the Idle report.
         wait_idle(sock, log)
         time.sleep(1.0)                     # let the shipper drain the tail
-
         text = "".join(log)
-        if "laser armed" not in text:
+
+        run_session.text = text
+        if arm_required and "laser armed" not in text:
             fail("[%s] no 'laser armed' message (arming flow did not run)" % name)
 
         sock.close()
@@ -242,9 +303,10 @@ def run_session(name, steps):
         pub.join(2)
 
     data = open(dump, "rb").read()
-    if not data:
+    if not data and arm_required:
         fail("[%s] empty stream dump" % name)
-    shutil.rmtree(workdir, ignore_errors=True)
+    if not keep:
+        shutil.rmtree(workdir, ignore_errors=True)
     return data
 
 
@@ -386,6 +448,80 @@ def check_power_ladder(name, data, expect):
     return counts
 
 
+def fire_spans(ticks, gap=500):
+    """Tick spans carrying fire, split on dark gaps (the G0 between
+    rungs). Within a rung the model's own dark stretches are at most a
+    couple of base periods, far below the split."""
+    spans = []
+    start = last = None
+    for i, b in enumerate(ticks):
+        if b & 0x10:
+            if start is None:
+                start = i
+            elif i - last > gap:
+                spans.append((start, last + 1))
+                start = i
+            last = i
+    if start is not None:
+        spans.append((start, last + 1))
+    return spans
+
+
+def check_density(name, data, levels, period):
+    """Rules 11-12: pinned duty, and density per rung matching the level."""
+    # A power byte still leads every kernel run - the run start resets the
+    # hardware duty - but under this model it only ever carries full duty:
+    # the level rides the FIRE bits, never PWMSAR.
+    powers = [b & 0x7F for b in data if b & 0x80]
+    if not powers or set(powers) != {PWM_PERIOD}:
+        fail("[%s] density mode shipped power bytes %s; every one must be "
+             "full duty, or a level reached PWMSAR" % (name, sorted(set(powers))))
+
+    ticks = tick_bytes(data)
+    spans = fire_spans(ticks)
+    if len(spans) != len(levels):
+        fail("[%s] %d fire spans, expected one per rung (%d): %s"
+             % (name, len(spans), len(levels), spans[:8]))
+
+    out = []
+    for (a, b), level in zip(spans, levels):
+        seg = ticks[a:b]
+        got = sum(1 for t in seg if t & 0x10) / float(len(seg))
+        want = level / float(PWM_PERIOD)
+        out.append((level, round(got, 4)))
+        # A span is clipped to whole ticks, not whole periods, so allow a
+        # little slack at the edges; the accumulator carries the rest.
+        if abs(got - want) > max(0.01, want * 0.06):
+            fail("[%s] level %d rendered density %.4f, expected %.4f"
+                 % (name, level, got, want))
+        run = worst = 0
+        for t in seg:
+            run = run + 1 if t & 0x10 else 0
+            worst = max(worst, run)
+        if worst > period:
+            fail("[%s] level %d burst of %d ticks exceeds the %d-tick base "
+                 "period" % (name, level, worst, period))
+    return out
+
+
+def check_mask(analog, density):
+    """Rule 13: same motion, and density fire is a subset of analog fire."""
+    ta, td = tick_bytes(analog), tick_bytes(density)
+    if len(ta) != len(td):
+        fail("[mask] tick counts differ (analog %d, density %d): the two runs "
+             "are not the same motion" % (len(ta), len(td)))
+    for i, (a, b) in enumerate(zip(ta, td)):
+        if (a & ~0x10) != (b & ~0x10):
+            fail("[mask] motion differs at tick %d (analog 0x%02x, density "
+                 "0x%02x)" % (i, a, b))
+    stray = [i for i, (a, b) in enumerate(zip(ta, td)) if (b & 0x10) and not (a & 0x10)]
+    if stray:
+        fail("[mask] density fired %d tick(s) the core never commanded, first "
+             "at %d - the model is acting as a source of emission, not a mask"
+             % (len(stray), stray[0]))
+    return sum(1 for b in td if b & 0x10), sum(1 for a in ta if a & 0x10)
+
+
 def count_fire(data):
     return sum(1 for b in tick_bytes(data) if b & 0x10)
 
@@ -427,6 +563,89 @@ def main():
     print("PASS [ladder]: %d bytes, duties %s fire ticks %s, max fire gap %d"
           % (len(data), list(LADDER_DUTY),
              [counts[d] for d in LADDER_DUTY], gap_d))
+
+    # --- session E: the same ladder under the density model -------------
+    # $35 is written by a first launch and takes effect on the second:
+    # the floor exists only to keep an analog duty out of the tube's
+    # dead band, and under density it would just clamp the light end.
+    wd = tempfile.mkdtemp(prefix="laser-test-")
+    run_session("density-setup", ["$35=0"], conf=DENSITY_CONF, workdir=wd,
+                keep=True, arm_required=False)
+    dens = run_session("density", JOB_DENSITY, conf=DENSITY_CONF, workdir=wd)
+    rendered = check_density("density", dens, DENSITY_LEVEL, DENSITY_PERIOD)
+    check_termination("density", dens)
+    if "laser armed (density)" not in run_session.text:
+        fail("[density] the arm did not select the density model")
+    print("PASS [density]: %d bytes, %d power bytes all at full duty, "
+          "level->density %s"
+          % (len(dens), sum(1 for b in dens if b & 0x80), rendered))
+
+    # --- rule 13: the model masks, it never sources ---------------------
+    d_fire, a_fire = check_mask(data, dens)
+    print("PASS [mask]: identical motion grid, %d density fire ticks all "
+          "inside the %d the core commanded" % (d_fire, a_fire))
+
+    # --- session F: full level under the model is continuous fire -------
+    full = run_session("density-full", ["$35=0"] + JOB_M3_TERM, conf=DENSITY_CONF)
+    ticks = tick_bytes(full)
+    spans = fire_spans(ticks)
+    if not spans:
+        fail("[density-full] no FIRE bits in the stream")
+    a, b = spans[0]
+    got = sum(1 for t in ticks[a:b] if t & 0x10) / float(b - a)
+    if got != 1.0:
+        fail("[density-full] S1000 rendered density %.4f, expected 1.0" % got)
+    check_termination("density-full", full)
+    print("PASS [density-full]: S1000 -> density 1.0000 over %d ticks, ends dark"
+          % (b - a))
+
+    # --- session G: churn under the model (rules 7-9 still hold) --------
+    ch = run_session("density-churn", ["$35=0"] + JOB_CHURN, conf=DENSITY_CONF)
+    if not count_fire(ch):
+        fail("[density-churn] no FIRE bits in the stream")
+    check_termination("density-churn", ch)
+    gap_e = check_fire_gaps("density-churn", ch)
+    print("PASS [density-churn]: %d bytes, %d fire ticks, max fire gap %d"
+          % (len(ch), count_fire(ch), gap_e))
+
+    # --- session H: a level change inside a run costs no byte -----------
+    lv_a = run_session("levels-analog", JOB_LEVELS)
+    lv_d = run_session("levels-density", JOB_LEVELS, conf=DENSITY_CONF)
+    pa = [b & 0x7F for b in lv_a if b & 0x80]
+    pd = [b & 0x7F for b in lv_d if b & 0x80]
+    if len([d for d in set(pa) if d]) < 3:
+        fail("[levels] the analog run shipped duties %s: fewer than the three "
+             "commanded levels, so the job is not exercising in-run changes"
+             % sorted(set(pa)))
+    if set(pd) != {PWM_PERIOD}:
+        fail("[levels] density shipped a level as duty: %s" % sorted(set(pd)))
+    if len(pd) >= len(pa):
+        fail("[levels] density shipped %d power bytes against analog's %d - "
+             "the level changes are still costing stream bytes" % (len(pd), len(pa)))
+    print("PASS [levels]: analog %d power bytes %s, density %d at full duty"
+          % (len(pa), sorted(set(pa)), len(pd)))
+
+    # --- session I: a level set while idle still cuts (rule 14) ---------
+    idle_s = run_session("idle-s", JOB_IDLE_S)
+    fire_by_duty = {}
+    cur = None
+    for b in idle_s:
+        if b & 0x80:
+            cur = b & 0x7F
+        elif b & 0x10:
+            fire_by_duty[cur] = fire_by_duty.get(cur, 0) + 1
+    want_ticks = IDLE_S_MM / (IDLE_S_FEED / 60.0) * 28160
+    for level in IDLE_S_LEVELS:
+        duty = duty_for(level)
+        got = fire_by_duty.get(duty, 0)
+        if got < want_ticks * 0.9:
+            fail("[idle-s] S%d (duty %d) fired %d ticks, expected ~%d: a level "
+                 "set while the stream was idle was dropped and the move ran "
+                 "dark or at a stale duty (all: %s)"
+                 % (level, duty, got, want_ticks, fire_by_duty))
+    check_termination("idle-s", idle_s)
+    print("PASS [idle-s]: standalone S across idle gaps -> fire ticks per duty %s"
+          % {duty_for(l): fire_by_duty[duty_for(l)] for l in IDLE_S_LEVELS})
 
     print("PASS: all stream emission rules hold")
 

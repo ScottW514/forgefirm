@@ -169,6 +169,14 @@ core mutex stands in for interrupt masking. `GFSINK` unset = null-sink mode
    `^X` mid-motion aborts via kernel `cnc/stop` (controlled decel) and raises an
    alarm; TCP disconnects never kill the process (the dead-man fd stays held).
 
+**Spindle `$`-settings take effect at controller start.** The core
+precomputes the S -> duty mapping once, when the spindle is enabled, and a
+settings write does not re-run it: `$35=16` persists to the eeprom
+immediately and `$$` reports it immediately, but the mapping in force is
+still the one loaded at start until the controller restarts (a mode switch,
+a `POST /controller/stop` + `start`, or a boot). Verified host-side: after a
+runtime `$35=0` the shipped duties stay floored.
+
 **Stored `$`-settings beat freshly baked defaults** — after changing
 `GLOWFORGE_DEFAULTS` values, run `$RST=$` once on the board (settings persist
 in the eeprom file in `/data`).
@@ -193,6 +201,31 @@ power byte (`0x80 | 7-bit duty`, raw PWMSAR counts, 127 = 100 %) inserted ahead
 of the first tick byte it covers, FIRE as bit 4 OR'd into tick bytes. The
 spindle PWM is precomputed to a period of exactly 127, so computed values ARE
 power bytes (`$30` default 1000 → S1000 = 127).
+
+**Dose model.** `laser_power_model` in the shared machine config selects how
+the shipper renders the per-segment value the core computes: `analog` (the
+default) ships it as a power byte, `density` pins the duty at full and
+modulates the FIRE bit instead - a base period of `laser_pulse_ticks`
+(default 20 = 710 us at 28160 Hz, the factory's ~1.43 kHz) whose on-count is
+dithered between adjacent integers with the remainder carried, so densities
+finer than one tick per period average out. The model is selected per arm
+and reported (`laser armed (density)`). Density is what the tube's dead band
+below its lasing threshold requires: every pulse it emits is full-power, so
+no commanded level lands in the band, and a level change inside a run costs
+no stream byte at all. It wants `$35` = 0 - the floor exists only to keep an
+analog duty out of the band, and under density it just clamps the light end
+of the range; the arm warns when a floor is set. Structurally the model is a
+mask on the core's fire state and never a source of one, so emission stays
+exactly where the core commanded it.
+
+An S word takes effect whether or not motion is in progress. Per-segment
+updates carry the level inside a laser block, but an S executed between
+blocks - with the planner drained, so nothing is streaming - arrives only
+through the synchronous spindle path, which publishes the duty without
+touching the fire state; and the next run re-asserts the laser state the
+core last asked for at its first byte, fire only inside an armed window.
+Without those two a standalone S from a sender slow enough to drain the
+planner left the following moves cutting at a stale duty, or dark.
 
 Contract rules enforced structurally: a power byte leads every kernel run
 before any fire bit (a run start resets duty to ~100 %), transitions are
@@ -1042,8 +1075,24 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     the factory's, which still lets dose per unit length rise ~1.8× at a
     corner.
 
-    Owed: the density model itself. `$35` and the analog path stay as the
-    fallback until it lands.
+    The model itself is implemented and host-proven, off by default
+    (`laser_power_model`, above). What the harness holds: density renders
+    the commanded level exactly (level/127 to four decimals at every rung),
+    no level ever reaches PWMSAR, a level change inside a run costs no
+    stream byte where analog pays one each, and - run against the same job
+    under both models - the motion grid is identical and every density FIRE
+    tick is one the analog run also fired, so the model only ever masks.
+
+    Owed: one bench drill to choose the base period, which is the parameter
+    the host cannot answer. The factory never emits a pulse shorter than
+    100 us; a tick here is 35.5 us, and every pulse restarts the discharge,
+    so each carries the strike transient the threshold ladder made visible
+    - dose per pulse is therefore probably not proportional to pulse length
+    and density -> dose may be superlinear at the low end. A density ladder
+    on scrap at two or three `laser_pulse_ticks` values answers both that
+    and the shortest pulse that marks reliably. grblHAL is userspace, so it
+    deploys by replacing the binary; no image flash. Then the raster path
+    below.
 
     What that model means for image engraving, since it decides the design as
     much as cutting does. LightBurn has two image paths. Its 1-bit modes

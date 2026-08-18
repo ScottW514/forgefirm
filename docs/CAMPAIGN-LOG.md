@@ -2775,6 +2775,91 @@ still gets the copy, capture off writes nothing). No acceptance-catalog
 consequence: the path is an off-by-default debug capture with no bearing on
 emission, motion or the release surface.
 
+## 2026-08-17 — the density dose model, phases 1 and 2
+
+Implemented and host-proven; off by default, so nothing about a shipped
+machine changes until `laser_power_model = density` is set.
+
+### The change
+
+The whole hot path is one predicate in the shipper:
+
+    if(gf.cur_fire)          ->   if(gf.cur_fire && (!gf.dith_period || dither_tick()))
+        b |= 0x10;                    b |= 0x10;
+
+That `&&` is the safety property, structurally: the model masks the core's
+fire state and can never be a source of one, so it stays out of the safety
+argument entirely — the armed window, the latch, the coolant gates and the
+hardware chain are all upstream and untouched.
+
+Around it: a fixed base period of `laser_pulse_ticks` (default 20 = 710 us
+at 28160 Hz, the factory's ~1.43 kHz), on-count `level x period / 127` with
+the remainder carried across periods so finer densities average out, the
+on-ticks leading each period so a level renders as one burst rather than
+isolated ticks. The accumulator resets only where the dose itself restarts —
+run boundary, fire off, disarm, abort — never per segment. In density mode
+the duty is pinned: a power byte still leads every kernel run, because the
+run start resets the hardware duty, but it always carries full duty and a
+level never reaches PWMSAR. Selected per arm from the shared machine config
+and reported as `laser armed (density)`; the arm warns when `$35` is set,
+since the floor only clamps the light end of a range that cannot fall into
+the dead band anyway.
+
+### What the harness holds (rules 11-13)
+
+- Density renders the commanded level exactly: levels 2, 3, 7, 15, 25, 38
+  came back as 0.0158, 0.0237, 0.0551, 0.1182, 0.1969, 0.2993 against
+  level/127 of 0.01575, 0.02362, 0.05512, 0.11811, 0.19685, 0.29921.
+- S1000 renders density 1.0000 and still ends dark.
+- Every power byte carries full duty; a level change inside a run costs no
+  stream byte, where analog ships one per level (4 bytes, duties 0/30/52/84,
+  against density's 1).
+- The mask invariant, measured rather than argued: the same job run under
+  both models produced an identical motion grid tick for tick, and all
+  20051 density FIRE ticks fell inside the 169776 the analog run fired.
+- Churn (planner-starve run boundaries) still terminates dark under the
+  model, with no FIRE across a stepless gap.
+
+The analog path is byte-identical to before the change — same byte counts,
+duties and fire ticks on every pre-existing session — so the fallback is
+intact.
+
+### Two things the work turned up
+
+**Spindle `$`-settings take effect at controller start, not at the write.**
+The core precomputes the S -> duty mapping once, when the spindle is
+enabled; a settings write does not re-run it. After a runtime `$35=0` the
+shipped duties stayed floored at 57/64/73/127. So `$35=16` set on the bench
+earlier today persisted immediately and was reported by `$$` immediately,
+but only entered force at the next controller restart — which the capture
+work then supplied. The harness now models this the way an operator would:
+one launch writes the setting, the next runs the job.
+
+**A laser state change made while the stream is idle was lost — found,
+root-caused and fixed.** Reproduced in both dose models, so it was not the
+density model's doing: with a line-at-a-time sender and moves long enough to
+drain the planner, `S100 / G1 X5 / S300 / G1 X5 / S600 / G1 X5` fired only
+the first move and shipped duty 30 three times.
+
+It was two faults wearing one symptom, and fixing the first exposed the
+second. `gf_stream_laser()` dropped transitions while nothing was streaming,
+so nothing re-asserted the state for the next run, which a run end leaves
+dark — the stream engine now records the state the core last asked for
+whether or not it is streaming, and re-asserts it at the first byte of the
+next run, fire only inside an armed window (an abort clears it, so a closed
+window can never be resurrected). With that in, all three moves fired, and
+all three fired at duty 30: the level had never reached the driver at all,
+because `spindleSetState` discarded its `rpm` argument. Per-segment updates
+carry the level inside a laser block, but an S executed between blocks
+arrives only through that synchronous path. It now publishes the duty, and
+only the duty — fire stays where `spindleUpdatePWM` and its gates put it,
+so the new path carries no consent to fire.
+
+Rule 14 in the harness is the regression: the same standalone-S job must
+show each level firing its own move. It does — 28338 fire ticks each at
+duties 30, 52 and 84, where before the fix duty 30 held all 85014 and the
+two other levels never appeared.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
