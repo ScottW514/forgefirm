@@ -3042,12 +3042,35 @@ level real pulses, the minimum pulse to keep them strikeable, and the floor to
 put the user's range on the band that works — the same three pieces the
 factory uses, arrived at from this bench's own measurements.
 
-Owed: the shipping defaults. `laser_power_model` still defaults to `analog`,
-so none of this reaches a machine until the key is set, and `$35` must move
-with the model (16 is the analog duty floor, 10 the density floor; the wrong
-pairing is a dead band either way). Both want one real job at a production
-feed first — every ladder here ran at F300 or F100, where dose per millimeter
-is generous, and no raster has run at all.
+### The defaults flipped
+
+`laser_power_model` now defaults to `density` and `$35` to 10, so a stock
+machine runs the model and a commanded 1 % marks. The analog path stays as an
+explicit `laser_power_model = analog`.
+
+The two settings are coupled and the pairing matters: `$35` is a **density**
+floor under the shipped model and a **duty** floor under the fallback, wanting
+~10 and ~16 respectively, and the wrong pairing is a dead band in either
+direction. The arm warns on both mismatches — a zero floor under density,
+where the bottom of the S range asks for pulses too far apart to re-strike,
+and a sub-lasing floor under analog.
+
+Test-side consequences worth noting, since the default reaches into the
+harness: every analog session in `laser_stream_test.py` now selects its model
+explicitly rather than inheriting it, or the flip would have silently turned
+them into density runs and taken the analog fallback's coverage with them.
+`laser_arm_test` asserts the inverse of what it used to — no config key now
+means density — and `laser.power-floor` carries the new floor and its
+PWMSAR minimum. All ten stream sessions, both C harnesses and the lifecycle
+harness pass on the new defaults; the analog duties shift exactly as the new
+floor predicts (min_value 12, gradient 0.115).
+
+Owed: validation at a production feed. Every ladder behind these defaults ran
+at F300 or F100 at constant power, so none of them exercised M4's velocity
+scaling into corners, a real sender's mid-run level changes, or the raster
+path, which has not run at all. The arithmetic says dotting will not be the
+problem — at 10 % density the pulse interval is 1.07 ms, 35 µm at
+2000 mm/min against a ~200 µm spot — but that is reasoning, not a cut.
 
 ## Superseded status notes
 

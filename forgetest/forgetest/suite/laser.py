@@ -26,10 +26,13 @@ _LASER_COVERS = [("grblhal-glowforge", "src/**"), ("kernel-module-glowforge", "*
                  ("forgectrl", "src/status.c"), ("forgectrl", "src/main.c")]
 
 # boards/glowforge.h: DEFAULT_SPINDLE_PWM_MIN_VALUE against the hardware's
-# 127-count PWM period. The tube's measured lasing threshold is PWMSAR 20.
-POWER_FLOOR_PCT = 16.0
+# 127-count PWM period. Under the shipped FIRE-density dose model this is
+# a density floor: the bottom of the S range maps onto it, measured as
+# the lowest level that still marks. (Under the analog fallback the same
+# setting is a duty floor and wants ~16, the duty this tube lases at.)
+POWER_FLOOR_PCT = 10.0
 PWM_PERIOD = 127
-PWMSAR_FLOOR_MIN = 20
+PWMSAR_FLOOR_MIN = 12
 
 ARM_CUE = ("LIVE FIRE. Eye protection on, exhaust running, fire watch and extinguisher in reach, "
            "scrap under the head with room to move (%s), lid closed. When the job starts the "
@@ -228,11 +231,11 @@ def wait_disarm(ctx, timeout):
 @test("laser.power-floor", title="The shipped duty floor holds commanded power above the lasing threshold",
       subsystem="laser", kind="auto", est_min=1,
       covers=[("grblhal-glowforge", "src/**")],
-      description="The tube lases only above ~16 % duty, so $35 must floor every nonzero S there: "
-                  "unfloored, M4's velocity-scaled power falls into the dead band at every corner "
-                  "and reversal and marks nothing. Reads $$ and checks the floor is the "
+      description="$35 floors the bottom of the laser's output range, and unfloored the low end "
+                  "of S asks for pulses too far apart for the discharge to re-strike - a "
+                  "commanded 1 % would emit nothing. Reads $$ and checks the floor is the "
                   "commissioned percent, that $31 is 0 (the floor, not $31, sets the bottom of "
-                  "the range), and that the floor lands at or above PWMSAR 20. Reports the "
+                  "the range), and that it lands at or above the measured minimum. Reports the "
                   "stored setting, which is the one in force after any controller start.")
 def power_floor(ctx):
     ev = ctx.evidence
@@ -263,7 +266,7 @@ def power_floor(ctx):
               "controller restart, since the spindle mapping is precomputed at start",
               floor_pct, POWER_FLOOR_PCT)
     ctx.check(counts >= PWMSAR_FLOOR_MIN,
-              "the floor lands at PWMSAR %d, below the %d the tube needs to lase",
+              "the floor lands at PWMSAR %d, below the %d the tube needs",
               counts, PWMSAR_FLOOR_MIN)
     ctx.check(rpm_min == 0, "$31 is %s, not 0: the bottom of the S range is no longer the floor",
               rpm_min)

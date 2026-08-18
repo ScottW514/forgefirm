@@ -64,13 +64,15 @@ BIN = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else "build-native/grblHA
 PORT = 2399
 STEPS_PER_MM = 53.333
 
-# The S -> duty mapping the board defaults produce: $30 = 1000, $31 = 0,
+# The S -> level mapping the board defaults produce: $30 = 1000, $31 = 0,
 # and a $35 floor (boards/glowforge.h DEFAULT_SPINDLE_PWM_MIN_VALUE)
-# against the hardware's 127-count period. Changing the board's floor
+# against the hardware's 127-count period. The shipped floor is the
+# density one; the analog sessions below select their model explicitly
+# rather than inheriting the default, so both paths stay covered. Changing the board's floor
 # changes every expectation below, which is why it is mirrored here
 # rather than inferred from the stream.
 PWM_PERIOD = 127
-PWM_MIN_PCT = 16.0
+PWM_MIN_PCT = 10.0
 PWM_MIN = int(PWM_PERIOD * PWM_MIN_PCT / 100.0)
 RPM_MAX = 1000.0
 
@@ -139,6 +141,7 @@ JOB_LADDER.append("M5")
 # the floor exists only to keep an analog duty out of the tube's dead
 # band - under density every pulse is full-power, and a floor would just
 # clamp the light end of the range.
+ANALOG_CONF = "laser_power_model = analog\n"
 DENSITY_PERIOD = 20
 DENSITY_MIN_TICKS = 3
 DENSITY_CONF = ("laser_power_model = density\n"
@@ -550,7 +553,7 @@ def count_fire(data):
 
 def main():
     # --- session A: M4 dynamic power, rules 1-6 + 7-8 -------------------
-    data = run_session("m4", JOB_M4)
+    data = run_session("m4", JOB_M4, conf=ANALOG_CONF)
     fire_ticks, powers, x_max, tail_steps = check_m4_job(data)
     check_termination("m4", data)
     gap_a = check_fire_gaps("m4", data)
@@ -560,7 +563,7 @@ def main():
              powers, x_max, tail_steps, gap_a))
 
     # --- session B: M3 constant power to stream end, rule 7 -------------
-    data = run_session("m3-term", JOB_M3_TERM)
+    data = run_session("m3-term", JOB_M3_TERM, conf=ANALOG_CONF)
     if not count_fire(data):
         fail("[m3-term] no FIRE bits in the stream")
     check_termination("m3-term", data)
@@ -569,7 +572,7 @@ def main():
           % (len(data), count_fire(data), gap_b))
 
     # --- session C: cycle churn, rules 8-9 ------------------------------
-    data = run_session("churn", JOB_CHURN)
+    data = run_session("churn", JOB_CHURN, conf=ANALOG_CONF)
     if not count_fire(data):
         fail("[churn] no FIRE bits in the stream")
     check_termination("churn", data)
@@ -578,7 +581,7 @@ def main():
           % (len(data), count_fire(data), gap_c))
 
     # --- session D: power ladder, rule 10 -------------------------------
-    data = run_session("ladder", JOB_LADDER)
+    data = run_session("ladder", JOB_LADDER, conf=ANALOG_CONF)
     counts = check_power_ladder("ladder", data, LADDER_DUTY)
     check_termination("ladder", data)
     gap_d = check_fire_gaps("ladder", data)
@@ -632,7 +635,7 @@ def main():
           % (len(ch), count_fire(ch), gap_e))
 
     # --- session H: a level change inside a run costs no byte -----------
-    lv_a = run_session("levels-analog", JOB_LEVELS)
+    lv_a = run_session("levels-analog", JOB_LEVELS, conf=ANALOG_CONF)
     lv_d = run_session("levels-density", JOB_LEVELS, conf=DENSITY_CONF)
     pa = [b & 0x7F for b in lv_a if b & 0x80]
     pd = [b & 0x7F for b in lv_d if b & 0x80]
@@ -649,7 +652,7 @@ def main():
           % (len(pa), sorted(set(pa)), len(pd)))
 
     # --- session I: a level set while idle still cuts (rule 14) ---------
-    idle_s = run_session("idle-s", JOB_IDLE_S)
+    idle_s = run_session("idle-s", JOB_IDLE_S, conf=ANALOG_CONF)
     fire_by_duty = {}
     cur = None
     for b in idle_s:

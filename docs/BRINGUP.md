@@ -203,9 +203,9 @@ spindle PWM is precomputed to a period of exactly 127, so computed values ARE
 power bytes (`$30` default 1000 → S1000 = 127).
 
 **Dose model.** `laser_power_model` in the shared machine config selects how
-the shipper renders the per-segment value the core computes: `analog` (the
-default) ships it as a power byte, `density` pins the duty at full and
-modulates the FIRE bit instead - a base period of `laser_pulse_ticks`
+the shipper renders the per-segment value the core computes: `density` (the
+default) pins the duty at full and modulates the FIRE bit, `analog` ships the
+value as a power byte instead - a base period of `laser_pulse_ticks`
 (default 20 = 710 us at 28160 Hz, the factory's ~1.43 kHz) whose on-count is
 dithered between adjacent integers with the remainder carried, so densities
 finer than one tick per period average out. The model is selected per arm
@@ -221,7 +221,10 @@ ticks. The debt is conserved, so the average density is unchanged: at level
 2 the stream goes from 444 one-tick bursts to 147 three-tick bursts, same
 density to four decimals. Under this model `$35` stops being a duty floor
 and becomes a density floor - the control that maps S onto the band that
-does useful work, which is what the factory does with its own scale. Structurally the model is a
+does useful work, which is what the factory does with its own scale. It
+ships at 10, putting a commanded 1 % at 10.2 % density; **selecting `analog`
+means raising it to ~16**, the duty this tube lases at, and the arm warns on
+either mismatch (a zero floor under density, a sub-lasing one under analog). Structurally the model is a
 mask on the core's fire state and never a source of one, so emission stays
 exactly where the core commanded it.
 
@@ -1138,14 +1141,20 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     onto that band, which is what the factory does and what `$35` is under
     this model.
 
-    Owed: the shipping defaults. The model, the minimum pulse and the
-    scale are all proven on hardware, but `laser_power_model` still
-    defaults to `analog`, so nothing of this reaches a machine until the
-    key is set. Flipping the default means `$35` must move with it - 16 is
-    the analog duty floor, 10 is the density floor, and the wrong pairing
-    is a dead band either way - and it wants one real job at a production
-    feed first: every ladder here ran at F300 or F100, where dose per
-    millimeter is generous, and no raster has run at all.
+    **The defaults are flipped:** `laser_power_model` defaults to `density`
+    and `$35` to 10, the density floor, so a stock machine runs the model
+    and a commanded 1 % marks. The analog path remains as `laser_power_model
+    = analog`, and a machine switched to it must raise `$35` to ~16 or low
+    S lands in the duty dead band; the arm warns on either mismatch.
+
+    Owed: validation at production feeds. Every ladder behind these
+    defaults ran at F300 or F100, where dose per millimeter is generous and
+    the power is constant - none of them exercised M4's velocity scaling
+    into corners, a real sender's level changes, or the raster path, which
+    has not run at all. The arithmetic says dotting will not be the
+    problem (at 10 % density the pulse interval is 1.07 ms, which at
+    2000 mm/min is 35 um against a ~200 um spot), but that is reasoning,
+    not a cut.
 
     For reference, the factory maps its whole 1-100 power
     scale onto density 18.9-79.5 % (fit from the three captures; Full Power
