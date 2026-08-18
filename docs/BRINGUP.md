@@ -724,6 +724,19 @@ not a release.
   corner instead of the ~7.7× it would rise with no compensation. On the UI
   scale, PP 1→100 is linear in density (~0.006 per unit, intercept ~0.189) and
   Full Power sits off that line, where PP ~134 would land.
+- **Density dose limits** (measured on five ladders, `dladder`): under the
+  FIRE-density model the interval between pulses at a level below the
+  minimum is `min_ticks x tick / density` - **the base period cancels**,
+  which is why periods 10, 20 and 40 gave identical results. The tube
+  **strikes down to ~5 % density at a 2.26 ms interval** (`min_ticks` 3,
+  106 us pulses) and **fails to strike at 4.51 ms** (`min_ticks` 6, 213 us):
+  lengthening the pulse at fixed density lengthens the gap in proportion,
+  and the gap is what kills re-striking. It **marks from ~10 %** at F300 on
+  scrap. `min_ticks` 3 is essentially the factory's own structure - its
+  6.5 % engrave jobs put 100 us pulses 1.54 ms apart, against 1.64 ms for
+  `min_ticks` 3 at that density - and 6 is outside anything the factory
+  does. Below ~5 % no pulse shape reaches the tube: the interval grows as
+  1/density, so 1 % implies an 11 ms gap, five times what already failed.
 - **Cooling operating point**: 40 % heater duty, 50 s window, flow-rise
   threshold 14.4 °C, re-checks every 150 s. Below ~40 % duty the stagnant loop
   sheds the heater's output by convection well enough to mimic flow (at 30 %,
@@ -1112,6 +1125,13 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
 
     With a minimum in place the low end is decoupled from the base period,
     so the period is free to be chosen on other grounds. It stays at 20.
+
+    **The low end is a scaling problem, not a modulation one.** The band
+    this tube gives is ~5 % density to strike and ~10 % to mark (facts
+    bank); below that the pulse interval outruns the discharge whatever the
+    pulse shape. So a commanded 1 % can only be made useful by mapping it
+    onto that band, which is what the factory does and what `$35` is under
+    this model.
 
     Owed: the user-facing scale. The factory maps its whole 1-100 power
     scale onto density 18.9-79.5 % (fit from the three captures; Full Power

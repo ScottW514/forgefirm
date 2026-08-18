@@ -2981,15 +2981,39 @@ against the result rather than for it — this ladder started at MPos 0,0 after
 the controller restart, so it may be on different material than the stacked
 Y=0/24/48/72 runs.
 
-Owed next: whether a longer minimum reaches further down (`min_ticks = 6`,
-213 µs, is set on the bench for the next ladder), and then the user-facing
-scale. Under this model `$35` and `$36` are a density floor and ceiling, so
-mapping S onto the usable band is a settings choice rather than new code, but
-the floor's value wants a finer ladder than the 10 %→20 % step. The trick has
-a ceiling of its own: a longer minimum at fixed dose means longer gaps, and
-once gap × feed approaches the beam spot a line dots. At 5 mm/s a 4.5 ms gap
-is 22 µm against a ~200 µm spot; at 2000 mm/min it is 150 µm, where dotting
-would start to show.
+### The sixth ladder: a longer minimum is worse, and why
+
+`min_ticks = 6` (213 µs), same ladder otherwise. **It broke 5 % striking** —
+seven current segments again, boundaries at 14.5, ~19.85, 25.2, 30.4, 35.9
+and 41.1 s, segments 4.4–4.9 s with none double-length, fire spanning
+9.5 → 46.0 s = 36.5 s against 41.4 s for eight rungs, and the flat saturated
+tail anchoring rung 8. Seven rungs marked, matching.
+
+The arithmetic explains it. Below the minimum the model emits `min` ticks
+every `min/on` periods, so the interval between pulse starts is
+
+    interval = min_ticks × tick / density
+
+and **the base period cancels** — which retroactively explains why periods
+10, 20 and 40 gave identical results in the first three ladders. At 5 %
+density that is 2.26 ms at `min_ticks` 3, which struck, against 4.51 ms at 6,
+which did not. Doubling the minimum doubles the gap as well as the pulse, and
+the gap is what decides: the discharge is re-struck each pulse and past
+roughly 2–4 ms it has decayed too far to catch.
+
+That also puts `min_ticks` 3 at the factory's own operating point — its 6.5 %
+engrave jobs place 100 µs pulses 1.54 ms apart, against 1.64 ms for
+`min_ticks` 3 at that density — and puts 6 outside anything the factory does,
+in the direction that fails. The bench is back at 3.
+
+**Measured band for this tube: strikes from ~5 %, marks from ~10 % at F300.**
+
+Which closes the pulse-structure route to a usable 1 %. The interval grows as
+1/density, so 1 % implies an 11 ms gap, five times what already failed —
+no pulse shape reaches down there. The low end is a scaling problem: map the
+user's 1–100 onto the band that works, via `$35` as the density floor, which
+is what the factory does and why its cut scale starts at 18.9 % while its
+engraves reach 6.5 %. Both sit inside the band measured here independently.
 
 ## Superseded status notes
 
