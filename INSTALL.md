@@ -1,5 +1,15 @@
 # Installing OpenGlow/ForgeFIRM
 
+> # ⚠️ IN DEVELOPMENT — NOT YET RELEASED
+>
+> **ForgeFIRM has no public release yet.** No images are published, nothing here
+> is installable, and there is no supported way to put this on a machine. The
+> documentation describes the firmware as it is being built and validated on the
+> bench — it is here to be read, not followed.
+>
+> If you come across a file claiming to be a ForgeFIRM image, it did not come
+> from this project.
+
 ForgeFIRM installs **alongside** the factory firmware on the stock eMMC,
 using the factory's own A/B rootfs slot scheme: the installer writes
 ForgeFIRM to the slot the factory firmware is *not* running from, and

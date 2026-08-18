@@ -1,5 +1,15 @@
 # OpenGlow/ForgeFIRM Firmware for Glowforge
 
+> # ⚠️ IN DEVELOPMENT — NOT YET RELEASED
+>
+> **ForgeFIRM has no public release yet.** No images are published, nothing here
+> is installable, and there is no supported way to put this on a machine. The
+> documentation describes the firmware as it is being built and validated on the
+> bench — it is here to be read, not followed.
+>
+> If you come across a file claiming to be a ForgeFIRM image, it did not come
+> from this project.
+
 Open-source firmware for Glowforge brand CNC lasers. ForgeFIRM replaces the
 cloud-dependent factory software on the **stock control board** — no hardware
 modification — and gives the machine a local controller, a local web control
