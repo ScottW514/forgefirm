@@ -59,7 +59,7 @@ is running — GRBL or cloud — is a client of it, over two channels:
 Two properties of that split are worth understanding, because they explain the
 machine's behavior in odd situations:
 
-**A missing verdict is a bad verdict.** If the report is absent or more than two
+**A missing verdict is a bad verdict.** If the verdict is absent or more than two
 seconds old, a controller treats it as *fire blocked, hold*. The engine going
 away looks exactly like a fault, never like permission.
 
