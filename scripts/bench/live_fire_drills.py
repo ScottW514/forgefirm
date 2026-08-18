@@ -521,6 +521,8 @@ DLADDER_PITCH = 3.0                     # mm between rungs
 STREAM_RATE_HZ = 28160                  # machine tick (GFSINK_RATE default)
 PWM_PERIOD = 127                        # 7-bit power byte against PWMSAR
 CONF = os.environ.get('GFHOME_CONF') or '/data/forgefirm.conf'
+PULSE_MIN_KEY = 'laser_pulse_min_ticks'
+PULSE_MIN_DEFAULT = 3                   # glowforge_laser.c PULSE_MIN_TICKS_DEFAULT
 
 
 def conf_get(key):
@@ -621,9 +623,16 @@ def drill_dladder(g):
 
     # What each rung actually emits. The on-count is dithered between
     # adjacent integers, so the burst below is the mean.
+    min_ticks = int(conf_get(PULSE_MIN_KEY) or PULSE_MIN_DEFAULT)
+    if min_ticks < 1:
+        min_ticks = 1
     print('period %d ticks = %.0f us at %d Hz -> %.0f Hz pulse rate'
           % (period, period * 1e6 / STREAM_RATE_HZ, STREAM_RATE_HZ,
              STREAM_RATE_HZ / float(period)))
+    print('minimum pulse %d ticks = %.0f us (%s): below it the model skips'
+          % (min_ticks, min_ticks * 1e6 / STREAM_RATE_HZ,
+             PULSE_MIN_KEY if conf_get(PULSE_MIN_KEY) else 'driver default'))
+    print('periods and carries the debt, so the pulse never falls under it.')
     print('rungs (drawn in order, alternating direction, +Y between):')
     levels = []
     for pct in DLADDER_PCT:
@@ -638,8 +647,12 @@ def drill_dladder(g):
         # skipped instead - that is the short end this drill is for.
         lo = int(on)
         tick_us = 1e6 / STREAM_RATE_HZ
-        if lo == 0:
-            burst = '1 tick (%.0f us) on ~%.0f%% of periods' % (tick_us, on * 100)
+        if on < min_ticks:
+            # Below the minimum the model skips periods and carries the
+            # debt, so the pulse holds at the minimum and the rate drops.
+            burst = '%d ticks (%.0f us) every %.1f periods (%.0f Hz)' % (
+                min_ticks, min_ticks * tick_us, min_ticks / on,
+                STREAM_RATE_HZ / float(period) * on / min_ticks)
         elif on == lo:
             burst = '%d ticks (%.0f us)' % (lo, lo * tick_us)
         else:

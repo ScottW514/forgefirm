@@ -2949,10 +2949,47 @@ only what it must. Rule 15 in the stream harness holds both halves: no burst
 below the minimum (excepting one clipped by fire going off mid-burst), and
 the rendered density still exact.
 
-Owed next: the user-facing scale. Under this model `$35` and `$36` are a
-density floor and ceiling, so mapping S onto the usable band is a settings
-choice rather than new code — but the floor's value wants a finer ladder than
-the 10 %→20 % step these four runs give.
+### The fifth ladder, and a conclusion retracted
+
+Same ladder, period 20, F300, with the 3-tick minimum in place. **The floor
+moved down a full rung: only 5 % failed to mark, and 5 % now strikes.**
+
+The trace carries eight current segments where the F100 run had seven.
+Segmenting by time rather than by zeros — at 5 % density the sampled current
+aliases, so isolated zeros appear mid-rung and cannot serve as boundaries —
+the rung period is 5.25 s and lines up end to end: fire begins at 6.2 s,
+exactly at rung 1's start, boundaries fall at 11.4, 16.6, 21.9, 27.3, 32.6,
+38.1 and 43.3 s, and the span is 42.0 s against 41.4 s for eight rungs. The
+final segment reads 937–981 flat and saturated, which can only be full
+density. Rung 1 shows peaks of 291, 286 and 204 where the F100 run held a
+flat zero for the rung's entire fifteen seconds.
+
+**This retracts the conclusion in the entry above.** Pulse length is not
+irrelevant: 10 % moved from no mark at F100 — with three times the dose per
+millimeter — to a mark at F300, at the same density, the only change being
+its pulses growing from 36–71 µs stubs to 106 µs. The matched-pairs argument
+was sound but drawn entirely from comparisons at or above 20 % density, where
+every pulse length in play was already sufficient; it generalized from the one
+regime where pulse length does not bite. Above ~100 µs dose governs, below it
+pulse length does, and below ~36 µs the supply does not strike at all. The
+factory's 100 µs quantum sits exactly on that boundary.
+
+Not read into: the low-rung current means (76 and 82 raw for 5 % and 10 %).
+At those duties a 3.3 Hz point sample of a pulsed current carries
+presence-versus-absence and nothing more. Noted as a confound, though it cuts
+against the result rather than for it — this ladder started at MPos 0,0 after
+the controller restart, so it may be on different material than the stacked
+Y=0/24/48/72 runs.
+
+Owed next: whether a longer minimum reaches further down (`min_ticks = 6`,
+213 µs, is set on the bench for the next ladder), and then the user-facing
+scale. Under this model `$35` and `$36` are a density floor and ceiling, so
+mapping S onto the usable band is a settings choice rather than new code, but
+the floor's value wants a finer ladder than the 10 %→20 % step. The trick has
+a ceiling of its own: a longer minimum at fixed dose means longer gaps, and
+once gap × feed approaches the beam spot a line dots. At 5 mm/s a 4.5 ms gap
+is 22 µm against a ~200 µm spot; at 2000 mm/min it is 150 µm, where dotting
+would start to show.
 
 ## Superseded status notes
 

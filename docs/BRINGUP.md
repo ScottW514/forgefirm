@@ -1090,22 +1090,28 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     under both models - the motion grid is identical and every density FIRE
     tick is one the analog run also fired, so the model only ever masks.
 
-    The base period is settled: four bench ladders (F300 at periods 20, 40
-    and 10, then F100 at 20) put the same six rungs on the material every
-    time, and the matched pairs across periods separate the variables - at
+    **Both dose and pulse length matter, in different regimes.** Four
+    ladders run with no minimum pulse (F300 at periods 20, 40 and 10, then
+    F100 at 20) put the same six rungs on the material every time - 20 %
+    and up - and their matched pairs looked like a clean answer: at
     identical pulse length, halving density killed the mark; at identical
-    density, varying pulse length 3x changed nothing. Feed did not move it
-    either: 10 % at F100 carries 44 % more energy per millimeter than 20 %
-    at F300, which marks, and still left nothing. So the low-end marking
-    limit is average power, not dose per length and not pulse length, and
-    the period can be chosen on other grounds. It stays at 20.
+    density, varying pulse length 3x changed nothing; and feed did not move
+    it either, 10 % at F100 carrying 44 % more energy per millimeter than a
+    marking 20 % at F300 and still leaving nothing.
 
-    What the ladders did expose is a floor of our own making, since fixed:
-    at 5 % the model emitted 36 us stubs and the `hv_current` trace shows
-    **no discharge at all** for that rung, while 10 % drew current for its
-    full 15 s and simply marked nothing. The factory never emits below one
-    100 us tick, and reaches low density by skipping windows instead -
-    which is now what `laser_pulse_min_ticks` does.
+    That reading was too broad. Every one of those comparisons sat at or
+    above 20 % density, where the pulses in play were already long enough.
+    A fifth ladder with a 3-tick minimum moved 10 % from nothing to a mark
+    at the **same density and less dose**, purely by lengthening its pulses
+    from 36-71 us to 106 us. So above ~100 us the outcome follows dose;
+    below it pulse length dominates - too short and the energy does
+    nothing, shorter still (36 us, one tick) and the supply does not strike
+    at all, which the `hv_current` trace showed as a rung with no discharge
+    for its full 15 s. That is what the factory's 100 us quantum protects,
+    and what `laser_pulse_min_ticks` now protects.
+
+    With a minimum in place the low end is decoupled from the base period,
+    so the period is free to be chosen on other grounds. It stays at 20.
 
     Owed: the user-facing scale. The factory maps its whole 1-100 power
     scale onto density 18.9-79.5 % (fit from the three captures; Full Power
