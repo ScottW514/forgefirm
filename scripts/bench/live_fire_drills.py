@@ -59,8 +59,10 @@ Drills (pass a name):
             ~1.43 kHz, and 40 and 10 bracket it. Two questions the
             material answers: does mark depth track density linearly,
             and how short a burst still marks. Requires
-            laser_power_model = density and $35 = 0 (a floor lifts every
-            rung); sets laser_pulse_ticks itself when run on the board.
+            laser_power_model = density; reads $30/$31/$35/$36 and
+            reports the mapping, so a run with a density floor set shows
+            what a shipped machine would actually emit. Sets
+            laser_pulse_ticks itself when run on the board.
               dladder [period] [F]      e.g. dladder 20 300
   expstop   Armed kill on the EXPECTED-stop path: start a mark job,
             then mid-burn POST /controller/stop (the supervisor stops
@@ -513,9 +515,10 @@ def drill_pthresh(g):
 
 # --- density ladder -------------------------------------------------------
 
-# Dose levels in percent of full. Even spacing, because the question is
-# whether mark depth tracks density linearly rather than where it stops.
-DLADDER_PCT = (5, 10, 20, 30, 40, 60, 80, 100)
+# Dose levels in percent of full, weighted to the bottom: with a density
+# floor set, what matters is whether the lowest levels a user can dial in
+# still mark, not how the top half behaves.
+DLADDER_PCT = (1, 2, 5, 10, 20, 40, 70, 100)
 DLADDER_LEN = 25.0                      # mm of burn per rung
 DLADDER_PITCH = 3.0                     # mm between rungs
 STREAM_RATE_HZ = 28160                  # machine tick (GFSINK_RATE default)
@@ -603,13 +606,27 @@ def drill_dladder(g):
         print('Set it in %s and re-run. The model is read at each arm, so' % CONF)
         print('this key needs no controller restart.')
         return 2
+    # The core maps S onto the level this model renders as density, and
+    # $35/$36 are its floor and ceiling. Read them rather than assuming:
+    # with a floor set, the ladder is testing the shipping mapping, and
+    # every rung sits higher than its commanded percent.
     floor = grbl_setting(g, '$35')
-    if floor is None or floor > 0.0:
-        print('PRECONDITION FAILED: $35 is %s, need 0.' % floor)
-        print('Send $35=0 and restart the controller - the S -> duty mapping')
-        print('is precomputed once, when the spindle is enabled, so a runtime')
-        print('write does not reach it.')
+    ceil = grbl_setting(g, '$36')
+    rpm_max = grbl_setting(g, '$30')
+    rpm_min = grbl_setting(g, '$31')
+    if None in (floor, ceil, rpm_max, rpm_min) or rpm_max <= rpm_min:
+        print('PRECONDITION FAILED: cannot read $30/$31/$35/$36 (%s/%s/%s/%s)'
+              % (rpm_max, rpm_min, floor, ceil))
         return 2
+    min_value = int(PWM_PERIOD * floor / 100.0)
+    max_value = int(PWM_PERIOD * ceil / 100.0)
+    gradient = (max_value - min_value) / (rpm_max - rpm_min)
+    print('mapping: $30=%g $31=%g $35=%g $36=%g -> density %.1f%%..%.1f%%'
+          % (rpm_max, rpm_min, floor, ceil,
+             100.0 * min_value / PWM_PERIOD, 100.0 * max_value / PWM_PERIOD))
+    if floor > 0.0:
+        print('a floor is set, so the rungs below it all land on it - that is')
+        print('the shipping mapping, not the raw range.')
     if conf_set('laser_pulse_ticks', str(period)):
         print('laser_pulse_ticks = %d (written to %s)' % (period, CONF))
     else:
@@ -636,8 +653,9 @@ def drill_dladder(g):
     print('rungs (drawn in order, alternating direction, +Y between):')
     levels = []
     for pct in DLADDER_PCT:
-        sval = int(round(1000 * pct / 100.0))
-        level = int(sval * PWM_PERIOD / 1000)    # the core's mapping at $35 = 0
+        sval = int(round(rpm_max * pct / 100.0))
+        level = int((sval - rpm_min) * gradient) + min_value
+        level = min(level, max_value)
         dens = level / float(PWM_PERIOD)
         on = dens * period
         levels.append((pct, sval, dens))
@@ -710,9 +728,10 @@ def drill_dladder(g):
     print(' 2. THE SHORT END - the lowest rung that still marks cleanly. Its')
     print('    burst length in us is the number to keep; a rung that stops')
     print('    marking sets the floor this base period can reach.')
-    print('Then run the same ladder at 40 and at 10 on the same material and')
-    print('compare the low rungs across the three: that is what picks the')
-    print('base period. Nothing else in the stack can answer it.')
+    print('The base period does not decide the low end: below the minimum')
+    print('the pulse interval is min_ticks x tick / density, which the')
+    print('period cancels out of. What sets the bottom is the density')
+    print('floor ($35), so a rung that fails is telling you to raise it.')
     return samples
 
 

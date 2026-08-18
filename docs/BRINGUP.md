@@ -737,6 +737,11 @@ not a release.
   `min_ticks` 3 at that density - and 6 is outside anything the factory
   does. Below ~5 % no pulse shape reaches the tube: the interval grows as
   1/density, so 1 % implies an 11 ms gap, five times what already failed.
+  **The scale closes that gap instead:** `$35` = 10 maps S onto 9.4-100 %
+  density, putting a commanded 1 % at 10.2 %, and a ladder weighted to the
+  bottom (1, 2, 5, 10, 20, 40, 70, 100 % of S) then marked on **all eight
+  rungs**, with eight current segments and means rising 136 -> 968. So a
+  user's 1 % is a real, visible mark rather than silence.
 - **Cooling operating point**: 40 % heater duty, 50 s window, flow-rise
   threshold 14.4 °C, re-checks every 150 s. Below ~40 % duty the stagnant loop
   sheds the heater's output by convection well enough to mimic flow (at 30 %,
@@ -1133,7 +1138,16 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     onto that band, which is what the factory does and what `$35` is under
     this model.
 
-    Owed: the user-facing scale. The factory maps its whole 1-100 power
+    Owed: the shipping defaults. The model, the minimum pulse and the
+    scale are all proven on hardware, but `laser_power_model` still
+    defaults to `analog`, so nothing of this reaches a machine until the
+    key is set. Flipping the default means `$35` must move with it - 16 is
+    the analog duty floor, 10 is the density floor, and the wrong pairing
+    is a dead band either way - and it wants one real job at a production
+    feed first: every ladder here ran at F300 or F100, where dose per
+    millimeter is generous, and no raster has run at all.
+
+    For reference, the factory maps its whole 1-100 power
     scale onto density 18.9-79.5 % (fit from the three captures; Full Power
     is off that line at ~99.7 %), so its "1 %" is the bottom of the band
     that does useful work rather than 1 % of the physical range. Under the

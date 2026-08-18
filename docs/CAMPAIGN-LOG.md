@@ -3009,11 +3009,45 @@ in the direction that fails. The bench is back at 3.
 **Measured band for this tube: strikes from ~5 %, marks from ~10 % at F300.**
 
 Which closes the pulse-structure route to a usable 1 %. The interval grows as
-1/density, so 1 % implies an 11 ms gap, five times what already failed —
-no pulse shape reaches down there. The low end is a scaling problem: map the
-user's 1–100 onto the band that works, via `$35` as the density floor, which
-is what the factory does and why its cut scale starts at 18.9 % while its
-engraves reach 6.5 %. Both sit inside the band measured here independently.
+1/density, so 1 % implies an 11 ms gap, five times what already failed — no
+pulse shape reaches down there. The low end is a scaling problem.
+
+### The seventh ladder: the scale, and the goal met
+
+`$35 = 10` — a density floor under this model, not a duty floor — with the
+ladder reweighted to the bottom of the user scale (1, 2, 5, 10, 20, 40, 70,
+100 % of S), since with a floor in place what matters is whether the lowest
+levels a user can dial in still mark.
+
+The mapping puts S onto 9.4–100 % density, so a commanded 1 % lands at 10.2 %,
+just above the ~10 % marking floor the earlier ladders measured. **All eight
+rungs marked.** The trace carries eight current segments — boundaries at 14.3,
+19.5, ~24.85, 30.2, 35.4, 40.9 and 46.1 s, fire spanning 9.1 → 51.1 s = 42.0 s
+against exactly 8 × 5.25 — with means climbing monotonically:
+
+| rung | commanded | density | mean current |
+|---|---|---|---|
+| 1 | **1 %** | 10.2 % | 136 |
+| 2 | 2 % | 11.0 % | 190 |
+| 3 | 5 % | 13.4 % | 214 |
+| 4 | 10 % | 18.1 % | 262 |
+| 5 | 20 % | 27.6 % | 331 |
+| 6 | 40 % | 45.7 % | 340 |
+| 7 | 70 % | 72.4 % | 444 |
+| 8 | 100 % | 100 % | 968 flat |
+
+So the original goal is met: a user's 1 % is a real, visible mark rather than
+silence, and 100 % is full power. It took the density model to make every
+level real pulses, the minimum pulse to keep them strikeable, and the floor to
+put the user's range on the band that works — the same three pieces the
+factory uses, arrived at from this bench's own measurements.
+
+Owed: the shipping defaults. `laser_power_model` still defaults to `analog`,
+so none of this reaches a machine until the key is set, and `$35` must move
+with the model (16 is the analog duty floor, 10 the density floor; the wrong
+pairing is a dead band either way). Both want one real job at a production
+feed first — every ladder here ran at F300 or F100, where dose per millimeter
+is generous, and no raster has run at all.
 
 ## Superseded status notes
 
