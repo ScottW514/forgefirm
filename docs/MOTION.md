@@ -293,8 +293,18 @@ ForgeFIRM reproduces the factory machine's behavior:
 - **Idle lid cycles are ignored.** Opening the lid to load material, or
   powering up with it open, does not leave the controller parked — senders
   connect normally.
-- Jogs, homing and hunts are not lid-gated (the beam is blocked in hardware
-  regardless).
+- **Jogs are not lid-gated.** The core is blind to the door signal while it is
+  idle, jogging or homing, so a jog both starts and runs with the lid open —
+  the beam is blocked in hardware regardless.
+- **Homing is lid-gated in practice**, even though the core does not see the
+  door during `$H`. With `homing_mode = gfcloud` — the only method that works
+  today — the cycle is a cloud homing session (§5.7), and its move to the home
+  corner is an ordinary motion action: refused with the lid open, and stopped
+  if the lid opens partway through. The camera steps need the lid closed
+  anyway. Only the lens/Z **hunt** inside that session ignores the lid (§6.3),
+  which is where hunts happen in GRBL mode — there is no hunt outside a cloud
+  homing session. Under `homing_mode = switches` a Z reference would just be
+  part of the core homing cycle.
 
 The next job re-arms with a fresh button press — the same press the hardware
 button latch itself requires, which is why software and hardware cannot
@@ -310,8 +320,8 @@ The homing method is a setting (`homing_mode`), chosen in the web panel:
 
 - **`gfcloud`** — camera homing through the Glowforge web service, the same
   cycle the factory machine runs. `$H` suspends the stream engine, runs the
-  session, then hands the machine back. Takes roughly a minute and needs a
-  signed-in Glowforge account.
+  session, then hands the machine back. Takes roughly a minute and uses the
+  machine's builtin credentials.
 - **`switches`** — the future limit-switch cycle. Not enabled yet; brackets for
   the switches are in the project's `3d-models/` directory.
 - **`none`** — `$H` is rejected.

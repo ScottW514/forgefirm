@@ -1207,6 +1207,35 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     byte in the stream today, and the feeder contract forbids back-to-back
     power bytes, while under FIRE dithering the duty is a constant sent once
     per run and a per-pixel level change costs no stream byte at all.
+18. **Gapless pause and resume in GRBL mode (planned).** A pause leaves a mark
+    in the cut. With laser mode on, the core stops the beam at the start of the
+    hold (`disable_laser_during_hold`, on by default), so the head travels the
+    whole deceleration dark, and the resume re-accelerates from a standstill at
+    the point the decel ended — an unburned length, then a restart that dwells
+    through the accel. At constant power (`M3`) that restart is a deeper spot
+    you can see; `M4` scales power with velocity and mostly hides it, but
+    neither closes the gap. GRBL mode should pause and resume with no
+    discontinuity in the cut, the way the factory does.
+
+    Cloud mode already does, on the kernel's waypoint resume: controlled stop,
+    laser-off backtrack (`cloud_pause_backtrack_ticks` 2000), then a laser-off
+    lead back up to speed on the next press (`cloud_resume_lead_ticks` 1950),
+    so the beam returns only once the head is retracing ground it already cut
+    and is back at feed. That mechanism cannot be borrowed here: the kernel
+    refuses a negative `resume` with `EPERM` once the ring has been
+    live-streamed (`UAPI.md`), because the bytes to back into have already been
+    overwritten.
+
+    So the equivalent belongs above the ring, where grblHAL still holds what
+    the kernel does not — the planned path. Shape to evaluate: capture the
+    point where the beam went off at the hold; on the resume plan a laser-off
+    retrace back along the path and a laser-off accelerate-in, and unmask FIRE
+    only once the head is at feed and has passed the captured point. Open: how
+    far back is enough (2000/1950 ticks is a reference, not a transferable
+    number — the tick rates differ), whether the retrace can reuse planner
+    blocks or needs a synthesized one, what a hold inside an arc or a raster
+    line does to it, and how it composes with the armed window's disarm grace
+    across a long hold.
 
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the
