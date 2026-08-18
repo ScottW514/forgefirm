@@ -670,6 +670,21 @@ def drill_dladder(g):
                                              max(emis) if emis else '-'))
     print('hv_current range: %s..%s' % (min(hv_vals) if hv_vals else '-',
                                         max(hv_vals) if hv_vals else '-'))
+    if samples:
+        t0 = samples[0]['t']
+        print('hv_current trace (t s : raw) - the laser-off G0 between rungs')
+        print('reads 0, so the runs of nonzero current count the rungs that')
+        print('struck, and their level tracks the dose of each:')
+        line = []
+        for smp in samples:
+            if smp['hv'] is None:
+                continue
+            line.append('%5.1f:%s' % (smp['t'] - t0, smp['hv']))
+            if len(line) == 8:
+                print('  ' + '  '.join(line))
+                line = []
+        if line:
+            print('  ' + '  '.join(line))
     print('Check the controller said "laser armed (density)" - a plain')
     print('"laser armed" means the analog path ran and this is a duty')
     print('ladder, not a density one.')
