@@ -599,13 +599,17 @@ def drill_dladder(g):
     # Preconditions. The model is read at each arm, so it must already be
     # selected; the floor must be gone, or every rung is lifted off the
     # bottom of the range this drill exists to explore.
-    model = conf_get('laser_power_model')
+    # Density is the shipped default, so an absent key selects it; only an
+    # explicit analog selection is a refusal.
+    model = conf_get('laser_power_model') or 'density'
     if model != 'density':
-        print('PRECONDITION FAILED: laser_power_model is %r, need "density".'
+        print('PRECONDITION FAILED: laser_power_model is %r, need "density"'
               % (model,))
-        print('Set it in %s and re-run. The model is read at each arm, so' % CONF)
-        print('this key needs no controller restart.')
+        print('(or the key absent, which selects it). The model is read at')
+        print('each arm, so this key needs no controller restart.')
         return 2
+    print('dose model: density (%s)'
+          % ('set in ' + CONF if conf_get('laser_power_model') else 'driver default'))
     # The core maps S onto the level this model renders as density, and
     # $35/$36 are its floor and ceiling. Read them rather than assuming:
     # with a floor set, the ladder is testing the shipping mapping, and
