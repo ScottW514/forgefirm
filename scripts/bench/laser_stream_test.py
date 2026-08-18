@@ -38,6 +38,10 @@ over TCP, then checks the dumps against the kernel feeder contract:
  13. the model is a mask and never a source: run the same job under both
      models and every FIRE tick of the density run is a FIRE tick of the
      analog run, on an identical motion grid
+ 15. the minimum pulse width holds: no emitted burst is shorter than
+     laser_pulse_min_ticks, and the levels too faint to fill it still
+     render their exact average density - the debt is carried, so a low
+     level becomes fewer full-width pulses rather than stubs
  14. a laser state change made while the stream is idle survives to the
      next run: a standalone S word between moves, from a sender slow
      enough to drain the planner, must still cut at the level it asked
@@ -136,8 +140,11 @@ JOB_LADDER.append("M5")
 # band - under density every pulse is full-power, and a floor would just
 # clamp the light end of the range.
 DENSITY_PERIOD = 20
+DENSITY_MIN_TICKS = 3
 DENSITY_CONF = ("laser_power_model = density\n"
-                "laser_pulse_ticks = %d\n" % DENSITY_PERIOD)
+                "laser_pulse_ticks = %d\n"
+                "laser_pulse_min_ticks = %d\n"
+                % (DENSITY_PERIOD, DENSITY_MIN_TICKS))
 DENSITY_LEVEL = tuple(int(x * PWM_PERIOD / RPM_MAX) for x in LADDER_S)
 JOB_DENSITY = ["$35=0"] + JOB_LADDER
 
@@ -467,7 +474,7 @@ def fire_spans(ticks, gap=500):
     return spans
 
 
-def check_density(name, data, levels, period):
+def check_density(name, data, levels, period, min_ticks):
     """Rules 11-12: pinned duty, and density per rung matching the level."""
     # A power byte still leads every kernel run - the run start resets the
     # hardware duty - but under this model it only ever carries full duty:
@@ -494,13 +501,28 @@ def check_density(name, data, levels, period):
         if abs(got - want) > max(0.01, want * 0.06):
             fail("[%s] level %d rendered density %.4f, expected %.4f"
                  % (name, level, got, want))
-        run = worst = 0
+        # Burst lengths inside the span. The last one can be clipped by
+        # the core turning fire off mid-burst, so it is not held to the
+        # minimum; every other burst is a whole pulse the model chose.
+        runs, run = [], 0
         for t in seg:
-            run = run + 1 if t & 0x10 else 0
-            worst = max(worst, run)
-        if worst > period:
+            if t & 0x10:
+                run += 1
+            elif run:
+                runs.append(run)
+                run = 0
+        if run:
+            runs.append(run)
+        if not runs:
+            fail("[%s] level %d produced no bursts at all" % (name, level))
+        if max(runs) > period:
             fail("[%s] level %d burst of %d ticks exceeds the %d-tick base "
-                 "period" % (name, level, worst, period))
+                 "period" % (name, level, max(runs), period))
+        short = [r for r in runs[:-1] if r < min_ticks]
+        if short:
+            fail("[%s] level %d emitted %d burst(s) below the %d-tick minimum "
+                 "(shortest %d): a stub too brief for the supply to strike"
+                 % (name, level, len(short), min_ticks, min(short)))
     return out
 
 
@@ -572,7 +594,8 @@ def main():
     run_session("density-setup", ["$35=0"], conf=DENSITY_CONF, workdir=wd,
                 keep=True, arm_required=False)
     dens = run_session("density", JOB_DENSITY, conf=DENSITY_CONF, workdir=wd)
-    rendered = check_density("density", dens, DENSITY_LEVEL, DENSITY_PERIOD)
+    rendered = check_density("density", dens, DENSITY_LEVEL, DENSITY_PERIOD,
+                             DENSITY_MIN_TICKS)
     check_termination("density", dens)
     if "laser armed (density)" not in run_session.text:
         fail("[density] the arm did not select the density model")

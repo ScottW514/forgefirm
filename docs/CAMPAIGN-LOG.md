@@ -2860,6 +2860,100 @@ show each level firing its own move. It does — 28338 fire ticks each at
 duties 30, 52 and 84, where before the fix duty 30 held all 85014 and the
 two other levels never appeared.
 
+## 2026-08-17 — the density ladders, and the minimum pulse
+
+Four live ladders on one piece of scrap, 8 rungs each from 5 % to 100 % of
+dose at constant power: base period 20, 40 and 10 ticks at F300, then period
+20 again at F100. The same six rungs marked every time — 20 % and up. 5 % and
+10 % never marked in any of the four.
+
+### Pulse length is not the variable; average power is
+
+Because the same pulse length occurs at different densities across the
+periods, the runs contain matched pairs:
+
+| pulse | density | period | marked |
+|---|---|---|---|
+| 107–142 µs | 20 % | 20 | yes |
+| 107–142 µs | 10 % | 40 | no |
+| 36–71 µs | 20 % | 10 | yes |
+| 36–71 µs | 10 % | 20 | no |
+
+Hold the pulse and halve the density: the mark goes. Hold the density and
+vary the pulse 3×: nothing changes. Feed does not move it either — 10 % at
+F100 carries 0.0567 dose/mm against 20 % at F300's 0.0394, **44 % more energy
+per millimeter than a rung that marks**, and it still left nothing. Two
+independent variables moved without shifting the boundary. What sets the
+low-end marking limit is average power reaching a quasi-steady surface
+temperature; going slower does not help, because the heat conducts away
+between pulses.
+
+So the base period can be chosen on other grounds, and stays at 20.
+
+### The trace separates two different failures
+
+The F100 run carried the `hv_current` trace (`pthresh` printed one, `dladder`
+did not until this run — the omission cost the three F300 ladders their
+per-rung witness). It shows **seven** current segments for eight rungs:
+boundaries at 36.6, ~52.0, 67.3, 82.5, 98.0 and 113.2 s, each segment
+14.4–14.9 s, one 25 mm rung at F100. The fire window is 106.8 s where eight
+rungs would need 121.6 s.
+
+The final segment anchors the count: 113.5–128.4 s reads 943–986 dead flat,
+the saturated steady current of continuous fire, which can only be 100 %.
+Counting back, the segment means rise monotonically — 182, 320, 330, 390,
+450, 540, 967 — for rungs 10 % through 100 %. Rung 1 has no segment at all:
+its fifteen seconds are the zeros before 21.6 s, indistinguishable from the
+arm wait because nothing happened in them.
+
+| rung | outcome |
+|---|---|
+| 5 % | **no discharge at all** |
+| 10 % | discharge for the full 15 s, no mark |
+| 20 %+ | discharge and mark |
+
+Supply current is not light — `pthresh` already showed this tube drawing
+current across a whole band while emitting nothing — so "10 % struck" is not
+"10 % lased". But 5 % not striking is unambiguous, and it is ours to fix.
+
+### The factory's own numbers, for scale
+
+Precision Power 1 runs the power byte at 127 (PWM duty 100 %) and a **FIRE
+duty cycle of 19.53 %** — 1.371 on-ticks of every 7-tick window. Fitting the
+three captures, the factory maps its entire 1–100 scale onto density
+18.9–79.5 %, with Full Power off that line at ~99.7 %. Its "1 %" is the
+bottom of the band that does useful work, not 1 % of the physical range —
+which is why no user ever meets the dead zone. The older `_RESOURCES`
+captures run 6.5–18.8 % density on other jobs, so 18.9 % is a product
+decision about cutting, not a physical floor.
+
+### The fix: a minimum pulse width
+
+At 5 % the model emitted one-tick stubs, 36 µs, and the supply did not
+strike. The factory never emits below one 100 us tick and reaches low density
+by skipping windows instead. `laser_pulse_min_ticks` (default 3 = 106 µs)
+does the same: when the computed on-count falls below the minimum the period
+is skipped and the **whole** debt carried, rather than a stub emitted. The
+debt is conserved, so the average density is untouched.
+
+Measured on the stream, level 2 (density 0.0159):
+
+| | bursts | density |
+|---|---|---|
+| minimum 1 tick | 444 × 36 µs | 0.0158 |
+| minimum 3 ticks | **147 × 106 µs** | 0.0159 |
+
+147 × 3 = 441 against 444 — the same energy as fewer, longer pulses, and
+every level already above the minimum is bit-identical, so the change touches
+only what it must. Rule 15 in the stream harness holds both halves: no burst
+below the minimum (excepting one clipped by fire going off mid-burst), and
+the rendered density still exact.
+
+Owed next: the user-facing scale. Under this model `$35` and `$36` are a
+density floor and ceiling, so mapping S onto the usable band is a settings
+choice rather than new code — but the floor's value wants a finer ladder than
+the 10 %→20 % step these four runs give.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

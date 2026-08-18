@@ -212,9 +212,16 @@ finer than one tick per period average out. The model is selected per arm
 and reported (`laser armed (density)`). Density is what the tube's dead band
 below its lasing threshold requires: every pulse it emits is full-power, so
 no commanded level lands in the band, and a level change inside a run costs
-no stream byte at all. It wants `$35` = 0 - the floor exists only to keep an
-analog duty out of the band, and under density it just clamps the light end
-of the range; the arm warns when a floor is set. Structurally the model is a
+no stream byte at all. `laser_pulse_min_ticks` (default 3 = 106 us) is the
+shortest pulse it will emit: below it a period is skipped and its debt
+carried, so a faint level arrives as fewer full-width pulses instead of
+stubs the supply cannot strike - measured on the bench, a 36 us stub draws
+no discharge at all, and the factory never emits below one of its 100 us
+ticks. The debt is conserved, so the average density is unchanged: at level
+2 the stream goes from 444 one-tick bursts to 147 three-tick bursts, same
+density to four decimals. Under this model `$35` stops being a duty floor
+and becomes a density floor - the control that maps S onto the band that
+does useful work, which is what the factory does with its own scale. Structurally the model is a
 mask on the core's fire state and never a source of one, so emission stays
 exactly where the core commanded it.
 
@@ -1083,8 +1090,35 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     under both models - the motion grid is identical and every density FIRE
     tick is one the analog run also fired, so the model only ever masks.
 
-    Owed: one bench drill to choose the base period, which is the parameter
-    the host cannot answer. The factory never emits a pulse shorter than
+    The base period is settled: four bench ladders (F300 at periods 20, 40
+    and 10, then F100 at 20) put the same six rungs on the material every
+    time, and the matched pairs across periods separate the variables - at
+    identical pulse length, halving density killed the mark; at identical
+    density, varying pulse length 3x changed nothing. Feed did not move it
+    either: 10 % at F100 carries 44 % more energy per millimeter than 20 %
+    at F300, which marks, and still left nothing. So the low-end marking
+    limit is average power, not dose per length and not pulse length, and
+    the period can be chosen on other grounds. It stays at 20.
+
+    What the ladders did expose is a floor of our own making, since fixed:
+    at 5 % the model emitted 36 us stubs and the `hv_current` trace shows
+    **no discharge at all** for that rung, while 10 % drew current for its
+    full 15 s and simply marked nothing. The factory never emits below one
+    100 us tick, and reaches low density by skipping windows instead -
+    which is now what `laser_pulse_min_ticks` does.
+
+    Owed: the user-facing scale. The factory maps its whole 1-100 power
+    scale onto density 18.9-79.5 % (fit from the three captures; Full Power
+    is off that line at ~99.7 %), so its "1 %" is the bottom of the band
+    that does useful work rather than 1 % of the physical range. Under the
+    density model `$35` and `$36` are exactly that control - a density
+    floor and ceiling - so the scale is a settings choice, not new code.
+    The floor's value wants one more ladder: the step from 10 % to 20 % is
+    coarse, and the factory's own answer is 18.9 %. Note the captures also
+    run 6.5-18.8 % density on other jobs, so that intercept is a product
+    decision about cutting, not a physical limit - which is why the
+    minimum-pulse fix matters for the raster low end regardless of where
+    the cut scale starts. The factory never emits a pulse shorter than
     100 us; a tick here is 35.5 us, and every pulse restarts the discharge,
     so each carries the strike transient the threshold ladder made visible
     - dose per pulse is therefore probably not proportional to pulse length
