@@ -10,6 +10,24 @@
 > If you come across a file claiming to be a ForgeFIRM image, it did not come
 > from this project.
 
+> # What this costs
+>
+> Nothing. Not yesterday, not today, and if anyone ever charges you for
+> it, it wasn't this project. ForgeFIRM is free in both senses: free as
+> in beer, free as in speech. All of it is public, under licenses (MIT
+> and GPL) any lawyer will tell you are not a trap.
+>
+> No paid tier. No license key, no subscription, no activation, no Pro
+> edition, no product page, no waitlist, no pre-order, nothing to buy.
+> Skepticism is fair and cheap to settle: ten minutes with the licenses
+> and the commit log does it, which beats trust on both cost and
+> accuracy.
+>
+> If someone offers to sell you this firmware, the licenses allow it and
+> nobody's calling it theft. Just note that what you take home is their
+> build, not this one: a stranger's code, running a laser that has no
+> opinion about what it burns. Get it from the source.
+
 ForgeFIRM installs **alongside** the factory firmware on the stock eMMC,
 using the factory's own A/B rootfs slot scheme: the installer writes
 ForgeFIRM to the slot the factory firmware is *not* running from, and

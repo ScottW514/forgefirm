@@ -10,6 +10,37 @@
 > If you come across a file claiming to be a ForgeFIRM image, it did not come
 > from this project.
 
+> # What this costs
+>
+> Nothing. It cost nothing yesterday, it costs nothing today, and if anyone
+> ever charges you for it, it wasn't this project.
+>
+> ForgeFIRM is free in both senses: free as in beer, free as in speech. All of
+> it is public. The image, the build layers, the kernel module, the control
+> daemon, the grblHAL driver, the cloud client, down to the brackets you print.
+> The licenses (MIT and GPL) are the standard ones, and any lawyer will tell
+> you they're not a trap. Read it, build it, change it, pass it on.
+>
+> No paid tier. No license key, no subscription, no activation, no Pro edition,
+> no feature parked behind a paywall. Nothing is held back for a rainy day,
+> mostly because there's no plan for a rainy day.
+>
+> The work happens in public, including the parts that don't work yet, which
+> are written up with more candor than flatters anyone. There's no product
+> page. No waitlist, no pre-order, no backer, no launch, nothing to buy. Anyone
+> who spends their evenings deleting sales pitches has earned the reflex to
+> suspect one more, so don't take a stranger's word for it. Ten minutes with
+> the licenses and the commit log settles it, which beats trust on both cost
+> and accuracy. Questions are welcome at
+> [the community forum](https://community.openglow.org).
+>
+> If someone offers to sell you this firmware, the licenses allow it and
+> nobody's calling it theft. Just note that you'd be paying for something
+> that's given away, and that what you take home is their build, not this one:
+> a stranger's code, running a laser that has no opinion about what it burns.
+> Get it from the source. Same price everywhere, and here you get to read what
+> you're running.
+
 Open-source firmware for Glowforge brand CNC lasers. ForgeFIRM replaces the
 cloud-dependent factory software on the **stock control board** — no hardware
 modification — and gives the machine a local controller, a local web control
