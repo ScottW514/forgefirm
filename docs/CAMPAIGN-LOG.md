@@ -60,7 +60,7 @@ per-run `clamped` stat from the operator's own job log).
 ### Milestone 2 — motion quality
 
 **Milestone 2 (motion quality): bench-verified 2026-08-02.** The factory
-motion constants were extracted from the `_RESOURCES` pulse files
+motion constants were extracted from captured factory pulse files
 (`scripts/bench/puls_profile.py`) and applied end-to-end:
 - grblHAL defaults now factory-true: 12000 mm/min max rate (X/Y),
   700/590 mm/s² accel (X/Y). Machine tick default 28160 Hz (the factory's
@@ -2373,9 +2373,8 @@ release is cut.**
 bench-validated 2026-08-17 on dev image `20260817124714`.** Both controller
 modes react to the lid, the remote-interlock loop and the button the way the
 factory daemon does. The factory behavior was decoded and then recorded on
-the bench machine booted into factory 2.6.0-2228; that session's log is
-archived under `_RESOURCES/factory-session-20260816/` (with a README indexing
-its five prints) and its measured numbers are in the facts bank in `BRINGUP.md`.
+the bench machine booted into factory 2.6.0-2228; that session covered five
+prints and its measured numbers are in the facts bank in `BRINGUP.md`.
 - **What the machine does, both modes.** Lid or interlock open during a job,
   running or paused: motion stops within milliseconds of the edge, the job is
   **cancelled and not resumable**, the head returns to the position the job
@@ -2703,8 +2702,7 @@ model itself, with the analog path as the fallback.
 
 Three cloud-mode cuts of the same 1" square, same location, same material,
 same speed, changing only the Glowforge UI power setting: Precision Power 1,
-Precision Power 100, then Full Power. Captures in
-`_RESOURCES/power-settings-20260817/`.
+Precision Power 100, then Full Power, with the pulse file captured from each.
 
 Pulse-file capture ships off (`LOGGING.SAVE_PULS`), and the machine's copy of
 `/data/etc/gfhome.conf` predated the key, so it was enabled for this session
@@ -2923,8 +2921,8 @@ duty cycle of 19.53 %** — 1.371 on-ticks of every 7-tick window. Fitting the
 three captures, the factory maps its entire 1–100 scale onto density
 18.9–79.5 %, with Full Power off that line at ~99.7 %. Its "1 %" is the
 bottom of the band that does useful work, not 1 % of the physical range —
-which is why no user ever meets the dead zone. The older `_RESOURCES`
-captures run 6.5–18.8 % density on other jobs, so 18.9 % is a product
+which is why no user ever meets the dead zone. Older captured factory
+jobs run 6.5–18.8 % density, so 18.9 % is a product
 decision about cutting, not a physical floor.
 
 ### The fix: a minimum pulse width

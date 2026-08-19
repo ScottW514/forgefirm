@@ -7,7 +7,7 @@ peak axis/vector speeds, acceleration ramp slopes, and per-move segments.
 Used to derive factory-true grblHAL settings ($110/$111 max rate, $120/$121
 accel) for the ForgeFIRM step backend (milestone 2, motion quality).
 
-Accepts either a raw header-stripped stream (_RESOURCES/MOTION/*.puls) or a
+Accepts either a raw header-stripped stream (a bare .puls body) or a
 full download with the GF1 header (magic at [1:4], total header length at
 [4:8], then 8-byte key/value records). Header settings (STfr, XSmm) override
 the --rate/--mode defaults when present.
