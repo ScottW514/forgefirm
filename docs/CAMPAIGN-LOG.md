@@ -3107,6 +3107,66 @@ exception); the plan's F1/F2 rows are updated. The pause is also reported by
 the factory as a ten-event phase machine against the two ForgeFIRM sends, noted
 there as optional polish on the F2 work.
 
+## 2026-08-20: the campaign behind a print longer than the ring
+
+The work that made a cloud print independent of the ring size ran from
+2026-08-18 to 2026-08-20 and is finished, so the plan it ran from is retired
+into this entry and the durable documents. What follows is how the result was
+obtained, which is the part that does not belong anywhere else.
+
+**It started from a wrong belief.** The ring was 16 MiB and a job that did not
+fit was going to be refused with a clean message, on the reasoning that the
+factory must refuse one too. Re-reading the factory application against the
+Ghidra project said otherwise on every point. Its ring is 32 MiB, allocated
+through `dma_alloc_attrs` out of a 320 MiB CMA area with no device-tree pool
+and no module parameter. It models the downloaded body as a pulse data source
+with a cursor, gzip or plain behind one vtable, and stages it into the ring in
+segments that are checked against free space, refusing with `-ENOMEM` rather
+than writing a partial chunk. And it does not stop when the ring is full: it
+starts the job and keeps appending for as long as the job lasts.
+
+**The proof was on the machine already.** This board's own factory logs, kept
+across slot switches on the shared `/data`, carry a 107 MB job played through a
+32 MiB ring. Nothing needed to be induced; the factory had already done it and
+written it down. A capture of the factory's own cloud session later showed the
+same behavior on the wire, its progress `total` growing 256 KiB per interval as
+it appended.
+
+**So ForgeFIRM streams too**, and the shape follows the factory's: hold the
+compressed body in memory and inflate only as far as the ring asks, which keeps
+a three-hour job to a few MB and off the eMMC entirely; fill the ring before
+the button is offered, so a job that cannot be loaded fails before the laser is
+ever armed; declare the live feed to the kernel only when the job actually
+outran the ring, so a job that fits behaves exactly as it always did; top up on
+`-ENOMEM`; clear the live-feed flag after the last byte, so the real
+end-of-data is a completion rather than a starved ring. The ring itself moved
+to 32 MiB, at factory parity, through a size-aligned no-map device-tree pool.
+
+**Two defects surfaced in the building.** A dry ring used to end the run loop
+with `aborted=False`, which reported a job that stopped mid-cut as completed;
+it aborts now. And the pause on a streamed job could not retrace, because the
+old bound deducted the retained gap from a budget that was zero under a
+topped-up feed, counted bytes enqueued rather than bytes played, and set its
+dead stop a whole program back instead of one ring back. The retained gap *is*
+the backtrack history, which is what the kernel now publishes as
+`max_backtrack`, and a request longer than that is refused rather than quietly
+shortened.
+
+**What the campaign settled along the way**, each recorded where it belongs:
+the factory reports progress on a `type:"progress"` frame that is the periodic
+settings report; `CCbp`/`CCbt` are reported progress rather than the pause
+constants an earlier reading took them for; and `CFrh`, `CCwp`, `CCrp` and
+`CCup` have no consumer in the factory at all, so there is nothing to drive a
+warm-up or a rest off. The contract is `kernel-module-glowforge/UAPI.md`, the
+client behavior is `CLOUD.md`, and the tag findings are in the firmware
+reference alongside the captures.
+
+**What it cost to be sure:** the pulse decoder was 41x too slow to keep a ring
+fed (a `sorted()` per byte, 32 kB/s against the 1.33 MB/s it manages now), and
+that only showed up when a real 53 MB job was replayed through a fake ring
+rather than a synthetic one. The job that hung the bench is kept as the
+regression fixture.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
