@@ -148,6 +148,19 @@ def read_ring_residue():
         return None
 
 
+def read_program_total():
+    """Bytes of program the kernel has been given for this run, or None when
+    unreadable. Under a live feed it grows while the job plays: that growth is
+    what says the ring is being topped up rather than preloaded."""
+    try:
+        with open(hw.sysfs_root() + "cnc/position", "rb") as f:
+            raw = f.read(32)
+        _, total = struct.unpack("<2I", raw[12:20])
+        return int(total)
+    except (OSError, struct.error):
+        return None
+
+
 class Leftover:
     def __init__(self, item, found, expected, action):
         self.item = item

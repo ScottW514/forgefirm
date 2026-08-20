@@ -9,7 +9,7 @@ import time
 
 from ..catalog import test
 from .. import hw
-from ..baseline import read_position
+from ..baseline import read_position, read_program_total
 
 _CLOUD_COVERS = [("forgefirm-app", "**"), ("python3-gfhardware", "**"), ("python3-gfutilities", "**"),
                  ("forgectrl", "src/super.c"), ("forgectrl", "src/main.c")]
@@ -761,6 +761,67 @@ def pause_resume(ctx):
                 "resume on the second, and did the job finish and the app show it complete?")
     settle_cloud(ctx, offset)
     ctx.log("PASS: button pause/resume mid-print, job completed and parked")
+
+
+@test("cloud.oversize-stream", title="A print longer than the ring is fed while it plays",
+      subsystem="cloud", kind="live", est_min=10,
+      covers=_CLOUD_COVERS,
+      requires=["cloud.lid-interlock-abort"],
+      steps=[CLOUD_STEP,
+             "Scrap on the bed and a LONG job ready in the app - one whose run time is longer "
+             "than the ring holds (over an hour at the usual print tick). A full-bed raster "
+             "engrave is the easy way to get one.",
+             "Print from the app and press the button when it lights. Let it cut for about two "
+             "minutes, then cancel the print from the app."],
+      description="The service sends one pulse file for a print however long it is, and a long one "
+                  "is several times the ring: the machine holds the job in memory, fills the ring, "
+                  "starts, and tops the ring up as it drains. This checks the signature of that - "
+                  "the device in live-feed mode, the kernel's program total growing during the run, "
+                  "and no underrun - and that the job still cancels cleanly.")
+def oversize_stream(ctx):
+    ev = ctx.evidence
+    offset = enter_cloud(ctx)
+    before = hw.sysfs_int("cnc/underruns", 0)
+    ev["underruns_before"] = before
+    ctx.instruct("Start the long print from the app and press the button when it lights.")
+    got = wait_print_running(ctx, offset, 600)
+    ctx.check(got, "the print never reached its run within 600 s")
+
+    # The load says so in as many words, and the device is in live-feed mode.
+    got = wait_log(ctx, offset, ["job is longer than the ring"], 30)
+    ev["log"] = {k: bool(v) for k, v in got.items()}
+    ctx.check(got["job is longer than the ring"],
+              "the job fit the ring: pick a longer one, this test needs a job the ring cannot hold")
+    streaming = hw.sysfs_int("cnc/streaming", 0)
+    ev["streaming"] = streaming
+    ctx.check(streaming == 1, "cnc/streaming is %s during a live-fed run", streaming)
+
+    # The proof the feed is live: the kernel's idea of how long the program is
+    # keeps growing while it plays.
+    first = read_program_total()
+    ctx.log("program total at the start of the run: %s bytes", first)
+    ctx.instruct("Let it cut for about two minutes, then click Done (do not cancel yet).")
+    grown = read_program_total()
+    ev["total_first"], ev["total_later"] = first, grown
+    ctx.log("program total two minutes in: %s bytes (+%s)", grown, (grown or 0) - (first or 0))
+    ctx.check(first is not None and grown is not None and grown > first,
+              "the program total did not grow during the run (%s -> %s): the ring was not being "
+              "topped up", first, grown)
+    after = hw.sysfs_int("cnc/underruns", 0)
+    ev["underruns_during"] = after
+    ctx.check(after == before, "the ring ran dry during the run (underruns %s -> %s)", before, after)
+
+    ctx.instruct("Now cancel the print from the app.")
+    fin = wait_action_finished(ctx, offset, "print", 300)
+    ev["print_finished"] = message(fin)
+    ctx.check(fin, "the cancelled print did not finish within 300 s")
+    ctx.check(CANCELLED in fin, "the cancelled print did not report cancelled: %s", message(fin))
+    ctx.check(hw.sysfs_int("cnc/streaming", 0) == 0,
+              "the device was left in live-feed mode after the job ended")
+    ctx.check(hw.sysfs_int("cnc/underruns", 0) == before,
+              "the cancel produced an underrun")
+    settle_cloud(ctx, offset)
+    ctx.log("PASS: a job longer than the ring ran live-fed, total grew, no underrun, clean cancel")
 
 
 @test("cloud.pause-cancel-paths", title="A paused cloud print is cancelled by the lid, and a running one "
