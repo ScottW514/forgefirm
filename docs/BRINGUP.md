@@ -972,15 +972,23 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
    for them under `/data` on a machine booted into the factory slot before
    deciding whether to reimplement the mechanism. Finally the deferred emulator
    homing-image smoke, now that the emulator can be pointed at live snapshots.
-7. **Cloud mode.** The remaining gaps are tracked in
-   `python3-gfhardware/forgefirm-app/docs/CLOUD.md` "Outstanding items":
-   streaming-during-run (would lift the ring-size cap on job length),
-   oversize-job rejection against a real too-big job, packaged-path boot with
-   `controller_mode = cloud`, the three unobserved actions, the lid-flash LED,
-   and taking the pause constants from the pulse header (`CCbp`/`CCbt`) once a
-   capture confirms them. Not inducible from the bench: the
-   cancel-with-a-rejected-`settings`-action case and a malformed frame (needs a
-   MITM). The pulse header's unenforced safety envelope is item 19: it is
+7. **Cloud mode.** A print is no longer capped by the ring: the client holds
+   the compressed body, fills the ring before the button, and tops it up as it
+   plays, with the body bounded by `pulse_reject_threshold_bytes` because
+   memory is what that costs. A feed that wedges is caught by progress rather
+   than by ring depth (a healthy feeder keeps the ring brim-full, so depth
+   only falls an hour after the feed died): thirty seconds of no progress with
+   room in the ring stops the job cleanly and retraces, and it resumes if the
+   feed moves again. The remaining gaps are tracked in
+   `python3-gfhardware/forgefirm-app/docs/CLOUD.md` "Outstanding items": a
+   live job longer than the ring (built and covered, never yet run from the
+   service), the memory guards against a real ceiling rather than a reasoned
+   one, packaged-path boot with `controller_mode = cloud`, the three unobserved
+   actions, the lid-flash LED, and taking the pause constants from the pulse
+   header (`CCbp`/`CCbt`) once a capture confirms them. Not inducible from the bench: the
+   cancel-with-a-rejected-`settings`-action case, a malformed frame (needs a
+   MITM), a body past the memory guard (the service has no such job to send),
+   and a wedged feed (a healthy machine will not stall on request). The pulse header's unenforced safety envelope is item 19: it is
    listed separately because the enforcement lands in the cooling engine and
    has to hold in GRBL mode too, not only under the cloud client.
 8. **Shared machine services — remaining polish.** None of it blocking:

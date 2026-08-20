@@ -129,6 +129,13 @@ def settings_bounds(ctx):
     ctx.log("POST /settings laser_disarm_s=99999 -> %s", st)
     ctx.check(st == 400, "out-of-range value -> %s, expected 400", st)
 
+    # The cloud download guard is bytes, so its range is far wider than the
+    # other numeric keys: check the far end is still a wall.
+    st, body = fc.post("/settings", data={"pulse_reject_threshold_bytes": "2000000000"})
+    ev["pulse_bytes_out_of_range"] = st
+    ctx.log("POST /settings pulse_reject_threshold_bytes=2000000000 -> %s", st)
+    ctx.check(st == 400, "out-of-range byte limit -> %s, expected 400", st)
+
     st, body = fc.post("/settings", data={"no_such_key_forgetest": "1"})
     ev["unknown_key"] = st
     ctx.log("POST /settings no_such_key_forgetest=1 -> %s", st)
