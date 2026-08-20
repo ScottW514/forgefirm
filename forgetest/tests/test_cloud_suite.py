@@ -32,6 +32,13 @@ def fixture(name):
         return f.read().decode().splitlines()
 
 
+# What the build under test logs around a print, in the machine's own format.
+WARM_UP_LINE = ("2026-08-17T09:44:02.100000+00:00 gfcloud[1522] INFO "
+                "machine:_dwell warm up: holding 3.0 s")
+COOL_DOWN_LINE = ("2026-08-17T09:45:31.700000+00:00 gfcloud[1522] INFO "
+                  "machine:_dwell cool down: holding 10.0 s")
+
+
 def cut(lines, marker, count=1):
     """(before, after) at the count-th line containing marker (the line
     itself opens `after`)."""
@@ -281,8 +288,13 @@ class CloudSuiteTests(unittest.TestCase):
         lines = fixture(name)
         pre, rest = cut(lines, "waiting for button")
         run_pre, rest = cut(rest, "current state: MachineState.RUNNING")     # the PRINT's run
+        # The excerpt was captured before the machine held for a warm-up and
+        # a rest; the replay carries those two lines where it emits them now,
+        # rather than editing what the machine actually said that day.
+        run_pre = run_pre + [WARM_UP_LINE]
         pre, rest = pre + run_pre + [rest[0]], rest[1:]
         mid, tail = cut(rest, at_end)
+        tail = tail + [COOL_DOWN_LINE]
         return {"Click Done here": lambda: self.append(pre, delay=0.1),
                 at_run: lambda: (self.append(mid, delay=0.05), self.append(tail, delay=tail_delay))}
 

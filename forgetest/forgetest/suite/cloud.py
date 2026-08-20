@@ -728,7 +728,10 @@ def hunt_lid_open(ctx):
       description="Pressing the button during a cloud print pauses it the factory way - controlled "
                   "stop, backtrack with the laser off, print:paused - and the next press resumes "
                   "with the laser-off lead, print:resumed; the job then completes and parks. The "
-                  "latch stays unlocked and the armed window open through the pause.")
+                  "latch stays unlocked and the armed window open through the pause. The same "
+                  "print is where the job's lifecycle shows: a print warms up before its first "
+                  "fire and rests after its park, both non-zero, while the connect-time hunt in "
+                  "the same session does neither.")
 def pause_resume(ctx):
     ev = ctx.evidence
     offset = enter_cloud(ctx)
@@ -759,8 +762,38 @@ def pause_resume(ctx):
     ctx.check(not relocked, "the pause relocked or cancelled the job (%s)", relocked[:2])
     ctx.confirm("Did the head stop and back up a few millimeters (laser off) on the first press, "
                 "resume on the second, and did the job finish and the app show it complete?")
+
+    # The job's lifecycle, from the same print: a warm-up before the first
+    # fire and a rest after the park are equipment protection the service
+    # assumes has happened, and a machine configured to skip them says so in
+    # the log rather than quietly not doing them.
+    lines = log_lines_since(GFCLOUD_LOG, offset)
+    holds = {"warm up": None, "cool down": None}
+    for ln in lines:
+        for phase in holds:
+            if holds[phase] is None and ("%s: holding" % phase) in ln:
+                holds[phase] = ln.strip()[:160]
+            if holds[phase] is None and ("%s: skipped" % phase) in ln:
+                holds[phase] = ln.strip()[:160]
+    ev["lifecycle"] = holds
+    ctx.log("warm-up: %s", holds["warm up"])
+    ctx.log("rest: %s", holds["cool down"])
+    for phase in ("warm up", "cool down"):
+        ctx.check(holds[phase] is not None, "the print logged no %s at all", phase)
+        ctx.check(holds[phase] and "holding" in holds[phase],
+                  "the print skipped its %s (%s): the config still carries a zero",
+                  phase, holds[phase])
+    # A hunt is not a print: the connect-time hunt ran in this same session
+    # and must not have held for either period.
+    hunt_end = next((i for i, ln in enumerate(lines) if "waiting for button" in ln), len(lines))
+    early_holds = [ln.strip()[:120] for ln in lines[:hunt_end]
+                   if "warm up: holding" in ln or "cool down: holding" in ln]
+    ev["holds_before_the_print"] = early_holds
+    ctx.check(not early_holds, "a hunt or motion held for a print's periods: %s", early_holds[:2])
+
     settle_cloud(ctx, offset)
-    ctx.log("PASS: button pause/resume mid-print, job completed and parked")
+    ctx.log("PASS: button pause/resume mid-print, warm-up and rest observed, job completed "
+            "and parked")
 
 
 @test("cloud.oversize-stream", title="A print longer than the ring is fed while it plays",

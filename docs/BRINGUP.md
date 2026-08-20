@@ -984,8 +984,13 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
    live job longer than the ring (built and covered, never yet run from the
    service), the memory guards against a real ceiling rather than a reasoned
    one, packaged-path boot with `controller_mode = cloud`, the three unobserved
-   actions, the lid-flash LED, and taking the pause constants from the pulse
-   header (`CCbp`/`CCbt`) once a capture confirms them. Not inducible from the bench: the
+   actions, the lid-flash LED, and driving the park and the two lifecycle
+   periods off the header (`CFrh`, `CCwp`, `CCrp`) once a capture confirms
+   what they mean; the machine warms up and rests on the factory's measured
+   timings meanwhile, and logs those keys on every job. (`CCbp`/`CCbt`, read
+   earlier as the pause constants, are refuted: the factory's tag table marks
+   them report-only, so they cannot appear in a pulse header at all.) Not
+   inducible from the bench: the
    cancel-with-a-rejected-`settings`-action case, a malformed frame (needs a
    MITM), a body past the memory guard (the service has no such job to send),
    and a wedged feed (a healthy machine will not stall on request). The pulse header's unenforced safety envelope is item 19: it is
