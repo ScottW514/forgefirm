@@ -3070,6 +3070,43 @@ path, which has not run at all. The arithmetic says dotting will not be the
 problem — at 10 % density the pulse interval is 1.07 ms, 35 µm at
 2000 mm/min against a ~200 µm spot — but that is reasoning, not a cut.
 
+## 2026-08-20: how the factory reports progress (F1)
+
+The open question behind cloud-mode progress reporting was which carrier the
+factory uses and how often: a `<action>:progress` event, a `progress_bytes`
+query on the action endpoint, or the periodic settings report. The strings in
+the factory binary named all three and settled none. It was answered by
+observing the factory application's own cloud session on the machine, running
+the factory slot end to end (a hunt, images, five motions, and a print with a
+button pause and resume).
+
+The answer is none of the three as posed, because two of them collapse into
+one. Progress rides an **outbound WSS `type:"progress"` frame**, machine to
+service, and that frame **is** the periodic settings report: its
+`settings.values` block is exactly `periodic_settings_tags`. No
+`<action>:progress` event and no `progress_bytes` query appeared in the whole
+session. Cadence is `progress_update_interval_ms` = 30000, i.e. one frame every
+30 s during a cut, with a burst at each phase transition; during the cut
+`current` advances at the 10 kHz print tick.
+
+Two things fell out of the same capture. `CCbp` in the frame reads the byte
+position (1009 against a `current` of 994), re-confirming it as telemetry and
+not the pause constant an earlier reading had guessed. And the factory's own
+progress `total` grew during the cut, 33,291,208 → 33,553,352 → 33,815,496,
+256 KiB per interval, because the factory live-appends to its ring: even the
+factory's progress bar divides by a denominator that is still growing. Under
+ForgeFIRM's streaming feed a progress report must divide by the feeder's own
+job total, never the kernel byte counter. That is the F2 work; the carrier,
+the frame shape and the cadence are now known.
+
+The decision that came with it: the `type:"progress"` frame is carried as a
+deliberate exception to the telemetry exclusion. It is a UI status update, not
+the sensor firehose, and it is the operator's only sign a multi-hour print is
+advancing. The write-up is in `CLOUD.md` ("Progress reporting" and the scope
+exception); the plan's F1/F2 rows are updated. The pause is also reported by
+the factory as a ten-event phase machine against the two ForgeFIRM sends, noted
+there as optional polish on the F2 work.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

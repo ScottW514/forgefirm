@@ -983,7 +983,11 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
    `python3-gfhardware/forgefirm-app/docs/CLOUD.md` "Outstanding items": a
    live job longer than the ring (built and covered, never yet run from the
    service), the memory guards against a real ceiling rather than a reasoned
-   one, packaged-path boot with `controller_mode = cloud`, the three unobserved
+   one, sending progress to the app (F2: the carrier is settled, an outbound
+   `type:"progress"` frame that is the periodic settings report, at 30 s, from
+   a factory-session capture; what is owed is emitting it against the feeder's
+   job total rather than the kernel byte counter), packaged-path boot with
+   `controller_mode = cloud`, the three unobserved
    actions, the lid-flash LED, and driving the park and the two lifecycle
    periods off the header (`CFrh`, `CCwp`, `CCrp`) once a capture confirms
    what they mean; the machine warms up and rests on the factory's measured
