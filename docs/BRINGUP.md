@@ -989,13 +989,19 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
    service), the memory guards against a real ceiling rather than a reasoned
    one, a print watched from the app to see the bar actually move,
    packaged-path boot with
-   `controller_mode = cloud`, the three unobserved
-   actions, the lid-flash LED, and driving the park and the two lifecycle
+   `controller_mode = cloud`, the lid-flash LED, and driving the park and the two lifecycle
    periods off the header (`CFrh`, `CCwp`, `CCrp`) once a capture confirms
    what they mean; the machine warms up and rests on the factory's measured
    timings meanwhile, and logs those keys on every job. (`CCbp`/`CCbt`, read
    earlier as the pause constants, are refuted: the factory's tag table marks
-   them report-only, so they cannot appear in a pulse header at all.) Not
+   them report-only, so they cannot appear in a pulse header at all.) The
+   four actions the service has never been seen to send are no longer open:
+   they were read out of the factory binary instead. `user_image` is a lid
+   capture and is implemented; `update_check`, `factory_reset` and
+   `head_firmware_update` each hand off to a program this machine does not
+   have (a factory updater, a reset script, a head firmware push), so each
+   is answered on the wire and none is performed, and `focus` is ignored
+   exactly as the factory ignores it. Not
    inducible from the bench: the
    cancel-with-a-rejected-`settings`-action case, a malformed frame (needs a
    MITM), a body past the memory guard (the service has no such job to send),
