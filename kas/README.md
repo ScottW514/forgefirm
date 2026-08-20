@@ -255,9 +255,9 @@ Scarthgap, but the legacy (Dunfell/Gatesgarth) layers won't build clean until:
    rides out worst-case scheduling latency with orders of magnitude to spare
    (measured: 0.2 ms worst write latency under full CPU + I/O load; the
    underrun bench ran 100 kHz for 120 s with zero underruns). The ring
-   itself is 16 MiB (the `ring_mb` module parameter, backed by the 16 MiB
-   reserved pool): ~84 s of stream at 200 kHz, ~28 min at the 10 kHz
-   cloud-mode tick — a capacity that matters for the whole-job preload of
+   itself is 32 MiB (the `ring_mb` module parameter, backed by the 32 MiB
+   reserved pool, matching the factory ring): ~168 s of stream at 200 kHz,
+   ~56 min at the 10 kHz cloud-mode tick — a capacity that matters for the whole-job preload of
    cloud mode, not for latency. Bounded queue depth + `SCHED_FIFO` for the
    feeder is the design; revisit RT only if the underrun bench ever
    contradicts this arithmetic.

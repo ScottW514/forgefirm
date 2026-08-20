@@ -60,7 +60,7 @@ Two consequences worth knowing:
 
 ### The ring, and two ways to fill it
 
-Pulse bytes go into a 16 MiB ring buffer in reserved memory. There are two ways
+Pulse bytes go into a 32 MiB ring buffer in reserved memory, the same size the factory firmware uses. There are two ways
 to use it, and the mode you run decides which:
 
 - **Live streaming (GRBL mode).** The controller keeps only a small window of
@@ -70,8 +70,8 @@ to use it, and the mode you run decides which:
   falls behind far enough to empty the ring, the machine enters an **underrun**
   state: motion stops instantly, and position is no longer trusted.
 - **Preloading (cloud mode).** The whole job is written into the ring before it
-  starts. Nothing can starve, but the ring size caps job length — roughly
-  1 MiB per 100 seconds at the cloud's 10 kHz tick, so about 28 minutes. A job
+  starts. Nothing can starve, but the ring size caps job length: roughly
+  1 MiB per 100 seconds at the cloud's 10 kHz tick, so about 56 minutes. A job
   larger than the ring is rejected cleanly before it runs.
 
 ### Stopping and resuming at the hardware level
@@ -398,7 +398,7 @@ switch to cloud mode and back — re-home after switching.
 | Input | G-code over TCP:23 | a downloaded pulse file |
 | Ring use | live-streamed, small window | whole job preloaded |
 | Machine tick | 28160 Hz default | 10 kHz (from the job header) |
-| Job length limit | none | ~28 minutes (ring size) |
+| Job length limit | none | ~56 minutes (ring size) |
 | Needs internet | no | yes |
 | Laser arming | button press per job | button press per job |
 | Button mid-job | feed hold / cycle start | pause with backtrack / resume with lead |

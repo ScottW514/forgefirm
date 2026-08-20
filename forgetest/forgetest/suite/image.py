@@ -41,6 +41,16 @@ def kernel_config():
     return cfg
 
 
+def _dt_u32(path):
+    """A device-tree cell as an int (big-endian), or None."""
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(4)
+    except OSError:
+        return None
+    return int.from_bytes(raw, "big") if len(raw) == 4 else None
+
+
 def fds_of(pid):
     out = []
     try:
@@ -61,8 +71,8 @@ def fds_of(pid):
               ("grblhal-glowforge", "CMakeLists.txt"), ("kernel-module-glowforge", "**"),
               ("linux-fslc", "**")],
       description="The image that is running is the image the manifest describes, with the "
-                  "kernel options, the module, the daemon ownership, the init ordering, and the "
-                  "file modes the release depends on.")
+                  "kernel options, the module and the pulse ring it maps, the daemon ownership, "
+                  "the init ordering, and the file modes the release depends on.")
 def image_health(ctx):
     ev = ctx.evidence
     manifest = ctx.runner.manifest
@@ -98,6 +108,25 @@ def image_health(ctx):
     ev["cnc_free"] = free
     ctx.check(free is not None and free > 0, "cnc/free unreadable or zero (ring not mapped?)")
     ctx.log("cnc/free: %s bytes", free)
+
+    # The ring the platform ships: the DT pool is the promise, ring_mb is what
+    # the module took. They must agree - a pool the parameter does not use is
+    # no-map RAM burned for nothing, and a parameter the pool cannot back would
+    # have failed the probe. free can only ever be size less the 32 KiB gap.
+    pool = _dt_u32("/proc/device-tree/reserved-memory/cnc-pulsebuf/size")
+    try:
+        ring = int((_read("/sys/module/glowforge/parameters/ring_mb", "") or "").strip()) << 20
+    except ValueError:
+        ring = None
+    ev["cnc_pool_bytes"] = pool
+    ev["cnc_ring_bytes"] = ring
+    ctx.log("cnc-pulsebuf pool: %s bytes, ring_mb: %s bytes", pool, ring)
+    ctx.check(pool is not None, "no cnc-pulsebuf reserved-memory node (the ring fell back to CMA?)")
+    ctx.check(ring is not None, "/sys/module/glowforge/parameters/ring_mb unreadable")
+    ctx.check(pool is None or ring is None or pool == ring,
+              "DT pool %s and ring_mb %s disagree", pool, ring)
+    ctx.check(ring is None or free is None or free <= ring - 32 * 1024,
+              "cnc/free %s exceeds the ring less its 32 KiB gap (%s)", free, ring)
     ctx.check(hw.sysfs_read("cnc/interlock_circuit") is not None, "cnc/interlock_circuit unreadable")
 
     # 4. forgectrl holds /dev/glowforge and supervises the controller

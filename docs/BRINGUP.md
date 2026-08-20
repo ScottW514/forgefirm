@@ -26,7 +26,7 @@ Read together with:
 hardware-validated.**
 
 - **Platform bring-up: complete and hardware-verified.** SDMA + EPIT pulse
-  playback out of a 16 MiB reserved pool, live-fed during a run; laser PWM at
+  playback out of a reserved DMA pool, live-fed during a run; laser PWM at
   39.98 kHz; `CONFIG_PREEMPT=y`; both OV5648 cameras on the mainline
   imx-media pipeline with VPU JPEG encode; A/B slot install, signed `.fw`
   releases and factory restore.
@@ -657,12 +657,22 @@ not a release.
   `sdio write failed (-84)` and costs ~1 s of Wi-Fi (wlcore firmware recovery)
   — see "Wi-Fi SDIO CRC watch" under Next work.
 - **SDMA pulse engine**: ring size = the `ring_mb` module parameter (default
-  16 MiB; power of two, must fit the 16 MiB `cnc-pulsebuf` no-map DT pool).
-  Free = size − 32 KiB gap. Bench-verified at 16 MiB: 20 MB streamed at 100 kHz
-  through the wrapping ring, 0 ENOMEM, 0.4 ms max write latency, starve →
-  `underrun` per protocol. The ring caps legacy cloud-mode job length
-  (whole-file preload: ~1 MiB per 100 s of 10 kHz stream, so ~28 min); the
-  grblHAL live feed keeps only a few KB in flight. The playback script is
+  32 MiB, the factory ring size; power of two, must fit the 32 MiB
+  `cnc-pulsebuf` no-map DT pool). Free = size − 32 KiB gap, so 33,521,664 bytes.
+  Bench-verified on the 16 MiB ring the earlier images shipped, and the
+  mechanism is size-independent: 20 MB streamed at 100 kHz through the wrapping
+  ring, 0 ENOMEM, 0.4 ms max write latency, starve → `underrun` per protocol.
+  The ring caps legacy cloud-mode job length (whole-file preload: ~1 MiB per
+  100 s of 10 kHz stream, so ~56 min); the grblHAL live feed keeps only a few
+  KB in flight.
+- **Reserved memory**: 511 MiB usable DRAM (`0x10000000`–`0x2fefffff`), of which
+  96 MiB is reserved for DMA: the 32 MiB `cnc-pulsebuf` no-map pool (dynamically
+  placed, `alignment = size`, so it lands at `0x2c000000`) plus 64 MiB of
+  reusable CMA for camera/IPU/VPU buffers. no-map means the pulse pool is gone
+  from the kernel's map whether a job uses it or not, which is what makes
+  `dma_alloc_coherent()` deterministic for a late-probing out-of-tree module.
+  MemTotal ~454 MiB; measured idle use in GRBL mode with the daemon and
+  controller up is ~100 MiB. The playback script is
   relocated to SDMA channel 26 at `<26 0xF00>` (halfword 7680) with a pre-run
   integrity guard; the probe lines to look for are `EPIT clock 66000000 Hz` and
   `SDMA channel 26 reserved for pulse playback (script at halfword 7680)`.
@@ -1010,7 +1020,11 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     image built with the `<recipe>-pin.inc` layout: that image is a platform
     change against everything recorded so far, unavoidably, and only from then
     on does a component pin bump re-require just the tests covering that
-    component. `20260817124714` was built after the pin files landed and the
+    component. It now also carries the 32 MiB pulse ring (DT pool plus the
+    module default, batched into that flash), which is a platform change in its
+    own right and the first bench sighting of the larger ring: `image.health`
+    reads the pool and `ring_mb` back, and a preloaded cloud job past the old
+    28-minute cap is the capability proof. `20260817124714` was built after the pin files landed and the
     parity tests were driven on it, but no full-campaign export is recorded for
     it — confirm on the bench and write the record here. Also still owed:
     exercising the ported bench tools from the page (they are registered and
