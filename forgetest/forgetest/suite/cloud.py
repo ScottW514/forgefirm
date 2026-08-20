@@ -347,6 +347,24 @@ def message(line):
     return line.split(" ", 2)[-1] if line else None
 
 
+PROGRESS_MARK = "print:progress: reporting against "
+
+
+def progress_denominator(lines):
+    """The length the print reported its progress against, or None.
+
+    The client names it once per job, which is the number worth having: it
+    is what every progress frame of that job divides by.
+    """
+    for ln in lines:
+        if PROGRESS_MARK in ln:
+            try:
+                return int(ln.split(PROGRESS_MARK, 1)[1].split()[0])
+            except (IndexError, ValueError):
+                return None
+    return None
+
+
 def session_live(pid):
     """(live, detail): the running cloud client (gfcloud[pid]) has a live
     service session when its last websocket state line is 'ready' - a
@@ -731,7 +749,8 @@ def hunt_lid_open(ctx):
                   "latch stays unlocked and the armed window open through the pause. The same "
                   "print is where the job's lifecycle shows: a print warms up before its first "
                   "fire and rests after its park, both non-zero, while the connect-time hunt in "
-                  "the same session does neither.")
+                  "the same session does neither. It is also where the app's progress bar shows: "
+                  "the run reports how far it has gotten, against the job's own length.")
 def pause_resume(ctx):
     ev = ctx.evidence
     offset = enter_cloud(ctx)
@@ -791,9 +810,20 @@ def pause_resume(ctx):
     ev["holds_before_the_print"] = early_holds
     ctx.check(not early_holds, "a hunt or motion held for a print's periods: %s", early_holds[:2])
 
+    # The app's progress bar, from the same print. The machine reports where
+    # it has gotten to every 30 s and at every phase change, against the
+    # job's own length, which it names once when the run starts.
+    declared = progress_denominator(lines)
+    ev["progress_total"] = declared
+    ctx.log("progress reported against %s bytes", declared)
+    ctx.check(declared is not None, "the print reported no progress at all")
+    ctx.check(declared and declared > 0, "the print reported progress against %s bytes", declared)
+    ctx.confirm("Did the app show the print's progress advancing while it cut, rather than "
+                "standing still or jumping straight to nearly finished?")
+
     settle_cloud(ctx, offset)
-    ctx.log("PASS: button pause/resume mid-print, warm-up and rest observed, job completed "
-            "and parked")
+    ctx.log("PASS: button pause/resume mid-print, warm-up and rest observed, progress reported, "
+            "job completed and parked")
 
 
 @test("cloud.oversize-stream", title="A print longer than the ring is fed while it plays",
@@ -810,8 +840,9 @@ def pause_resume(ctx):
                   "is several times the ring: the machine holds the job in memory, fills the ring, "
                   "starts, and tops the ring up as it drains. This checks the signature of that - "
                   "the device in live-feed mode, the kernel's program total growing during the run, "
-                  "and no underrun - that a live-fed print pauses and resumes the factory way, the "
-                  "ring having kept the history to back into, and that the job still cancels "
+                  "and no underrun - that progress is reported against the job's length rather "
+                  "than that growing total, that a live-fed print pauses and resumes the factory "
+                  "way, the ring having kept the history to back into, and that the job cancels "
                   "cleanly.")
 def oversize_stream(ctx):
     ev = ctx.evidence
@@ -845,6 +876,19 @@ def oversize_stream(ctx):
     after = hw.sysfs_int("cnc/underruns", 0)
     ev["underruns_during"] = after
     ctx.check(after == before, "the ring ran dry during the run (underruns %s -> %s)", before, after)
+
+    # Progress on a live feed is where a moving denominator would show. The
+    # kernel's program total is what just grew, and a bar divided by it would
+    # sit near full from the first frame to the last; the job's own length is
+    # what the report divides by, and on a job this long it is the larger
+    # number by a wide margin.
+    declared = progress_denominator(log_lines_since(GFCLOUD_LOG, offset))
+    ev["progress_total"] = declared
+    ctx.log("progress reported against %s bytes, kernel program total %s", declared, grown)
+    ctx.check(declared is not None, "the print reported no progress at all")
+    ctx.check(declared and first is not None and declared > first,
+              "progress is being reported against %s bytes, which is the ring's count (%s), not "
+              "the job", declared, first)
 
     # The pause on a live feed: the ring keeps the history to back into, so a
     # streamed print retraces and leads back on exactly like a preloaded one.

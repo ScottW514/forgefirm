@@ -979,14 +979,16 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
    than by ring depth (a healthy feeder keeps the ring brim-full, so depth
    only falls an hour after the feed died): thirty seconds of no progress with
    room in the ring stops the job cleanly and retraces, and it resumes if the
-   feed moves again. The remaining gaps are tracked in
+   feed moves again. A running print also reports itself to the app again, on
+   the carrier a factory-session capture settled: the `type:"progress"` frame
+   that is the periodic settings report, every 30 s and at every phase change,
+   divided by the job's own length rather than by the kernel byte counter that
+   climbs all job long under a live feed. The remaining gaps are tracked in
    `python3-gfhardware/forgefirm-app/docs/CLOUD.md` "Outstanding items": a
    live job longer than the ring (built and covered, never yet run from the
    service), the memory guards against a real ceiling rather than a reasoned
-   one, sending progress to the app (F2: the carrier is settled, an outbound
-   `type:"progress"` frame that is the periodic settings report, at 30 s, from
-   a factory-session capture; what is owed is emitting it against the feeder's
-   job total rather than the kernel byte counter), packaged-path boot with
+   one, a print watched from the app to see the bar actually move,
+   packaged-path boot with
    `controller_mode = cloud`, the three unobserved
    actions, the lid-flash LED, and driving the park and the two lifecycle
    periods off the header (`CFrh`, `CCwp`, `CCrp`) once a capture confirms
