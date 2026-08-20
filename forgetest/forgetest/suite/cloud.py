@@ -764,20 +764,22 @@ def pause_resume(ctx):
 
 
 @test("cloud.oversize-stream", title="A print longer than the ring is fed while it plays",
-      subsystem="cloud", kind="live", est_min=10,
+      subsystem="cloud", kind="live", est_min=12,
       covers=_CLOUD_COVERS,
-      requires=["cloud.lid-interlock-abort"],
+      requires=["cloud.lid-interlock-abort", "cloud.pause-resume"],
       steps=[CLOUD_STEP,
              "Scrap on the bed and a LONG job ready in the app - one whose run time is longer "
              "than the ring holds (over an hour at the usual print tick). A full-bed raster "
              "engrave is the easy way to get one.",
              "Print from the app and press the button when it lights. Let it cut for about two "
-             "minutes, then cancel the print from the app."],
+             "minutes, pause and resume it with the button, then cancel the print from the app."],
       description="The service sends one pulse file for a print however long it is, and a long one "
                   "is several times the ring: the machine holds the job in memory, fills the ring, "
                   "starts, and tops the ring up as it drains. This checks the signature of that - "
                   "the device in live-feed mode, the kernel's program total growing during the run, "
-                  "and no underrun - and that the job still cancels cleanly.")
+                  "and no underrun - that a live-fed print pauses and resumes the factory way, the "
+                  "ring having kept the history to back into, and that the job still cancels "
+                  "cleanly.")
 def oversize_stream(ctx):
     ev = ctx.evidence
     offset = enter_cloud(ctx)
@@ -810,6 +812,27 @@ def oversize_stream(ctx):
     after = hw.sysfs_int("cnc/underruns", 0)
     ev["underruns_during"] = after
     ctx.check(after == before, "the ring ran dry during the run (underruns %s -> %s)", before, after)
+
+    # The pause on a live feed: the ring keeps the history to back into, so a
+    # streamed print retraces and leads back on exactly like a preloaded one.
+    ev["max_backtrack"] = hw.sysfs_int("cnc/max_backtrack", 0)
+    ctx.log("max_backtrack while the feed runs: %s steps", ev["max_backtrack"])
+    ctx.instruct("Press the button once (pause), watch the head stop and back up a few "
+                 "millimeters, wait about 3 seconds, press it again (resume), then click Done.")
+    got = wait_log(ctx, offset, ["button pressed mid-run; pausing", "paused at",
+                                 "button pressed while paused; resuming"], 90)
+    ev["pause_log"] = {k: bool(v) for k, v in got.items()}
+    ctx.check(got["button pressed mid-run; pausing"], "the press did not pause the live-fed run")
+    ctx.check(got["paused at"], "the pause did not settle (no 'paused at')")
+    ctx.check(got["button pressed while paused; resuming"], "the second press did not resume")
+    backtracked = [ln for ln in log_lines_since(GFCLOUD_LOG, offset)
+                   if "backtrack refused" in ln]
+    ev["backtrack_refused_lines"] = backtracked[:2]
+    ctx.check(not backtracked, "the live-fed pause could not back up (%s)", backtracked[:1])
+    ctx.check(hw.sysfs_int("cnc/underruns", 0) == before,
+              "the pause or the resume starved the ring")
+    ctx.confirm("Did the head back up a few millimeters with the laser off on the first press, "
+                "and pick the cut back up on the second?")
 
     ctx.instruct("Now cancel the print from the app.")
     fin = wait_action_finished(ctx, offset, "print", 300)

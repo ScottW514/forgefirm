@@ -292,6 +292,89 @@ def k1_k2(ctx):
                 "laser_enable/laser_on at 0 throughout")
 
 
+# ---------------------------------------------------------------- backtrack
+
+@test("kernel.backtrack-bounds", title="A backward run is bounded by the history the ring still holds",
+      subsystem="kernel", kind="auto", hardware="takeover", always=True, est_min=2,
+      covers=_KERNEL_COVERS,
+      requires=["kernel.k1-k2"],
+      description="A pause walks the program backward to put the beam back over ground the job "
+                  "already cut, and the ring is what remembers that ground. cnc/max_backtrack is "
+                  "the distance still available: what has played, less the tail the deceleration "
+                  "spends. This drills the boundary on real hardware - the readback matches the "
+                  "bytes played, a step beyond it is refused rather than quietly shortened, and "
+                  "the run at the boundary plays out and returns to idle. Motors locked, latch "
+                  "locked, duty zero: nothing moves and nothing fires.")
+def backtrack_bounds(ctx):
+    ev = ctx.evidence
+    tail = TICK_HZ * TICK_HZ // (2 * 125000)     # v^2/2a: 400 steps at the print tick
+    with ctx.takeover():
+        stream = POWER0 + PAD * (6 * TICK_HZ)
+        ctx.log("%d bytes = %.1f s of pads at %d Hz; decel tail %d steps",
+                len(stream), len(stream) / TICK_HZ, TICK_HZ, tail)
+        snap(ctx, "pre")
+        wr("cnc/motor_lock", 15)
+        wr("cnc/laser_latch", 1)
+        wr("cnc/ramp_rate", 125000)
+        wr("cnc/step_freq", TICK_HZ)
+        with PulseDevice(ctx) as dev:
+            dev.rewind()
+            wr("cnc/enable", 1)
+            ctx.sleep(0.5)
+            dev.write(stream)
+            wr("cnc/run", 1)
+            ctx.sleep(1.5)                       # well past the accel ramp
+            wr("cnc/stop", 1)
+            state = wait_state(ctx, "idle", 5, poll=0.01)
+            ctx.check(state == "idle", "the controlled stop did not reach idle (state=%s)", state)
+
+            played = rd_pos()[3]
+            budget = int(rd("cnc/max_backtrack"))
+            ev["played"] = played
+            ev["max_backtrack"] = budget
+            ctx.log("played %d bytes; max_backtrack %d", played, budget)
+            ctx.check(budget > 0, "max_backtrack is %d after %d bytes played", budget, played)
+            # The two numbers come from different SDMA registers (the byte
+            # counter and the ring head), so allow a few bytes of skew - but
+            # not the whole gap, and not the whole played span.
+            ctx.check(abs(budget - (played - tail)) <= 8,
+                      "max_backtrack %d is not the %d bytes played less the %d-step decel tail",
+                      budget, played, tail)
+
+            # One step past the boundary: refused, and the device stays idle.
+            refused = None
+            try:
+                wr("cnc/resume", -(budget + 1))
+            except OSError as e:
+                refused = e.errno
+            ev["over_long_errno"] = refused
+            ctx.check(refused == errno.EPERM,
+                      "a backtrack one step past the boundary was not refused with EPERM (%s)",
+                      refused)
+            state = rd("cnc/state")
+            ctx.check(state == "idle", "the refused backtrack left the device %s", state)
+
+            # At the boundary: runs, decelerates inside genuine data, ends idle.
+            wr("cnc/resume", -budget)
+            wait_state(ctx, "running", 2, poll=0.005)
+            hits, state = watch_laser_until_idle(ctx, 30)
+            after = int(rd("cnc/max_backtrack"))
+            ev["after"] = {"state": state, "max_backtrack": after,
+                           "faults": rd("cnc/faults"), "underruns": rd("cnc/underruns")}
+            ctx.log("backtrack of %d done: state=%s max_backtrack now %d", budget, state, after)
+            # Leave the program drained so the device ends where the other
+            # drills expect it.
+            wr("cnc/resume", 0)
+            wait_state(ctx, "running", 2, poll=0.005)
+            wait_state(ctx, "idle", 30)
+        ctx.check(not hits, "the laser asserted during the backward run: %s", hits[:10])
+        ctx.check(state == "idle", "the backward run ended in %s", state)
+        ctx.check(ev["after"]["faults"] == "0", "faults=%s after the backward run",
+                  ev["after"]["faults"])
+        ctx.log("PASS: max_backtrack tracks the played history, the boundary is enforced, "
+                "and the run at it plays out clean")
+
+
 # ---------------------------------------------------------------- K3
 
 def _k3_phase(ctx):

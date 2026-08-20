@@ -297,9 +297,11 @@ factory 2.6.0-2228 session; measured numbers in the facts bank).
 - **Ignored:** a lid open during a hunt, homing, a jog, or at idle.
 - **The button pauses and resumes a job.** Cloud mode uses the factory's
   laser-off backtrack and resume lead (`cloud_pause_backtrack_ticks` 2000 /
-  `cloud_resume_lead_ticks` 1950); GRBL mode uses feed hold / cycle start — the
-  kernel refuses a backtrack on a live-streamed ring, so a resumed GRBL cut
-  picks up where the deceleration ended. A pause is not a cancel: the latch
+  `cloud_resume_lead_ticks` 1950), on a preloaded job and a live-fed one
+  alike: the retrace is sized to `cnc/max_backtrack` and the lead follows it,
+  so a pause with little history behind it shortens both rather than failing.
+  GRBL mode uses feed hold / cycle start, so a resumed GRBL cut picks up where
+  the deceleration ended (item 18). A pause is not a cancel: the latch
   stays unlocked and the window open across it. There is no resume dwell: the
   safing chain re-arms ~216 ms before the first step (facts bank).
 - **`lid_policy = hold`** selects stock grblHAL door behavior instead (park in
@@ -662,9 +664,12 @@ not a release.
   Bench-verified on the 16 MiB ring the earlier images shipped, and the
   mechanism is size-independent: 20 MB streamed at 100 kHz through the wrapping
   ring, 0 ENOMEM, 0.4 ms max write latency, starve → `underrun` per protocol.
-  The ring caps legacy cloud-mode job length (whole-file preload: ~1 MiB per
-  100 s of 10 kHz stream, so ~56 min); the grblHAL live feed keeps only a few
-  KB in flight.
+  The ring holds ~1 MiB per 100 s of 10 kHz stream, so ~56 min of a cloud
+  print at a time; a longer job is fed live as it plays, and the grblHAL feed
+  keeps only a few KB in flight. The 32 KiB gap is retained history: the
+  writer stops that far short of the play head, so any fill leaves 3.2 s of
+  played program (at the print tick) to back a pause into, which is what
+  `cnc/max_backtrack` reports less the deceleration tail.
 - **Reserved memory**: 511 MiB usable DRAM (`0x10000000`–`0x2fefffff`), of which
   96 MiB is reserved for DMA: the 32 MiB `cnc-pulsebuf` no-map pool (dynamically
   placed, `alignment = size`, so it lands at `0x2c000000`) plus 64 MiB of
@@ -1248,13 +1253,17 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     laser-off backtrack (`cloud_pause_backtrack_ticks` 2000), then a laser-off
     lead back up to speed on the next press (`cloud_resume_lead_ticks` 1950),
     so the beam returns only once the head is retracing ground it already cut
-    and is back at feed. That mechanism cannot be borrowed here: the kernel
-    refuses a negative `resume` with `EPERM` once the ring has been
-    live-streamed (`UAPI.md`), because the bytes to back into have already been
-    overwritten.
+    and is back at feed. The kernel offers that mechanism to a live feed as
+    well: what bounds a backward run is the ring's retained history, not how
+    the ring was filled, and the 32 KiB the writer must leave clear is 3.2 s of
+    history at the print tick (`cnc/max_backtrack`, `UAPI.md`). What is not
+    settled is the bookkeeping above it: a backward run moves the head and the
+    kernel's counters while grblHAL's planner still holds a partly executed
+    block, so borrowing the mechanism means reconciling the two, and a GRBL
+    cut runs a much shorter queue than a cloud print does.
 
-    So the equivalent belongs above the ring, where grblHAL still holds what
-    the kernel does not — the planned path. Shape to evaluate: capture the
+    So the equivalent likely belongs above the ring, where grblHAL still holds
+    what the kernel does not: the planned path. Shape to evaluate: capture the
     point where the beam went off at the hold; on the resume plan a laser-off
     retrace back along the path and a laser-off accelerate-in, and unmask FIRE
     only once the head is at feed and has passed the captured point. Open: how
