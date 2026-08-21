@@ -235,6 +235,11 @@ tests:
 2. does that test's `covers` map name the files touched - if not, widen it
    in the same change.
 
+A gate or a limit is exercised through the settings API (a value a healthy
+machine cannot meet, re-read by the engine at the next run start, restored
+by the test's own teardown), never through `GFCOOL_*` environment overrides,
+which need a daemon restart and stay bench-only.
+
 A behavior change with no catalog consequence needs a sentence of
 justification in the commit message. Coverage gaps are defects: under the
 domain model an uncovered path lets an inherited PASS stay valid across a

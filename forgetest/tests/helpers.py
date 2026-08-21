@@ -102,6 +102,7 @@ class FakeForgectrl:
             "cam": {"running": False, "clients": 0},
             "diag": {"running": False},
             "settings": {"controller_mode": "grbl", "lid_lamp_idle": ""},
+            "logs_tail": {"name": "forgectrl", "text": "", "truncated": False, "exists": True},
         }
         self.posts = []
         self.on_post = None
@@ -122,7 +123,8 @@ class FakeForgectrl:
             def do_GET(self):
                 path = self.path.split("?", 1)[0]
                 key = {"/mode": "mode", "/status": "status", "/cool/status": "cool", "/cam/status": "cam",
-                       "/diag/status": "diag", "/settings": "settings"}.get(path)
+                       "/diag/status": "diag", "/settings": "settings",
+                       "/logs/tail": "logs_tail"}.get(path)
                 if key is None:
                     return self._send(404, {"error": "no " + path})
                 self._send(200, fake.state[key])
@@ -131,7 +133,7 @@ class FakeForgectrl:
                 path, _, query = self.path.partition("?")
                 n = int(self.headers.get("Content-Length") or 0)
                 raw = self.rfile.read(n).decode() if n else ""
-                form = dict(_up.parse_qsl(raw)) if raw else dict(_up.parse_qsl(query))
+                form = dict(_up.parse_qsl(raw if raw else query, keep_blank_values=True))
                 fake.posts.append((path, form))
                 if fake.on_post:
                     r = fake.on_post(path, form)
@@ -143,6 +145,7 @@ class FakeForgectrl:
                     fake.state["settings"]["controller_mode"] = form["controller"]
                 elif path == "/settings":
                     fake.state["settings"].update(form)
+                    return self._send(200, fake.state["settings"])
                 self._send(200, {"ok": True})
 
         self._srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)

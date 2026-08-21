@@ -300,24 +300,48 @@ All of these live in the panel's Machine tab, are validated on entry, and can
 only be changed while the machine is idle. The engine re-reads them at the
 start of every run, so a change takes effect on your next job.
 
-| Setting | Default | What it controls |
-|---|---|---|
-| `cool_flow_rise` | 14.4 °C | Downstream rise that counts as no-flow. Set this from **flow calibrate**. |
-| `cool_flow_heater_pct` | 40 % | Heater duty during a check. Raising it separates the bands further at the cost of warming the loop more. |
-| `cool_flow_check_s` | 50 s | Length of a check window. `0` disables flow verification entirely. |
-| `cool_recheck_s` | 150 s | How often checks repeat during a job. |
-| `cool_confirm_max_s` | 480 s | How long a suspicion may stay unresolved before it escalates to a fault. |
-| `cool_temp_max` | 33 °C | Run ceiling — above it, hold. |
-| `cool_temp_resume` | 31 °C | Resume gate — below it, continue. |
-| `cool_cooldown_s` | 15 s | Smoke-clear phase at run duty after a job. |
-| `cool_cooldown_max_s` | 300 s | Cap on the thermal cooldown phase. |
+| Setting | Default | Legal range | Recommended | What it controls |
+|---|---|---|---|---|
+| `cool_flow_rise` | 14.4 °C | 1 to 40 °C | 8 to 16 °C | Downstream rise that counts as no-flow. Set this from **flow calibrate**; above the band the check can never fault. |
+| `cool_flow_heater_pct` | 40 % | 0 to 100 % | | Heater duty during a check. Raising it separates the bands further at the cost of warming the loop more. |
+| `cool_flow_check_s` | 50 s | 0 to 300 s | 30 to 120 s | Length of a check window. `0` turns flow verification off (§8a). |
+| `cool_recheck_s` | 150 s | 0 to 3600 s | | How often checks repeat during a job. |
+| `cool_confirm_max_s` | 480 s | 60 to 3600 s | | How long a suspicion may stay unresolved before it escalates to a fault. |
+| `cool_temp_max` | 33 °C | 5 to 60 °C | 25 to 38 °C | Run ceiling: above it, hold. `60` turns the gate off (§8a). |
+| `cool_temp_resume` | 31 °C | 5 to 59 °C | 20 to 36 °C | Resume gate: below it, continue. Always kept below the ceiling. |
+| `cool_cooldown_s` | 15 s | 0 to 1800 s | | Smoke-clear phase at run duty after a job. |
+| `cool_cooldown_max_s` | 300 s | 0 to 1800 s | | Cap on the thermal cooldown phase. |
 
 Two settings are deliberately not on the panel:
 
-- `cool_fire_ir_delta` — the lid-IR fire gate (§7). It is `0`, watch-only, and
+- `cool_fire_ir_delta`, the lid-IR fire gate (§7). It is `0`, watch-only, and
   changing it by hand is not recommended until the watch is lamp-aware.
 - `GFCOOL_*` environment overrides exist for bench work; they win for the
   lifetime of the process and are not a normal operating path.
+
+### 8a. Turning a gate off
+
+The gates are settings, and the far end of a gate setting's range is the off
+switch: a coolant ceiling of 60 °C never trips, and a check window of 0 s runs
+no flow verification at all. There is no other switch, and no list of names to
+get wrong. The ranges are wide on purpose: the shipped defaults and the
+recommended bands come from one bench machine, and a machine whose loop or
+sensors read differently changes the number rather than waiting for new
+firmware.
+
+A gate that is off is not a gate that is forgotten. The panel flags any value
+outside its recommended band beside the field and says "this gate is OFF" at
+the far end; the Status tab shows a standing banner while any gate is off; the
+engine logs one line per gate setting at every run start, and with the ceiling
+off it still logs the first reading in a job that would have tripped the
+default. `/status` and `/cool/status` carry the off gates as `gates_off`.
+Nothing about it reaches the cloud service.
+
+What no setting can reach: the hardware safety chain, the laser latch, the
+emission witness, the lid-IR fire watch, the controller-silence dead-man, and
+the motion-liveness gate. A machine with every thermal gate off still stops
+firing the moment its controller goes quiet; what it no longer does is hold a
+job for a stopped pump or an overheating loop. The banner says so.
 
 ---
 
@@ -348,6 +372,7 @@ Stated plainly so nobody counts on them:
 | Suspicion unresolved past the budget | Escalates to `FAULT`. |
 | Three cleared suspicions in one job | Aggregated "check your coolant" warning. |
 | Upstream coolant above 33 °C | `OVERTEMP`: hold + forced cooling; auto-resume under 31 °C. |
+| A gate setting at its off end (ceiling 60 °C, check window 0 s) | No verdict from that gate; a run-start log line, `gates_off` in `/status`, and a standing panel banner. |
 | Job ends | 15 s smoke clear at run duty, then reduced airflow until the loop is under the resume gate. |
 | Controller stops reporting | Fire blocked at once, stand-down through cooldown. |
 | Silence while armed, or a program still playing | Motion stopped and the latch locked by the engine itself. |

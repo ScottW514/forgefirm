@@ -48,7 +48,7 @@ hardware-validated.**
   modes (cancel-and-return on a lid or interlock open, button pause/resume),
   bench-validated 2026-08-17.
 - **Releases are gated by the acceptance tool** (`forgetest`, dev image only):
-  a 42-test catalog, domain-scoped inheritance, an always-required safety core,
+  a 43-test catalog, domain-scoped inheritance, an always-required safety core,
   and a release gate that reads the exported artifact. The full campaign on
   dev image `20260821181036` (the first built on the `<recipe>-pin.inc`
   layout) satisfied 42 of 42 and its export authorizes a release;
@@ -579,12 +579,13 @@ under the domain model from the day's earlier dev images) and the export reads "
 YES" for that image's manifest. That authorizes a release; it is not one
 until `releases/v<version>/acceptance.json` is committed.
 
-- **Catalog: 42 tests** in `forgetest/forgetest/suite/`, every one a port of a
+- **Catalog: 43 tests** in `forgetest/forgetest/suite/`, every one a port of a
   proven bench drill or a bench-verified check — the always-required core
   (`image.health`, `kernel.latch-locked-idle`, `kernel.k1-k2`,
   `kernel.fire-line`), `forgectrl.*`, `logs.*`, `update.*`, `motion.*`
   (pacing, jog round-trip, liveness probe, cancel/abort, dead-man, the lid,
-  interlock and button parity tests), `cooling.*`, `camera.snapshot`,
+  interlock and button parity tests), `cooling.*` (flow verification, fans
+  quiet after motion, a gate setting tripping and off by value), `camera.snapshot`,
   `laser.*` (emission witness, arm-wait lid, disarm-in-hold, armed kill,
   pause/resume/lid-cancel) and `cloud.*`. Tests that share a setup are merged;
   the `auto` tests stay separate for failure isolation.
@@ -1313,6 +1314,18 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     file on two (`MCsn`, the serial it is locked to, and `PDfm`, the pulse
     data format, both checked before a byte reaches the ring) and drops the
     rest. Seventeen of the mandatory ones are among the dropped.
+
+    **Landed first, the pattern every gate ships on:** a gate is a plain
+    setting with a wide legal range, a recommended band, and an off end (a
+    ceiling at its maximum, a window of zero) that turns the gate off by
+    value, with no separate switch; the panel warns outside the band and
+    while any gate is off, the engine logs each gate setting at every run
+    start, `/status` and `/cool/status` carry `gates_off`, and an off gate
+    keeps measuring. Applied to the coolant ceiling, its resume gate, the
+    flow window and the flow rise (`forgectrl/src/gates.c`, `SERVICES.md`
+    "Gate settings", `COOLING.md` §8a, `cooling.gate-off` in the catalog).
+    The fan gates, the pass-through of header limits, the coolant critical
+    tier and the watch-only board temperatures follow on it.
 
     Nothing here can put energy where it was not commanded: the hardware chain
     is the emission boundary and no header field touches it, and forgectrl runs

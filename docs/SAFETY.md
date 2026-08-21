@@ -205,7 +205,11 @@ would not allow.
   finish the queue tail so a controlled stop can never leave FIRE driven.
 - **Coolant fire gates.** The armed window requires a fresh `fire_ok` verdict
   from the cooling engine (flow verification, over-temperature, lid-IR
-  emission witness); a stale or failed verdict relocks in-process.
+  emission witness); a stale or failed verdict relocks in-process. The
+  thermal gates are settings with a wide range whose far end turns the gate
+  off by value (`COOLING.md` §8a), loudly; the fresh-report rule, the
+  emission witness, the dead-man and the latch are not settings and stay in
+  force whatever the gates are set to.
 - **Safety door.** `doors` (lid) and `interlock` (loop open) are the core's
   safety-door signal, shown to the core only while it is in a job-time state
   (cycle, hold, tool change, door): a running job parks with a planned

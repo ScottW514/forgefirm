@@ -1,13 +1,19 @@
 """cooling.* - the cooling engine: flow verification through forgectrl's
-diagnostics runner (the same check the fire gate runs), and the fan
-profile returning to idle after motion."""
+diagnostics runner (the same check the fire gate runs), the fan profile
+returning to idle after motion, and the gate settings: a value inside
+the legal range trips the gate, the far end of the range turns it off
+by value, and both are said out loud (the settings reply, /status, the
+engine's run-start log line)."""
 import time
 
 from ..catalog import test
 from .. import hw
 
 _COOL_COVERS = [("forgectrl", "src/cool.*"), ("forgectrl", "src/diag.*"),
-                ("grblhal-glowforge", "src/gfcool*"), ("kernel-module-glowforge", "src/thermal*"),
+                ("forgectrl", "src/gates.*"), ("forgectrl", "src/settings.*"),
+                ("forgectrl", "src/status.*"), ("forgectrl", "src/ui/**"),
+                ("grblhal-glowforge", "src/glowforge_cooling.*"),
+                ("kernel-module-glowforge", "src/thermal*"),
                 ("kernel-module-glowforge", "src/pic*")]
 
 
@@ -168,3 +174,138 @@ def fans_quiet(ctx):
     ctx.log("fans after: %s duty %s (settled in %s s)", ev["after"], ev["duty_after"], ev["settle_s"])
     ctx.check(settle is not None, "fans did not return to the idle profile within %d s: %s, duty %s, "
               "phase %s (idle reference %s)", COOLDOWN_TIMEOUT_S, ev["after"], ev["duty_after"], phase(), before)
+
+
+GATE_KEYS = ("cool_temp_max", "cool_temp_resume")
+VERDICT_WAIT_S = 20         # the engine reloads settings at run start and ticks at 1 Hz
+GATE_LOG_LINES = "400"      # how far back the run-start gate lines can sit in the forgectrl log
+
+
+def _cool(fc):
+    st, c = fc.get("/cool/status")
+    return c if st == 200 and isinstance(c, dict) else {}
+
+
+def _gate_state(fc, key):
+    g = (fc.settings().get("gates") or {}).get(key) or {}
+    return g.get("state"), g.get("value")
+
+
+def _set_gates(ctx, fc, values):
+    """POST the gate settings and confirm the reply carries them."""
+    st, body = fc.post("/settings", params=values)
+    ctx.check(st == 200 and isinstance(body, dict), "POST /settings %s -> %s %s", values, st, body)
+    for k, v in values.items():
+        ctx.check(body.get(k) == v, "settings reply has %s=%r, posted %r", k, body.get(k), v)
+    return body
+
+
+def _run_session(ctx, g, fc, until, what):
+    """M8 opens a run session (the engine re-reads its settings there and
+    ticks the gates at 1 Hz); wait for `until(cool)` to hold, then M9."""
+    g.command("M8")
+    try:
+        t0 = time.time()
+        c = {}
+        while time.time() - t0 < VERDICT_WAIT_S:
+            ctx.sleep(1)
+            c = _cool(fc)
+            if until(c):
+                break
+        ctx.log("%s: verdict %s fire_ok %s hold %s gates_off %s (after %.0f s)", what,
+                c.get("verdict"), c.get("fire_ok"), c.get("hold"), c.get("gates_off"), time.time() - t0)
+        return c
+    finally:
+        g.command("M9")
+
+
+def _tail_has(fc, needle):
+    st, body = fc.get("/logs/tail", params={"name": "forgectrl", "lines": GATE_LOG_LINES})
+    text = body.get("text", "") if st == 200 and isinstance(body, dict) else ""
+    return needle in text
+
+
+@test("cooling.gate-off", title="A gate setting trips inside its range and is off at its far end",
+      subsystem="cooling", kind="auto", mode="grbl", est_min=3,
+      covers=_COOL_COVERS, requires=["kernel.latch-locked-idle"],
+      steps=["Machine idle, coolant at room temperature (above 8 C). The test writes the coolant "
+             "ceiling and resume gate and restores them; three short M8/M9 cycles spin the fans."],
+      description="The coolant ceiling is a plain setting with a wide legal range whose top "
+                  "turns the gate off by value. Set just above its legal minimum it must trip "
+                  "(OVERTEMP, hold, fire blocked) at the next run start; set to its top the "
+                  "engine must skip the gate (verdict OK), report it in gates_off on /status "
+                  "and /cool/status, say so in the settings reply, and log the run-start line; "
+                  "restored, everything reads as before.")
+def gate_off(ctx):
+    fc = ctx.forgectrl
+    ev = ctx.evidence
+    before = fc.settings()
+    orig = {k: before.get(k, "") for k in GATE_KEYS}
+    ev["orig"] = orig
+    ctx.log("original: %s", orig)
+    up = (fc.status().get("coolant") or {}).get("up_c")
+    ctx.check(up is not None and up > 8.0, "coolant too cold for the trip leg (up_c %s)", up)
+    c0 = _cool(fc)
+    ctx.check(c0.get("verdict") == "OK", "engine is not at OK before the test: %s", c0)
+    ctx.check(c0.get("gates_off") == [], "a gate is already off: %s", c0.get("gates_off"))
+    g_default = (before.get("gates") or {}).get("cool_temp_max") or {}
+    ctx.check(g_default.get("gate") == "coolant_max" and g_default.get("off") == "high",
+              "settings reply does not describe the ceiling as the coolant_max gate, off at its top: %s", g_default)
+    top = g_default.get("hi")
+    bottom = g_default.get("lo")
+    ctx.check(isinstance(top, (int, float)) and isinstance(bottom, (int, float)), "no range in the reply: %s", g_default)
+
+    restored = False
+    try:
+        with ctx.grbl() as grbl:
+            st = grbl.status_report()
+            ctx.check(st["state"].startswith("Idle"), "controller is %s", st["state"])
+
+            # Leg 1: a ceiling the coolant is already over. Legal, outside
+            # the band (warned), and it must trip at the next run start.
+            _set_gates(ctx, fc, {"cool_temp_max": str(bottom + 1), "cool_temp_resume": str(bottom)})
+            state, val = _gate_state(fc, "cool_temp_max")
+            ev["trip_state"] = state
+            ctx.check(state == "warn", "a ceiling of %s reports state %r, expected warn", val, state)
+            c = _run_session(ctx, grbl, fc, lambda c: c.get("verdict") == "OVERTEMP", "trip leg")
+            ev["trip"] = c
+            ctx.check(c.get("verdict") == "OVERTEMP", "ceiling %s C with coolant at %.1f C did not trip: %s",
+                      bottom + 1, up, c)
+            ctx.check(c.get("fire_ok") is False and c.get("hold") is True,
+                      "OVERTEMP without fire blocked and a hold: %s", c)
+            ctx.check(c.get("gates_off") == [], "a tripped gate is not an off gate: %s", c.get("gates_off"))
+
+            # Leg 2: the ceiling at its top. Off by value: no gate, verdict
+            # back to OK at the next run start, and said out loud.
+            _set_gates(ctx, fc, {"cool_temp_max": str(top), "cool_temp_resume": orig["cool_temp_resume"]})
+            state, val = _gate_state(fc, "cool_temp_max")
+            ev["off_state"] = state
+            ctx.check(state == "off", "a ceiling of %s reports state %r, expected off", val, state)
+            c = _run_session(ctx, grbl, fc, lambda c: c.get("verdict") == "OK" and c.get("gates_off"), "off leg")
+            ev["off"] = c
+            ctx.check(c.get("verdict") == "OK", "ceiling at %s did not clear the gate: %s", top, c)
+            ctx.check(c.get("gates_off") == ["coolant_max"], "/cool/status gates_off %s, expected [coolant_max]",
+                      c.get("gates_off"))
+            s_off = fc.status().get("gates_off")
+            ctx.check(s_off == ["coolant_max"], "/status gates_off %s, expected [coolant_max]", s_off)
+            ctx.check(_tail_has(fc, "gate coolant_max OFF: cool_temp_max = %g" % top),
+                      "the run-start log line for the off gate is missing from the forgectrl log")
+
+            # Restore, and prove the restore: the next run start reloads.
+            _set_gates(ctx, fc, orig)
+            restored = True
+            state, val = _gate_state(fc, "cool_temp_max")
+            c = _run_session(ctx, grbl, fc, lambda c: c.get("verdict") == "OK" and not c.get("gates_off"),
+                             "restored")
+            ev["restored"] = c
+            ctx.check(c.get("verdict") == "OK" and c.get("gates_off") == [],
+                      "engine did not return to OK with no gate off after the restore: %s", c)
+            ctx.log("restored ceiling %s reports state %s", val, state)
+    finally:
+        if not restored:
+            st, body = fc.post("/settings", params=orig)
+            ctx.log("restore on failure: POST /settings %s -> %s", orig, st)
+    after = fc.settings()
+    ctx.check(all(after.get(k, "") == orig[k] for k in GATE_KEYS),
+              "settings not restored: %s", {k: after.get(k) for k in GATE_KEYS})
+    ctx.check(fc.wait_idle(60, abort=ctx.aborted), "machine did not return to idle")
