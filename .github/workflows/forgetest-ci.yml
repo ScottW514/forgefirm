@@ -2,7 +2,10 @@
 #
 #  - unit tests: campaign rules, fingerprints, artifact build/verify (the
 #    release gate's decision, including the negative fixtures), runner +
-#    HTTP API end to end with a fake catalog and a fake bench tool
+#    HTTP API end to end with a fake catalog and a fake bench tool, the
+#    suites replayed on the machine's own log lines, and the check that
+#    every log phrase the cloud suite greps for is one the pinned cloud
+#    app can log (it reads the app sources from the manifest cache)
 #  - coverage lint: every source path of every component pinned by the
 #    recipes must be selected by some catalog test's coverage globs (the
 #    tree manifest is generated from the pins with git - no Yocto build);
@@ -43,13 +46,13 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Tree manifest from the recipe pins (also fetches the pinned app sources the needle check reads)
+        working-directory: forgefirm
+        run: python scripts/manifest-from-tree.py --out tree-manifest.json
+
       - name: Unit tests
         working-directory: forgefirm/forgetest
         run: python -m unittest discover -s tests -v
-
-      - name: Tree manifest from the recipe pins
-        working-directory: forgefirm
-        run: python scripts/manifest-from-tree.py --out tree-manifest.json
 
       - name: Coverage lint (enforced)
         working-directory: forgefirm/forgetest

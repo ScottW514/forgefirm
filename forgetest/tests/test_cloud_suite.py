@@ -11,6 +11,7 @@ What is proven here: the tests find the right lines in real log noise,
 reuse an existing cloud session and never switch back, restart the client
 for a fresh hunt, judge the print's own finish line (not another action's),
 wait the service's deferred moves out, and fail for the right reasons."""
+import contextlib
 import os
 import shutil
 import struct
@@ -311,7 +312,7 @@ class CloudSuiteTests(unittest.TestCase):
         run = self.run_test(cloud.pause_resume, hooks=hooks, test_id="cloud.pause-resume")
         ev = run.evidence
         self.assertEqual(ev["log"], {"button pressed mid-run; pausing": True, "paused at": True,
-                                     "button pressed while paused; resuming": True})
+                                     "button pressed while paused": True, "resuming (laser lead": True})
         self.assertTrue(ev["armed_after_resume"])
         self.assertIn(":completed", ev["log_end"]["print finished"])
         self.assertTrue(ev["log_end"]["return home complete"])
@@ -333,25 +334,56 @@ class CloudSuiteTests(unittest.TestCase):
                  "Press the button once NOW": lambda: self.append(rest, delay=0.05)}
         self.assertFails(cloud.pause_resume, "did not complete after the resume", hooks=hooks)
 
+    def test_pause_resume_fails_without_the_retraced_restart(self):
+        """The second press was seen but the retraced restart never logged
+        (the app's resume is its own line now): the failure names that."""
+        self.in_cloud(pid=1522)
+        self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
+        lines = [l for l in fixture("pause") if "resuming (laser lead" not in l]
+        pre, rest = cut(lines, "current state: MachineState.RUNNING")
+        pre, rest = pre + [rest[0]], rest[1:]
+        with self.fast_wait_log():
+            hooks = {"Click Done here": lambda: self.append(pre, delay=0.1),
+                     "Press the button once NOW": lambda: self.append(rest, delay=0.05)}
+            self.assertFails(cloud.pause_resume, "no retraced restart logged", hooks=hooks)
+
+    def test_pause_resume_fails_when_the_kernel_refuses_the_resume(self):
+        self.in_cloud(pid=1522)
+        self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
+        lines = [l.replace("machine:_resume_retraced resuming (laser lead 1950 ticks)",
+                           "machine:_resume_retraced resume refused ([Errno 22] Invalid argument); cancelling")
+                 for l in fixture("pause")]
+        pre, rest = cut(lines, "current state: MachineState.RUNNING")
+        pre, rest = pre + [rest[0]], rest[1:]
+        with self.fast_wait_log():
+            hooks = {"Click Done here": lambda: self.append(pre, delay=0.1),
+                     "Press the button once NOW": lambda: self.append(rest, delay=0.05)}
+            self.assertFails(cloud.pause_resume, "the resume was refused", hooks=hooks)
+
+    @contextlib.contextmanager
+    def fast_wait_log(self):
+        """The wait for the pause lines is 90 s: a replay whose line never
+        comes would sit it out. Cap it through the module's wait."""
+        saved = cloud.wait_log
+
+        def fast(ctx, offset, needles, timeout, poll=0.5):
+            return saved(ctx, offset, needles, min(timeout, 1.5), poll=0.1)
+        cloud.wait_log = fast
+        try:
+            yield
+        finally:
+            cloud.wait_log = saved
+
     def test_pause_resume_fails_without_the_pause_line(self):
         self.in_cloud(pid=1522)
         self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
         lines = [l for l in fixture("pause") if "button pressed mid-run" not in l]
         pre, rest = cut(lines, "current state: MachineState.RUNNING")
         pre, rest = pre + [rest[0]], rest[1:]
-        # the wait for the pause lines is 90 s: shorten it through the module's poll by
-        # ending the log early - the finish line arrives, but the pause never does
-        saved = cloud.wait_log
-
-        def fast_wait_log(ctx, offset, needles, timeout, poll=0.5):
-            return saved(ctx, offset, needles, min(timeout, 1.5), poll=0.1)
-        cloud.wait_log = fast_wait_log
-        try:
+        with self.fast_wait_log():
             hooks = {"Click Done here": lambda: self.append(pre, delay=0.1),
                      "Press the button once NOW": lambda: self.append(rest, delay=0.05)}
             self.assertFails(cloud.pause_resume, "did not pause the run", hooks=hooks)
-        finally:
-            cloud.wait_log = saved
 
     # -- the lid/interlock abort and the button-wait tests, on their excerpts ------
     # -- the merged lid + interlock abort test -------------------------------

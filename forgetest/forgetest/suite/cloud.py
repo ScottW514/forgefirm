@@ -317,6 +317,17 @@ def action_finish_index(lines, action):
                  if (action + " [") in ln and "finished with event" in ln), None)
 
 
+def check_pause_resume(ctx, got, offset, what="the run"):
+    """The pause and the resume, judged on the run loop's lines (got is
+    wait_log's result over PAUSE_LINES + RESUME_LINES)."""
+    ctx.check(got["button pressed mid-run; pausing"], "the press did not pause %s", what)
+    ctx.check(got["paused at"], "the pause did not settle (no 'paused at')")
+    ctx.check(got["button pressed while paused"], "the second press was not seen while paused")
+    refused = [ln for ln in log_lines_since(GFCLOUD_LOG, offset) if RESUME_REFUSED in ln]
+    ctx.check(not refused, "the resume was refused: %s", message(refused[0]) if refused else "")
+    ctx.check(got["resuming (laser lead"], "the second press did not resume (no retraced restart logged)")
+
+
 def wait_action_finished(ctx, offset, action, timeout, poll=0.5):
     """The action's own terminal line ('<action> [id]: finished with event
     ":completed"' / '":cancelled"'), or None within timeout."""
@@ -503,6 +514,13 @@ APP_PRINT_CUE = ("In the Glowforge app: scrap on the bed, lid closed, a SMALL en
 
 CANCELLED = 'finished with event ":cancelled"'
 COMPLETED = 'finished with event ":completed"'
+# The run loop's own lines for a button pause and the resume that follows:
+# the press, the settled hold, the second press, and the retraced restart
+# with its laser lead (logged by _resume_retraced, on its own line). A
+# resume the kernel refuses logs "resume refused" instead and cancels.
+PAUSE_LINES = ("button pressed mid-run; pausing", "paused at")
+RESUME_LINES = ("button pressed while paused", "resuming (laser lead")
+RESUME_REFUSED = "resume refused"
 CLOUD_STEP = ("Cloud credentials configured; the machine in cloud mode (the test switches once from "
               "GRBL mode and stays in cloud mode; switch back on the panel when done).")
 
@@ -748,12 +766,9 @@ def pause_resume(ctx):
     ctx.check(got, "the print never reached its run within 300 s (not started, or the button not pressed)")
     ctx.instruct("The head is moving. Press the button once NOW (pause), watch the head stop and back up "
                  "a few millimeters, wait about 3 seconds, press it again (resume), then click Done.")
-    got = wait_log(ctx, offset, ["button pressed mid-run; pausing", "paused at",
-                                 "button pressed while paused; resuming"], 90)
+    got = wait_log(ctx, offset, list(PAUSE_LINES + RESUME_LINES), 90)
     ev["log"] = {k: bool(v) for k, v in got.items()}
-    ctx.check(got["button pressed mid-run; pausing"], "the press did not pause the run")
-    ctx.check(got["paused at"], "the pause did not settle (no 'paused at')")
-    ctx.check(got["button pressed while paused; resuming"], "the second press did not resume")
+    check_pause_resume(ctx, got, offset)
     st, cs = ctx.forgectrl.get("/cool/status")
     ev["armed_after_resume"] = cs.get("armed") if isinstance(cs, dict) else None
     ctx.log("armed after the resume: %s", ev["armed_after_resume"])
@@ -885,12 +900,9 @@ def oversize_stream(ctx):
     ctx.log("max_backtrack while the feed runs: %s steps", ev["max_backtrack"])
     ctx.instruct("Press the button once (pause), watch the head stop and back up a few "
                  "millimeters, wait about 3 seconds, press it again (resume), then click Done.")
-    got = wait_log(ctx, offset, ["button pressed mid-run; pausing", "paused at",
-                                 "button pressed while paused; resuming"], 90)
+    got = wait_log(ctx, offset, list(PAUSE_LINES + RESUME_LINES), 90)
     ev["pause_log"] = {k: bool(v) for k, v in got.items()}
-    ctx.check(got["button pressed mid-run; pausing"], "the press did not pause the live-fed run")
-    ctx.check(got["paused at"], "the pause did not settle (no 'paused at')")
-    ctx.check(got["button pressed while paused; resuming"], "the second press did not resume")
+    check_pause_resume(ctx, got, offset, what="the live-fed run")
     backtracked = [ln for ln in log_lines_since(GFCLOUD_LOG, offset)
                    if "backtrack refused" in ln]
     ev["backtrack_refused_lines"] = backtracked[:2]
@@ -937,7 +949,7 @@ def pause_cancel_paths(ctx):
     ctx.check(got, "print 1 never reached its run within 300 s (not started, or the button not pressed)")
     ctx.instruct("The head is moving. Press the button once NOW (pause), watch it stop and back up a "
                  "few millimeters, then click Done.")
-    got = wait_log(ctx, offset, ["button pressed mid-run; pausing", "paused at"], 90)
+    got = wait_log(ctx, offset, list(PAUSE_LINES), 90)
     ev["paused"] = {k: bool(v) for k, v in got.items()}
     ctx.check(got["button pressed mid-run; pausing"], "the press did not pause print 1")
     ctx.check(got["paused at"], "the pause did not settle (no 'paused at')")

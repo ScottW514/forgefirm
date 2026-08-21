@@ -20,7 +20,8 @@
 2026-08-17T09:42:31.288114+00:00 gfcloud[1522] INFO machine:_switch_event button released
 2026-08-17T09:42:31.612040+00:00 gfcloud[1522] INFO machine:_run_loop paused at Position(x=AxisPosition(steps=1210, mm=22.68, inch=0.89), y=AxisPosition(steps=402, mm=7.54, inch=0.30), z=AxisPosition(steps=3, mm=0.0, inch=0.0), bytes=PulsPosition(total=238043, processed=61200))
 2026-08-17T09:42:34.702311+00:00 gfcloud[1522] INFO machine:_switch_event button pushed
-2026-08-17T09:42:34.704560+00:00 gfcloud[1522] INFO machine:_run_loop button pressed while paused; resuming (laser lead 1950 ticks)
+2026-08-17T09:42:34.704560+00:00 gfcloud[1522] INFO machine:_run_loop button pressed while paused
+2026-08-17T09:42:34.706100+00:00 gfcloud[1522] INFO machine:_resume_retraced resuming (laser lead 1950 ticks)
 2026-08-17T09:42:34.901002+00:00 gfcloud[1522] INFO machine:_switch_event button released
 2026-08-17T09:42:58.130807+00:00 gfcloud[1522] INFO machine:_run_loop current state: MachineState.IDLE
 2026-08-17T09:42:58.136283+00:00 gfcloud[1522] INFO machine:_run_loop finished run
