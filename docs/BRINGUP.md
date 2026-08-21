@@ -1323,7 +1323,8 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     start, `/status` and `/cool/status` carry `gates_off`, and an off gate
     keeps measuring. Applied to the coolant ceiling, its resume gate, the
     flow window and the flow rise (`forgectrl/src/gates.c`, `SERVICES.md`
-    "Gate settings", `COOLING.md` §8a, `cooling.gate-off` in the catalog).
+    "Gate settings", `COOLING.md` §8a, `cooling.gate-off` in the catalog,
+    bench PASS 2026-08-21 on dev image `20260821210903`).
     The fan gates, the pass-through of header limits, the coolant critical
     tier and the watch-only board temperatures follow on it.
 

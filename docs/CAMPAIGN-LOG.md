@@ -3210,6 +3210,25 @@ YES" for that image's manifest (campaign `c-20260821182204-dc01`, exported
 2026-08-21T18:40:30Z, artifact sha256 `6f17f690...43273055`). No release is
 cut from it.
 
+## 2026-08-21: cooling.gate-off, first bench run
+
+PASS on dev image `20260821210903`, campaign `c-20260821213027-0b47`, at
+21:47:16Z: the coolant ceiling set to 6 C tripped `OVERTEMP` (hold, fire
+blocked) one second into its run session; set to 60 C the next session read
+`OK` with `gates_off` `["coolant_max"]` on `/cool/status` and `/status` and the
+run-start line in the forgectrl log; restored to 33/31 the third session read
+`OK` with nothing off, the settings back verbatim.
+
+The first attempt on the same image (21:18Z) failed in the test, not the
+engine: its M9 and the next M8 were 300 ms apart, the GRBL client reports
+level-triggered at 1 Hz and the engine samples at 1 Hz, so the engine never
+saw the session end and never re-read the ceiling; the restore-on-failure
+then rewrote the file without opening a session, which left the bench
+holding `OVERTEMP` against the test's ceiling until the next job. The fixed
+test (forgefirm f274eb1) waits for the engine's phase to leave `run` after
+every M9 and cycles a session after restoring; it was hot-deployed to the
+board for this run and is in the next dev image.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
