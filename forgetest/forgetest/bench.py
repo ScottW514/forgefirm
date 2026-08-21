@@ -152,6 +152,15 @@ TOOLS = [
      "safety": "dry", "where": "board", "ported": True, "args": [],
      "desc": "Snapshots fan PWMs/tachs/temps, drives M8 -> cut fans, M9 -> cooldown -> idle; the tach "
              "readbacks in each snapshot are the evidence."},
+    {"id": "fan-floor", "title": "Fan floor measurement", "script": "fan_floor_measure.py",
+     "safety": "dry", "where": "board", "ported": True,
+     "args": [_arg("mode", "choice", "spinup", "spinup (M8, from idle) / cut (sample only, during a real cut)",
+                   ["spinup", "cut"]),
+              _arg("seconds", "int", 120, "sampling window", flag="--seconds"),
+              _arg("steady", "int", 60, "spinup: the steady window at the end", flag="--steady")],
+     "desc": "The numbers the airflow gates ship with: per fan the steady speed at run duty, the time to "
+             "90 percent and the spread, the purge current off and on, and (cut) the spread under a real "
+             "cut; results to the bench data directory."},
     # -- laser (live) --------------------------------------------------------------
     {"id": "live-fire", "title": "LIVE laser drills", "script": "live_fire_drills.py",
      "safety": "live", "where": "board", "ported": True,
