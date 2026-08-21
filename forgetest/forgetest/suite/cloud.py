@@ -836,15 +836,19 @@ def pause_resume(ctx):
     # the air-assist tach maximum) and hands them to the engine with every
     # report, and the engine names the effective set it is running on,
     # with the header's ceiling beside its own.
-    limits = next((ln.split(LIMITS_MARK, 1)[1].strip() for ln in lines if LIMITS_MARK in ln), None)
+    # The session's hunts and motions carry their own (looser) windows; the
+    # line that matters is the print's, the first after its action request.
+    print_at = max((i for i, ln in enumerate(lines) if "service action request: print" in ln), default=-1)
+    limits = next((ln.split(LIMITS_MARK, 1)[1].strip() for ln in lines[print_at + 1:] if LIMITS_MARK in ln), None)
     ev["header_limits"] = limits
-    ctx.log("job limits from the header: %s", limits)
+    ctx.log("job limits from the header (the print's): %s", limits)
     ctx.check(limits is not None, "the client named no job limits from the header")
     ctx.check("coolant_max_c=" in limits, "the header's coolant ceiling did not reach the engine: %s", limits)
     eff = [ln.strip()[:200] for ln in log_lines_since(FORGECTRL_LOG, fc_offset) if EFFECTIVE_MARK in ln]
-    ev["effective_limits"] = eff[-3:]
-    ctx.log("engine effective limits: %s", eff[-1] if eff else None)
-    ctx.check(any("header " in ln and "header none" not in ln for ln in eff),
+    with_header = [ln for ln in eff if "header " in ln and "header none" not in ln]
+    ev["effective_limits"] = with_header[-1:] + eff[-1:]
+    ctx.log("engine effective limits: %s", with_header[-1] if with_header else None)
+    ctx.check(with_header,
               "the engine never resolved an effective ceiling against the header's: %s", eff[-2:])
 
     settle_cloud(ctx, offset)

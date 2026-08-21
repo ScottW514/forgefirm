@@ -3229,6 +3229,31 @@ test (forgefirm f274eb1) waits for the engine's phase to leave `run` after
 every M9 and cycles a session after restoring; it was hot-deployed to the
 board for this run and is in the next dev image.
 
+## 2026-08-21: the job's limits pass through, seen on a live session
+
+`cloud.pause-resume` PASS on dev image `20260821220926` (campaign
+`c-20260821222752-4d93`, 22:30:52Z), the first print under the header
+pass-through. The two logs together, from the same session:
+
+- Every hunt and motion file the service sent carried a coolant window of
+  10 to 50 C; the client derived `coolant_max_c=50.0 coolant_min_c=10.0`
+  from each, and the engine answered `effective limits: coolant ceiling
+  33.0 C (local 33.0, header 50.0)` with `header coolant ceiling 50.0 C is
+  not stricter than the local 33.0 C; the local one stands`.
+- The print carried `air_assist_min_rpm=116 coolant_max_c=33.0
+  coolant_min_c=5.0` (the captured cut-job values: `AArx` 64500 us, `CMrx`
+  33000, `CMrn` 5000); the engine resolved the ceiling at 33.0 (equal to
+  the local one, so the local stands) and published the floors (coolant
+  5.0 C, air assist 116 rpm, exhaust and intake 0) for the gates to come.
+- At the job's end the limits left with it and the effective set fell
+  back to local.
+
+Two refinements from the run, neither a behavior change: the "not
+stricter" notice printed twice per job (forgectrl e0b41b3 names it once per
+value), and the test quoted the session's first job-limits line, a hunt's,
+where the print's is the one worth keeping (it now takes the first line
+after the print's action request).
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

@@ -344,8 +344,8 @@ class CloudSuiteTests(unittest.TestCase):
         # the job's envelope passed through: the client's line and the engine's
         self.assertEqual(ev["header_limits"],
                          "air_assist_min_rpm=116 coolant_max_c=33.0 coolant_min_c=5.0")
-        self.assertEqual(len(ev["effective_limits"]), 1)
-        self.assertIn("header 33.0", ev["effective_limits"][0])
+        self.assertIn("header 33.0", ev["effective_limits"][0])       # the line with the header
+        self.assertTrue(all("effective limits: coolant ceiling 33.0 C" in ln for ln in ev["effective_limits"]))
 
     def test_pause_resume_fails_when_the_client_names_no_header_limits(self):
         self.client_limits = False

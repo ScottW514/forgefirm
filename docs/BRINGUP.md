@@ -1332,7 +1332,9 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     header, never loosening and never overruling an off gate, logs the
     effective set and publishes it in `/cool/status`; the coolant ceiling
     is the live consumer, the floors wait for the fan gates
-    (`cloud.pause-resume` checks both log lines on a real print). The fan
+    (`cloud.pause-resume` checks both log lines on a real print; bench PASS
+    2026-08-21 on dev image `20260821220926`, the service's hunt windows
+    ignored as looser and the print's 33 C window matched). The fan
     gates, the coolant critical tier and the watch-only board temperatures
     follow.
 
