@@ -35,9 +35,10 @@ SIBLINGS = {"python3-gfhardware": "python3-gfhardware", "python3-gfutilities": "
 BUILT_PHRASES = ("warm up: holding", "cool down: holding", "warm up: skipped", "cool down: skipped",
                  'finished with event ":cancelled"', 'finished with event ":completed"',
                  "motion [", "print [")
-# Phrases that are not the app's: forgetest's own log, or a line prefix
-# of the log format rather than a message.
-NOT_APP = ("PASS", "gfcloud", "[")
+# Phrases that are not the app's: forgetest's own log, a line prefix of
+# the log format rather than a message, or a line of forgectrl's log (the
+# engine's effective-limits line, judged from its own file).
+NOT_APP = ("PASS", "gfcloud", "[", "effective limits: coolant ceiling", "header")
 
 PLACEHOLDER = re.compile(r"%(?:\([^)]*\))?[-+ #0]*\d*(?:\.\d+)?[sdifrxXeEgGcu]|%%")
 

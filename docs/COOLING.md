@@ -76,6 +76,19 @@ a program is playing, the engine additionally stops motion and locks the laser
 latch itself. It also refuses to let exhaust and intake drop below cooldown
 duty while a program is still running.
 
+**A cloud job brings its own envelope.** The pulse file the Glowforge service
+sends opens with the job's operating limits, and the cloud client hands the
+ones the engine has a use for along with every report: the coolant window
+and the fans' minimum speeds. The engine takes each only where it is
+stricter than the setting on the Machine tab: a ceiling can only come down
+for a job, a floor can only go up, a looser value is noted in the log and
+ignored, and a gate you turned off (§8a) stays off whatever the job says.
+The coolant ceiling is the one limit a job can tighten today (the service
+sends 33 °C on a cut, which is also the shipped default); the fan floors
+are carried and logged ahead of the airflow gates. The effective set shows
+in the log as `effective limits:` and in `/cool/status` as `limits`. A GRBL
+job has no header and runs on the settings alone.
+
 **If a diagnostic takes the hardware over** (§6), the engine suspends its own
 writes and publishes fire-blocked until the diagnostic finishes.
 

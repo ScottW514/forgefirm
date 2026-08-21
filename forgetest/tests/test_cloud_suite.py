@@ -40,6 +40,13 @@ COOL_DOWN_LINE = ("2026-08-17T09:45:31.700000+00:00 gfcloud[1522] INFO "
                   "machine:_dwell cool down: holding 10.0 s")
 PROGRESS_LINE = ("2026-08-17T09:44:05.200000+00:00 gfcloud[1522] INFO "
                  "machine:__init__ print:progress: reporting against 47848 bytes every 30 s")
+LIMITS_LINE = ("2026-08-17T09:44:01.900000+00:00 gfcloud[1522] INFO "
+               "machine:_motion job limits from the header: air_assist_min_rpm=116 "
+               "coolant_max_c=33.0 coolant_min_c=5.0")
+# What the engine logs when the job's limits reach it (forgectrl's log).
+EFFECTIVE_LINE = ("2026-08-17T09:44:02.050000+00:00 forgectrl[410] INFO cool: effective limits: "
+                  "coolant ceiling 33.0 C (local 33.0, header 33.0) resume 31.0 C; floors coolant "
+                  "5.0 C, exhaust 0 rpm, intake 0 rpm, air assist 116 rpm (from the header, no gate yet)")
 
 
 def cut(lines, marker, count=1):
@@ -94,8 +101,14 @@ class CloudSuiteTests(unittest.TestCase):
         self._pos(0, 0, 3)
         os.environ["GF_SYSFS_ROOT"] = self.sysfs
         self.fc = helpers.FakeForgectrl().start()
-        self.saved = (cloud.GFCLOUD_LOG, cloud.QUIET_S, cloud.QUIET_TIMEOUT_S, cloud.HUNT_TIMEOUT_S)
+        self.fclog = os.path.join(self.tmp, "forgectrl.log")
+        open(self.fclog, "wb").close()
+        self.saved = (cloud.GFCLOUD_LOG, cloud.FORGECTRL_LOG, cloud.QUIET_S, cloud.QUIET_TIMEOUT_S,
+                      cloud.HUNT_TIMEOUT_S)
         cloud.GFCLOUD_LOG = self.log
+        cloud.FORGECTRL_LOG = self.fclog
+        self.engine_line = EFFECTIVE_LINE      # what the engine logs at the print; None = nothing
+        self.client_limits = True              # the client names its header limits
         cloud.QUIET_S = 0.4
         cloud.QUIET_TIMEOUT_S = 3
         cloud.HUNT_TIMEOUT_S = 8
@@ -105,7 +118,8 @@ class CloudSuiteTests(unittest.TestCase):
         if self.script:
             self.script.stop = True
         self.fc.stop()
-        cloud.GFCLOUD_LOG, cloud.QUIET_S, cloud.QUIET_TIMEOUT_S, cloud.HUNT_TIMEOUT_S = self.saved
+        (cloud.GFCLOUD_LOG, cloud.FORGECTRL_LOG, cloud.QUIET_S, cloud.QUIET_TIMEOUT_S,
+         cloud.HUNT_TIMEOUT_S) = self.saved
         os.environ.pop("GF_SYSFS_ROOT", None)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
@@ -295,11 +309,17 @@ class CloudSuiteTests(unittest.TestCase):
         # a rest, and before it reported a print's progress; the replay
         # carries those lines where it emits them now, rather than editing
         # what the machine actually said that day.
-        run_pre = run_pre + [WARM_UP_LINE, PROGRESS_LINE]
+        run_pre = run_pre + ([LIMITS_LINE] if self.client_limits else []) + [WARM_UP_LINE, PROGRESS_LINE]
         pre, rest = pre + run_pre + [rest[0]], rest[1:]
         mid, tail = cut(rest, at_end)
         tail = tail + [COOL_DOWN_LINE]
-        return {"Click Done here": lambda: self.append(pre, delay=0.1),
+
+        def at_done():
+            self.append(pre, delay=0.1)
+            if self.engine_line:
+                with open(self.fclog, "ab") as f:
+                    f.write((self.engine_line + "\n").encode())
+        return {"Click Done here": at_done,
                 at_run: lambda: (self.append(mid, delay=0.05), self.append(tail, delay=tail_delay))}
 
     def test_pause_resume_passes_on_the_machines_lines(self):
@@ -321,6 +341,27 @@ class CloudSuiteTests(unittest.TestCase):
         self.assertTrue(any("PASS: button pause/resume" in l for l in run.lines))
         # the post-print hunt was waited out
         self.assertTrue(any("machine is quiet" in l for l in run.lines))
+        # the job's envelope passed through: the client's line and the engine's
+        self.assertEqual(ev["header_limits"],
+                         "air_assist_min_rpm=116 coolant_max_c=33.0 coolant_min_c=5.0")
+        self.assertEqual(len(ev["effective_limits"]), 1)
+        self.assertIn("header 33.0", ev["effective_limits"][0])
+
+    def test_pause_resume_fails_when_the_client_names_no_header_limits(self):
+        self.client_limits = False
+        self.in_cloud(pid=1522)
+        self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
+        hooks = self.replay_print("pause", "Press the button once NOW", "current state: MachineState.IDLE")
+        self.fc.state["cool"]["armed"] = True
+        self.assertFails(cloud.pause_resume, "named no job limits", hooks=hooks)
+
+    def test_pause_resume_fails_when_the_engine_resolves_against_no_header(self):
+        self.engine_line = EFFECTIVE_LINE.replace("header 33.0", "header none 0.0")
+        self.in_cloud(pid=1522)
+        self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
+        hooks = self.replay_print("pause", "Press the button once NOW", "current state: MachineState.IDLE")
+        self.fc.state["cool"]["armed"] = True
+        self.assertFails(cloud.pause_resume, "never resolved an effective ceiling", hooks=hooks)
 
     def test_pause_resume_fails_when_the_print_is_cancelled_instead(self):
         self.in_cloud(pid=1522)

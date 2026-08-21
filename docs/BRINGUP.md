@@ -1325,8 +1325,16 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     flow window and the flow rise (`forgectrl/src/gates.c`, `SERVICES.md`
     "Gate settings", `COOLING.md` §8a, `cooling.gate-off` in the catalog,
     bench PASS 2026-08-21 on dev image `20260821210903`).
-    The fan gates, the pass-through of header limits, the coolant critical
-    tier and the watch-only board temperatures follow on it.
+    **The pass-through is in:** the cloud client derives the job's limits
+    from the header (`CMrx`/`CMrn` as degrees, `EFrx`/`IFrx`/`AArx` as the
+    minimum speeds their maximum periods mean) and rides them on every
+    `/cool/state`; the engine resolves each as the stricter of local and
+    header, never loosening and never overruling an off gate, logs the
+    effective set and publishes it in `/cool/status`; the coolant ceiling
+    is the live consumer, the floors wait for the fan gates
+    (`cloud.pause-resume` checks both log lines on a real print). The fan
+    gates, the coolant critical tier and the watch-only board temperatures
+    follow.
 
     Nothing here can put energy where it was not commanded: the hardware chain
     is the emission boundary and no header field touches it, and forgectrl runs

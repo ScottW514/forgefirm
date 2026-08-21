@@ -15,6 +15,11 @@ _CLOUD_COVERS = [("forgefirm-app", "**"), ("python3-gfhardware", "**"), ("python
 
 GF_LATEST = "/data/forgefirm/gf-latest.json"
 GFCLOUD_LOG = "/data/log/forgefirm/gfcloud/gfcloud.log"
+FORGECTRL_LOG = "/data/log/forgefirm/forgectrl/forgectrl.log"
+# The client names the limits it derived from the pulse header once per
+# job; the engine names the effective set whenever it changes.
+LIMITS_MARK = "job limits from the header: "
+EFFECTIVE_MARK = "effective limits: coolant ceiling "
 SESSION_MARKS = ("authenticate_machine SUCCESS", "ws_connect ESTABLISHED")
 RETURN_MAX_MM = 600.0       # the head comes back from the home corner across the bed
 
@@ -761,6 +766,7 @@ def hunt_lid_open(ctx):
 def pause_resume(ctx):
     ev = ctx.evidence
     offset = enter_cloud(ctx)
+    fc_offset = log_size(FORGECTRL_LOG)
     ctx.instruct(APP_PRINT_CUE)
     got = wait_print_running(ctx, offset, 300)
     ctx.check(got, "the print never reached its run within 300 s (not started, or the button not pressed)")
@@ -825,9 +831,25 @@ def pause_resume(ctx):
     ctx.confirm("Did the app show the print's progress advancing while it cut, rather than "
                 "standing still or jumping straight to nearly finished?")
 
+    # The job's envelope, from the same print: the client derives the
+    # limits the header carries (a cut job carries the coolant window and
+    # the air-assist tach maximum) and hands them to the engine with every
+    # report, and the engine names the effective set it is running on,
+    # with the header's ceiling beside its own.
+    limits = next((ln.split(LIMITS_MARK, 1)[1].strip() for ln in lines if LIMITS_MARK in ln), None)
+    ev["header_limits"] = limits
+    ctx.log("job limits from the header: %s", limits)
+    ctx.check(limits is not None, "the client named no job limits from the header")
+    ctx.check("coolant_max_c=" in limits, "the header's coolant ceiling did not reach the engine: %s", limits)
+    eff = [ln.strip()[:200] for ln in log_lines_since(FORGECTRL_LOG, fc_offset) if EFFECTIVE_MARK in ln]
+    ev["effective_limits"] = eff[-3:]
+    ctx.log("engine effective limits: %s", eff[-1] if eff else None)
+    ctx.check(any("header " in ln and "header none" not in ln for ln in eff),
+              "the engine never resolved an effective ceiling against the header's: %s", eff[-2:])
+
     settle_cloud(ctx, offset)
     ctx.log("PASS: button pause/resume mid-print, warm-up and rest observed, progress reported, "
-            "job completed and parked")
+            "the job's limits passed through, job completed and parked")
 
 
 @test("cloud.oversize-stream", title="A print longer than the ring is fed while it plays",
