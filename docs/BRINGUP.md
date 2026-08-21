@@ -48,7 +48,7 @@ hardware-validated.**
   modes (cancel-and-return on a lid or interlock open, button pause/resume),
   bench-validated 2026-08-17.
 - **Releases are gated by the acceptance tool** (`forgetest`, dev image only):
-  a 43-test catalog, domain-scoped inheritance, an always-required safety core,
+  a 44-test catalog, domain-scoped inheritance, an always-required safety core,
   and a release gate that reads the exported artifact. The full campaign on
   dev image `20260821181036` (the first built on the `<recipe>-pin.inc`
   layout) satisfied 42 of 42 and its export authorizes a release;
@@ -579,13 +579,14 @@ under the domain model from the day's earlier dev images) and the export reads "
 YES" for that image's manifest. That authorizes a release; it is not one
 until `releases/v<version>/acceptance.json` is committed.
 
-- **Catalog: 43 tests** in `forgetest/forgetest/suite/`, every one a port of a
+- **Catalog: 44 tests** in `forgetest/forgetest/suite/`, every one a port of a
   proven bench drill or a bench-verified check — the always-required core
   (`image.health`, `kernel.latch-locked-idle`, `kernel.k1-k2`,
   `kernel.fire-line`), `forgectrl.*`, `logs.*`, `update.*`, `motion.*`
   (pacing, jog round-trip, liveness probe, cancel/abort, dead-man, the lid,
   interlock and button parity tests), `cooling.*` (flow verification, fans
-  quiet after motion, a gate setting tripping and off by value), `camera.snapshot`,
+  quiet after motion, a gate setting tripping and off by value, a fan under
+  its floor), `camera.snapshot`,
   `laser.*` (emission witness, arm-wait lid, disarm-in-hold, armed kill,
   pause/resume/lid-cancel) and `cloud.*`. Tests that share a setup are merged;
   the `auto` tests stay separate for failure isolation.
@@ -1331,11 +1332,20 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     `/cool/state`; the engine resolves each as the stricter of local and
     header, never loosening and never overruling an off gate, logs the
     effective set and publishes it in `/cool/status`; the coolant ceiling
-    is the live consumer, the floors wait for the fan gates
+    is the live consumer and the fan floors follow
     (`cloud.pause-resume` checks both log lines on a real print; bench PASS
     2026-08-21 on dev image `20260821220926`, the service's hunt windows
-    ignored as looser and the print's 33 C window matched). The fan
-    gates, the coolant critical tier and the watch-only board temperatures
+    ignored as looser and the print's 33 C window matched). **The airflow
+    gates are in** (`forgectrl/src/airflow.c`): every fan held to a floor
+    while the run profile is applied (exhaust, intakes and air assist by
+    tachometer, purge by current), a spin-up grace, three ticks under the
+    floor, a fault for the rest of the session (`AIRFLOW`, no resume), a
+    header window only ever raising a floor; `cooling.fan-gate-trips` in
+    the catalog. The shipped floors are provisional, 55 percent of one
+    run-duty snapshot (exhaust 3700, intake 1800, air assist 6000 rpm,
+    purge current 300, grace 15 s) until `fan_floor_measure.py` has been
+    run on the bench and the numbers in `forgectrl/src/gates.c` set from
+    it. The coolant critical tier and the watch-only board temperatures
     follow.
 
     Nothing here can put energy where it was not commanded: the hardware chain

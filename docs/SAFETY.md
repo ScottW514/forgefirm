@@ -204,8 +204,9 @@ would not allow.
   and the next emission needs a fresh press. The relock waits for the kernel to
   finish the queue tail so a controlled stop can never leave FIRE driven.
 - **Coolant fire gates.** The armed window requires a fresh `fire_ok` verdict
-  from the cooling engine (flow verification, over-temperature, lid-IR
-  emission witness); a stale or failed verdict relocks in-process. The
+  from the cooling engine (flow verification, over-temperature, the airflow
+  floors on every fan, lid-IR emission witness); a stale or failed verdict
+  relocks in-process. The
   thermal gates are settings with a wide range whose far end turns the gate
   off by value (`COOLING.md` §8a), loudly; the fresh-report rule, the
   emission witness, the dead-man and the latch are not settings and stay in

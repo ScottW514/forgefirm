@@ -374,3 +374,148 @@ class GateOffTests(unittest.TestCase):
         self.assertEqual(run.evidence["orig"], {"cool_temp_max": "30", "cool_temp_resume": "28"})
         self.assertEqual(self.settings_posts()[-1], {"cool_temp_max": "30", "cool_temp_resume": "28"})
         self.assertEqual(self.fc.state["settings"]["cool_temp_max"], "30")
+
+
+class FanGateTests(unittest.TestCase):
+    """cooling.fan-gate-trips against a scripted engine: the fake reads the
+    floors at every M8 (the engine reloads at run start), holds every fan
+    in grace for the configured seconds, then judges the bench readings
+    (exhaust 6753, intakes 3212/3328, air assist 10997 rpm, purge 628)
+    against the floors: a floor a reading cannot meet trips AIRFLOW three
+    ticks after the grace, a floor of zero reads off."""
+
+    READINGS = {"exhaust": 6753, "intake_1": 3212, "intake_2": 3328, "air_assist": 10997, "purge": 628}
+    FLOORS = {"exhaust": ("cool_tach_exhaust_min_rpm", 3700.0, 20000.0),
+              "intake_1": ("cool_tach_intake_min_rpm", 1800.0, 20000.0),
+              "intake_2": ("cool_tach_intake_min_rpm", 1800.0, 20000.0),
+              "air_assist": ("cool_tach_air_assist_min_rpm", 6000.0, 30000.0),
+              "purge": ("cool_purge_min_current", 300.0, 1023.0)}
+    GATE_OF = {"exhaust": "exhaust", "intake_1": "intake", "intake_2": "intake",
+               "air_assist": "air_assist", "purge": "purge"}
+
+    def setUp(self):
+        self.fc = helpers.FakeForgectrl().start()
+        self.grbl = FakeGrbl()
+        self.saved = (cooling.VERDICT_WAIT_S, cooling.SESSION_END_WAIT_S, cooling.FAN_TRIP_WAIT_S)
+        cooling.VERDICT_WAIT_S = 4
+        cooling.SESSION_END_WAIT_S = 3
+        cooling.FAN_TRIP_WAIT_S = 4
+        self.fc.state["status"] = dict(self.fc.state["status"], gates_off=[])
+        self.fc.state["cool"] = {"phase": "idle", "verdict": "OK", "fire_ok": False, "hold": False,
+                                 "gates_off": [], "fan_gates": {}}
+        for key, _d, _h in self.FLOORS.values():
+            self.fc.state["settings"].setdefault(key, "")
+        self.fc.state["settings"].setdefault("cool_fan_grace_s", "")
+        self.trips = True          # the engine trips an unmeetable floor
+        self.reports_off = True    # the engine reports a zero floor as off
+        self.grace_scale = 0.1     # seconds of fake grace per configured second
+        self._describe()
+        self.grbl.on_command = self._engine
+        self.fc.on_post = self._on_post
+
+    def tearDown(self):
+        cooling.VERDICT_WAIT_S, cooling.SESSION_END_WAIT_S, cooling.FAN_TRIP_WAIT_S = self.saved
+        self.grbl.close()
+        self.fc.stop()
+
+    def setting(self, key, default):
+        v = self.fc.state["settings"].get(key) or ""
+        return float(v) if v else default
+
+    def _describe(self):
+        gates = {}
+        for fan, (key, default, hi) in self.FLOORS.items():
+            v = self.setting(key, default)
+            gates[key] = {"gate": self.GATE_OF[fan], "def": default, "lo": 0.0, "hi": hi,
+                          "band": [default * 0.7, default * 1.4], "off": "low", "value": v,
+                          "state": "off" if v <= 0 else "ok"}
+        g = self.setting("cool_fan_grace_s", 15.0)
+        gates["cool_fan_grace_s"] = {"gate": None, "def": 15.0, "lo": 0.0, "hi": 120.0, "band": [5, 30],
+                                     "off": "none", "value": g, "state": "ok"}
+        self.fc.state["settings"]["gates"] = gates
+
+    def _on_post(self, path, form):
+        if path != "/settings":
+            return None
+        self.fc.state["settings"].update(form)
+        self._describe()
+        return (200, self.fc.state["settings"])
+
+    def _engine(self, line):
+        self._describe()
+        cool = self.fc.state["cool"]
+        if line == "M9":
+            def end():
+                time.sleep(0.3)
+                cool["phase"] = "idle"
+            threading.Thread(target=end, daemon=True).start()
+            return
+        if line != "M8":
+            return
+        cool["phase"] = "run"
+        floors = {fan: self.setting(key, default) for fan, (key, default, _h) in self.FLOORS.items()}
+        off = sorted({self.GATE_OF[f] for f, v in floors.items() if v <= 0}) if self.reports_off else []
+        cool.update(verdict="OK", fire_ok=True, hold=False, resume_ok=True, reason="", gates_off=off,
+                    fan_gates={f: {"reading": self.READINGS[f], "floor": floors[f],
+                                   "state": "off" if floors[f] <= 0 else "grace"} for f in floors})
+        self.fc.state["status"]["gates_off"] = off
+        grace = self.setting("cool_fan_grace_s", 15.0) * self.grace_scale
+
+        def judge():
+            time.sleep(grace)
+            if cool["phase"] != "run":
+                return
+            for f in floors:
+                if floors[f] > 0:
+                    cool["fan_gates"][f]["state"] = "ok" if self.READINGS[f] >= floors[f] else "under"
+            time.sleep(0.3)
+            if cool["phase"] != "run" or not self.trips:
+                return
+            for f in floors:
+                if 0 < floors[f] > self.READINGS[f]:
+                    cool["fan_gates"][f]["state"] = "TRIPPED"
+                    cool.update(verdict="AIRFLOW", fire_ok=False, hold=True, resume_ok=False,
+                                reason="AIRFLOW: %s %d under the %d floor for 3 s - hold, no resume this job"
+                                       % (f, self.READINGS[f], floors[f]))
+                    break
+        threading.Thread(target=judge, daemon=True).start()
+
+    def run_test(self):
+        run = Run("test", "cooling.fan-gate-trips", "t")
+        ctx = Context(run, None, helpers.make_test("cooling.fan-gate-trips", []))
+        cooling.fan_gate_trips(ctx)
+        return run
+
+    def settings_posts(self):
+        return [f for p, f in self.fc.posts if p == "/settings"]
+
+    def test_trip_purge_off_and_restore_pass(self):
+        run = self.run_test()
+        ev = run.evidence
+        self.assertEqual(ev["exhaust_trip"]["cool"]["verdict"], "AIRFLOW")
+        self.assertEqual(ev["exhaust_trip"]["gate"]["state"], "TRIPPED")
+        self.assertEqual(ev["purge_trip"]["gate"]["state"], "TRIPPED")
+        self.assertEqual(ev["exhaust_off"]["cool"]["gates_off"], ["exhaust"])
+        self.assertTrue(all(g["state"] == "ok" for g in ev["restored"].values()))
+        posts = self.settings_posts()
+        self.assertEqual(posts[0], {"cool_tach_exhaust_min_rpm": "20000.0", "cool_fan_grace_s": "2"})
+        self.assertEqual(posts[-1], {"cool_tach_exhaust_min_rpm": "", "cool_purge_min_current": "",
+                                     "cool_fan_grace_s": ""})
+        self.assertEqual(self.grbl.commands.count("M8"), 4)
+        self.assertEqual(self.grbl.commands.count("M9"), 4)
+
+    def test_an_engine_that_does_not_trip_fails_and_restores(self):
+        self.trips = False
+        with self.assertRaises(Failed) as cm:
+            self.run_test()
+        self.assertIn("did not trip", str(cm.exception))
+        self.assertEqual(self.settings_posts()[-1], {"cool_tach_exhaust_min_rpm": "", "cool_purge_min_current": "",
+                                                     "cool_fan_grace_s": ""})
+        self.assertEqual(self.fc.state["cool"]["verdict"], "OK")
+
+    def test_an_engine_that_hides_an_off_floor_fails(self):
+        self.reports_off = False
+        with self.assertRaises(Failed) as cm:
+            self.run_test()
+        self.assertIn("lacks exhaust", str(cm.exception))
+        self.assertEqual(self.fc.state["settings"]["cool_tach_exhaust_min_rpm"], "")

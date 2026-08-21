@@ -1,16 +1,18 @@
 """cooling.* - the cooling engine: flow verification through forgectrl's
 diagnostics runner (the same check the fire gate runs), the fan profile
-returning to idle after motion, and the gate settings: a value inside
-the legal range trips the gate, the far end of the range turns it off
-by value, and both are said out loud (the settings reply, /status, the
-engine's run-start log line)."""
+returning to idle after motion, the gate settings (a value inside the
+legal range trips the gate, the far end of the range turns it off by
+value, and both are said out loud: the settings reply, /status, the
+engine's run-start log line), and the airflow gates (a fan under its
+floor past the spin-up grace is a fault for the rest of the run)."""
 import time
 
 from ..catalog import test
 from .. import hw
 
 _COOL_COVERS = [("forgectrl", "src/cool.*"), ("forgectrl", "src/diag.*"),
-                ("forgectrl", "src/gates.*"), ("forgectrl", "src/settings.*"),
+                ("forgectrl", "src/gates.*"), ("forgectrl", "src/airflow.*"),
+                ("forgectrl", "src/settings.*"),
                 ("forgectrl", "src/status.*"), ("forgectrl", "src/ui/**"),
                 ("grblhal-glowforge", "src/glowforge_cooling.*"),
                 ("kernel-module-glowforge", "src/thermal*"),
@@ -215,7 +217,7 @@ def _session_ended(ctx, fc, what):
     return False
 
 
-def _run_session(ctx, g, fc, until, what):
+def _run_session(ctx, g, fc, until, what, wait=None):
     """M8 opens a run session (the engine re-reads its settings there and
     ticks the gates at 1 Hz); wait for `until(cool)` to hold, then M9 and
     wait for the session to end, so the next M8 is a new one."""
@@ -224,7 +226,7 @@ def _run_session(ctx, g, fc, until, what):
     try:
         t0 = time.time()
         c = {}
-        while time.time() - t0 < VERDICT_WAIT_S:
+        while time.time() - t0 < (wait or VERDICT_WAIT_S):
             ctx.sleep(1)
             c = _cool(fc)
             if until(c):
@@ -336,4 +338,112 @@ def gate_off(ctx):
     after = fc.settings()
     ctx.check(all(after.get(k, "") == orig[k] for k in GATE_KEYS),
               "settings not restored: %s", {k: after.get(k) for k in GATE_KEYS})
+    ctx.check(fc.wait_idle(60, abort=ctx.aborted), "machine did not return to idle")
+
+
+FAN_KEYS = ("cool_tach_exhaust_min_rpm", "cool_purge_min_current", "cool_fan_grace_s")
+FAN_GRACE_S = "2"           # the shortest grace the test can wait out with margin
+FAN_TRIP_WAIT_S = 20        # grace + three ticks, with slack for the 1 Hz pipeline
+
+
+def _fan_gate(c, name):
+    return ((c.get("fan_gates") or {}).get(name) or {})
+
+
+@test("cooling.fan-gate-trips", title="A fan under its floor past the grace is a fault; a floor of zero is off",
+      subsystem="cooling", kind="auto", mode="grbl", est_min=4,
+      covers=_COOL_COVERS, requires=["cooling.gate-off"],
+      steps=["Machine idle, fans quiet. The test writes the exhaust floor, the purge current floor and "
+             "the spin-up grace and restores them; four short M8/M9 cycles spin the fans."],
+      description="The airflow gates run while the cut fan profile is applied. An exhaust floor no fan "
+                  "can meet must trip AIRFLOW after the grace plus three ticks (hold, fire blocked, no "
+                  "resume while the session lasts); a purge current floor at the ADC rail must trip the "
+                  "same way; a floor of zero must read off in gates_off and trip nothing; restored, the "
+                  "next session runs OK with every fan reading at or above its floor.")
+def fan_gate_trips(ctx):
+    fc = ctx.forgectrl
+    ev = ctx.evidence
+    before = fc.settings()
+    orig = {k: before.get(k, "") for k in FAN_KEYS}
+    ev["orig"] = orig
+    ctx.log("original: %s", orig)
+    gates = before.get("gates") or {}
+    exh = gates.get("cool_tach_exhaust_min_rpm") or {}
+    prg = gates.get("cool_purge_min_current") or {}
+    ctx.check(exh.get("gate") == "exhaust" and exh.get("off") == "low",
+              "settings reply does not describe the exhaust floor as the exhaust gate, off at zero: %s", exh)
+    ctx.check(prg.get("gate") == "purge" and prg.get("off") == "low",
+              "settings reply does not describe the purge floor as the purge gate, off at zero: %s", prg)
+    c0 = _cool(fc)
+    ctx.check(c0.get("verdict") == "OK" and c0.get("gates_off") == [],
+              "engine is not at OK with every gate on before the test: %s", c0)
+
+    restored = False
+    with ctx.grbl() as grbl:
+        st = grbl.status_report()
+        ctx.check(st["state"].startswith("Idle"), "controller is %s", st["state"])
+        try:
+            # Leg 1: an exhaust floor at the legal maximum. No fan reaches it,
+            # so after the grace and three ticks the gate trips a fault.
+            _set_gates(ctx, fc, {"cool_tach_exhaust_min_rpm": str(exh.get("hi")), "cool_fan_grace_s": FAN_GRACE_S})
+            c = _run_session(ctx, grbl, fc, lambda c: c.get("verdict") == "AIRFLOW", "exhaust trip leg",
+                             wait=FAN_TRIP_WAIT_S)
+            ev["exhaust_trip"] = {"cool": c, "gate": _fan_gate(c, "exhaust")}
+            ctx.check(c.get("verdict") == "AIRFLOW", "an exhaust floor of %s rpm did not trip: %s", exh.get("hi"), c)
+            ctx.check(c.get("fire_ok") is False and c.get("hold") is True,
+                      "AIRFLOW without fire blocked and a hold: %s", c)
+            ctx.check(c.get("resume_ok") is not True, "a fan fault offered a resume: %s", c)
+            ctx.check(_fan_gate(c, "exhaust").get("state") == "TRIPPED",
+                      "the exhaust gate does not read TRIPPED: %s", c.get("fan_gates"))
+            ctx.check("exhaust" in (c.get("reason") or ""), "the reason does not name the fan: %r", c.get("reason"))
+
+            # Leg 2: the purge fan by current, floor at the ADC rail.
+            _set_gates(ctx, fc, {"cool_tach_exhaust_min_rpm": orig["cool_tach_exhaust_min_rpm"],
+                                 "cool_purge_min_current": str(prg.get("hi"))})
+            c = _run_session(ctx, grbl, fc, lambda c: c.get("verdict") == "AIRFLOW", "purge trip leg",
+                             wait=FAN_TRIP_WAIT_S)
+            ev["purge_trip"] = {"cool": c, "gate": _fan_gate(c, "purge")}
+            ctx.check(c.get("verdict") == "AIRFLOW" and _fan_gate(c, "purge").get("state") == "TRIPPED",
+                      "a purge current floor of %s did not trip: %s", prg.get("hi"), c)
+
+            # Leg 3: the exhaust floor at zero is the gate off: nothing trips,
+            # gates_off says so, and the other fans are judged on their own.
+            _set_gates(ctx, fc, {"cool_tach_exhaust_min_rpm": "0",
+                                 "cool_purge_min_current": orig["cool_purge_min_current"]})
+            c = _run_session(ctx, grbl, fc, lambda c: c.get("verdict") == "OK" and "exhaust" in (c.get("gates_off") or []),
+                             "exhaust off leg")
+            ev["exhaust_off"] = {"cool": c, "gate": _fan_gate(c, "exhaust")}
+            ctx.check(c.get("verdict") == "OK", "the exhaust floor at zero did not clear the gate: %s", c)
+            ctx.check("exhaust" in (c.get("gates_off") or []), "gates_off %s lacks exhaust", c.get("gates_off"))
+            ctx.check(_fan_gate(c, "exhaust").get("state") == "off",
+                      "the exhaust gate does not read off: %s", c.get("fan_gates"))
+
+            # Restore, and prove it: every fan at or above its floor, nothing off.
+            _set_gates(ctx, fc, orig)
+            restored = True
+            # The restored grace is the shipped one, so this leg waits it out.
+            c = _run_session(ctx, grbl, fc,
+                             lambda c: c.get("verdict") == "OK" and not c.get("gates_off")
+                             and all(g.get("state") == "ok" for g in (c.get("fan_gates") or {}).values()),
+                             "restored", wait=FAN_TRIP_WAIT_S + 20)
+            ev["restored"] = c.get("fan_gates")
+            ctx.check(c.get("verdict") == "OK" and c.get("gates_off") == [],
+                      "engine did not return to OK with every gate on after the restore: %s", c)
+            bad = {k: g for k, g in (c.get("fan_gates") or {}).items() if g.get("state") != "ok"}
+            ctx.check(not bad, "fans not at or above their floors after the grace: %s", bad)
+            ctx.log("fans at run duty: %s", {k: "%s/%s" % (g.get("reading"), g.get("floor"))
+                                              for k, g in (c.get("fan_gates") or {}).items()})
+        finally:
+            if not restored:
+                st, body = fc.post("/settings", params=orig)
+                ctx.log("restore on failure: POST /settings %s -> %s", orig, st)
+                try:
+                    c = _run_session(ctx, grbl, fc, lambda c: c.get("verdict") == "OK" and not c.get("gates_off"),
+                                     "restore on failure")
+                    ctx.log("restore on failure: engine %s gates_off %s", c.get("verdict"), c.get("gates_off"))
+                except Exception as e:      # the original failure is the one to report
+                    ctx.log("restore on failure: run session did not complete (%s)", e)
+    after = fc.settings()
+    ctx.check(all(after.get(k, "") == orig[k] for k in FAN_KEYS),
+              "settings not restored: %s", {k: after.get(k) for k in FAN_KEYS})
     ctx.check(fc.wait_idle(60, abort=ctx.aborted), "machine did not return to idle")

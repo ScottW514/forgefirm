@@ -135,6 +135,37 @@ per-layer Air Assist), OR'd with the armed window. In **cloud mode** the job's
 own header carries the duties and the client passes them through, so a print
 gets the fan profile the service designed for it and a lens hunt stays quiet.
 
+### 3a. Airflow gates: a fan that is not moving the air
+
+Commanding a fan and getting airflow are two different things, and the
+machine can tell them apart: the exhaust, the two intakes and the air assist
+carry tachometers, and the purge-air fan in the head reports its current.
+While the run profile is applied, the engine holds every one of them to a
+floor.
+
+- **The floors** are settings (§8): `cool_tach_exhaust_min_rpm`,
+  `cool_tach_intake_min_rpm` (either intake), `cool_tach_air_assist_min_rpm`
+  and `cool_purge_min_current`, each a fraction of what the fan reaches at
+  run duty on the bench machine. A cloud job's header can raise a tach floor
+  for that job, never lower it (§2).
+- **A spin-up grace** (`cool_fan_grace_s`) runs from the moment the run
+  profile is written; nothing counts inside it, because the big exhaust fan
+  takes seconds to reach speed.
+- **Three seconds under the floor trip the gate**, and a single reading at
+  or above it in between clears the count, so a tach reading that wanders
+  does not end a job.
+- **A trip is a fault, not a pause.** The verdict goes `AIRFLOW`, fire is
+  blocked, the job holds, and there is no resume for the rest of that run
+  session: a fan that has stopped moving air is not a condition to cut
+  through. The fans stay at run duty (a stalled extraction fan needs every
+  other fan around it running), and the reason names the fan, the reading
+  and the floor. The next job starts the gates fresh.
+- **A floor of zero is that gate off** (§8a). It still measures: the first
+  reading in a job that would have tripped the shipped default is logged.
+
+`/cool/status` carries each fan's reading, floor and state (`grace`, `ok`,
+`under`, `TRIPPED`, `off`, or `idle` outside a run) as `fan_gates`.
+
 ---
 
 ## 4. Coolant flow verification
@@ -324,6 +355,11 @@ start of every run, so a change takes effect on your next job.
 | `cool_temp_resume` | 31 °C | 5 to 59 °C | 20 to 36 °C | Resume gate: below it, continue. Always kept below the ceiling. |
 | `cool_cooldown_s` | 15 s | 0 to 1800 s | | Smoke-clear phase at run duty after a job. |
 | `cool_cooldown_max_s` | 300 s | 0 to 1800 s | | Cap on the thermal cooldown phase. |
+| `cool_tach_exhaust_min_rpm` | 3700 rpm | 0 to 20000 | 2500 to 5000 | Exhaust fan floor at run duty (§3a). `0` turns the gate off. |
+| `cool_tach_intake_min_rpm` | 1800 rpm | 0 to 20000 | 1200 to 2500 | Intake fan floor, either intake (§3a). `0` turns the gate off. |
+| `cool_tach_air_assist_min_rpm` | 6000 rpm | 0 to 30000 | 4000 to 8000 | Air-assist fan floor (§3a). `0` turns the gate off. |
+| `cool_purge_min_current` | 300 raw | 0 to 1023 | 150 to 500 | Purge-air fan current floor (the fan has no tachometer; about 1 off, about 630 on). `0` turns the gate off. |
+| `cool_fan_grace_s` | 15 s | 0 to 120 s | 5 to 30 s | Spin-up window after the run profile is written, during which no floor counts. |
 
 Two settings are deliberately not on the panel:
 
@@ -335,8 +371,8 @@ Two settings are deliberately not on the panel:
 ### 8a. Turning a gate off
 
 The gates are settings, and the far end of a gate setting's range is the off
-switch: a coolant ceiling of 60 °C never trips, and a check window of 0 s runs
-no flow verification at all. There is no other switch, and no list of names to
+switch: a coolant ceiling of 60 °C never trips, a check window of 0 s runs
+no flow verification at all, and a fan floor of 0 never trips. There is no other switch, and no list of names to
 get wrong. The ranges are wide on purpose: the shipped defaults and the
 recommended bands come from one bench machine, and a machine whose loop or
 sensors read differently changes the number rather than waiting for new
@@ -371,6 +407,10 @@ Stated plainly so nobody counts on them:
   cannot be detected (the output has no readback), so this will become a user
   setting plus a simple hysteresis around the factory's setpoints.
 - **A fire watch that acts** (§7).
+- **Fan floors measured on more than one machine.** The shipped floors are
+  a fraction of one bench machine's run-duty speeds; a machine whose fans
+  read differently sets its own (§8), and a floor of zero turns that gate
+  off while it does.
 
 ---
 
@@ -385,6 +425,9 @@ Stated plainly so nobody counts on them:
 | Suspicion unresolved past the budget | Escalates to `FAULT`. |
 | Three cleared suspicions in one job | Aggregated "check your coolant" warning. |
 | Upstream coolant above 33 °C | `OVERTEMP`: hold + forced cooling; auto-resume under 31 °C. |
+| A fan under its floor inside the spin-up grace | Nothing yet: the gate reads `grace`. |
+| A fan under its floor for three seconds after the grace | `AIRFLOW`: fire blocked, hold, no resume this job; fans held at run duty; the next job starts the gates fresh. |
+| Purge-air current absent at run duty | `AIRFLOW`, the same way. |
 | A gate setting at its off end (ceiling 60 °C, check window 0 s) | No verdict from that gate; a run-start log line, `gates_off` in `/status`, and a standing panel banner. |
 | Job ends | 15 s smoke clear at run duty, then reduced airflow until the loop is under the resume gate. |
 | Controller stops reporting | Fire blocked at once, stand-down through cooldown. |
