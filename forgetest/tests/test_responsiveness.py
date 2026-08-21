@@ -18,6 +18,7 @@ holds the shape of that rule.
 """
 import json
 import os
+import re
 import shutil
 import tempfile
 import unittest
@@ -190,6 +191,40 @@ class PageTests(unittest.TestCase):
             self.assertIn("id='%s'" % bid, html)
             self.assertNotIn("id='" + bid + "-", html)
         self.assertIn("function renderQueue()", html)
+
+    def test_every_group_is_built_on_the_same_grid(self):
+        """The subsystems are separate tables. Left to size themselves
+        from their own content no two line up, which is what made the
+        page look busy, so they share one colgroup and a fixed layout."""
+        html = page.render("0" * 32)
+        self.assertIn("#groups table{table-layout:fixed", html)
+        # one colgroup definition, emitted into every group's table
+        self.assertEqual(html.count('var COLS="<colgroup>'), 1)
+        self.assertEqual(html.count('<table>"+COLS+"'), 1,
+                         "a group table built without the shared colgroup")
+        colgroup = re.search(r'var COLS="(.*?)";', html).group(1)
+        heads = ["Test", "Kind", "Status", "Last result"]
+        for h in heads:
+            self.assertIn("<th>%s</th>" % h, html)
+        self.assertEqual(len(re.findall(r"<col(?:>| )", colgroup)), len(heads) + 1,
+                         "a column per header, the action column included")
+        # every fixed column carries a width, or the grid is only a wish
+        for cls in re.findall(r"<col class='(\w)'", colgroup):
+            self.assertRegex(html, r"#groups col\.%s\{width:\d+px\}" % cls)
+
+    def test_details_and_the_requires_note_stay_out_of_the_columns(self):
+        """Both are long enough to stretch a cell. In a column they would
+        pull one group's grid out of step with the rest: the details get a
+        full-width row, and the note sits under Status, which is sized for
+        it."""
+        html = page.render("0" * 32)
+        self.assertIn("<tr class='detrow'><td colspan='5'>", html)
+        # the status cell carries the status, the unmet note and the row
+        # message; the action cell carries the button and nothing else
+        self.assertIn("<td><div id='st-\"+d+\"'></div><div id='unmet-\"+d+"
+                      "\"'></div><div id='note-\"+d+\"'></div></td>", html)
+        self.assertIn("<td><button class='pri' id='btn-\"+d+\"' "
+                      "onclick='startTest(\\\"\"+d+\"\\\")'>Start</button></td>", html)
 
     def test_page_is_self_contained_ascii(self):
         html = page.render("0" * 32)

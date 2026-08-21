@@ -43,6 +43,28 @@ table{width:100%;border-collapse:collapse}
 th{font-size:11.5px;color:var(--dim);text-align:left;font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line)}
 td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 tr:last-child td{border-bottom:0}
+/* One grid for every subsystem. The groups are separate tables, so
+   left to themselves each sizes its own columns from its own content
+   and no two line up. Fixed widths put them all on the same rails. */
+#groups .grp{overflow-x:auto}
+#groups table{table-layout:fixed;min-width:700px}
+#groups col.k{width:132px}
+#groups col.s{width:250px}
+#groups col.l{width:210px}
+#groups col.a{width:96px}
+/* Why a test stands where it does reads as one block under Status. It
+   used to sit under the Start button, where a requires list of three
+   test ids wrapped into a ragged stack and dragged that group's columns
+   out of line with every other group's. */
+#groups .req{overflow-wrap:break-word}
+/* The details sit in a full-width row of their own: inside the Test
+   cell they would have to be read through a column, and opening one
+   would push that group's grid out of step with the rest. */
+#groups td{border-bottom:0}
+#groups tr.detrow td{padding:0 8px;border-bottom:1px solid var(--line)}
+#groups tr.detrow:last-child td{border-bottom:0}
+#groups .details{margin:2px 0 8px}
+#groups .details .dsc{margin-bottom:6px}
 .tid{color:var(--dim);font-size:11.5px;font-family:ui-monospace,Consolas,monospace}
 .badge{display:inline-block;font-size:10.5px;padding:2px 6px;border-radius:9px;margin-right:4px;background:#e8e9ec;color:#444;font-weight:600;letter-spacing:.2px;text-transform:uppercase}
 .badge.live{background:#fbe1e1;color:#a11}
@@ -257,21 +279,25 @@ function renderGroups(){var ids=[];catalog.forEach(function(t){ids.push(t.id)});
  var sig=catalogHash+'|'+ids.join(',');
  if(sig!==groupsKey){groupsKey=sig;buildGroups()}
  updateGroups()}
+var COLS="<colgroup><col><col class='k'><col class='s'><col class='l'><col class='a'></colgroup>";
 function buildGroups(){var groups={},order=[];
  catalog.forEach(function(t){if(!groups[t.subsystem]){groups[t.subsystem]=[];order.push(t.subsystem)}groups[t.subsystem].push(t)});
  var h='';
- order.forEach(function(g){h+="<div class='card grp'><h2>"+esc(g)+"</h2><table><tr><th>Test</th><th>Kind</th><th>Status</th><th>Last result</th><th></th></tr>";
+ order.forEach(function(g){h+="<div class='card grp'><h2>"+esc(g)+"</h2><table>"+COLS+"<tr><th>Test</th><th>Kind</th><th>Status</th><th>Last result</th><th></th></tr>";
   groups[g].forEach(function(t){var d=esc(t.id);var badges='';
    if(t.always)badges+="<span class='badge core'>core</span>";badges+="<span class='badge "+esc(t.kind)+"'>"+esc(t.kind)+"</span>";
    if(t.hardware==='takeover')badges+="<span class='badge takeover'>takeover</span>";
-   var det="<div class='details"+(openDetails[t.id]?' on':'')+"' id='det-"+d+"'>"+esc(t.description||'')+
-     (t.steps&&t.steps.length?"<br><b>Operator steps:</b><ol>"+t.steps.map(function(x){return '<li>'+esc(x)+'</li>'}).join('')+"</ol>":'')+
+   var det="<div class='details"+(openDetails[t.id]?' on':'')+"' id='det-"+d+"'>"+
+     (t.description?("<div class='dsc'>"+esc(t.description)+"</div>"):'')+
+     (t.steps&&t.steps.length?"<b>Operator steps:</b><ol>"+t.steps.map(function(x){return '<li>'+esc(x)+'</li>'}).join('')+"</ol>":'')+
      "<b>Requires:</b> "+esc((t.requires||[]).join(', ')||'-')+"<br><b>Covers:</b> "+esc((t.covers||[]).map(function(c){return c[0]+':'+c[1]}).join(', ')||'-')+
      "<br><span id='detdyn-"+d+"'></span></div>";
-   h+="<tr><td><div>"+esc(t.title)+"</div><div class='tid'>"+d+" <a href='#' onclick='toggleDet(\""+d+"\");return false'>details</a></div>"+det+
-     "</td><td>"+badges+"</td><td id='st-"+d+"'></td><td id='last-"+d+"'></td>"+
-     "<td><button class='pri' id='btn-"+d+"' onclick='startTest(\""+d+"\")'>Start</button>"+
-     "<div id='unmet-"+d+"'></div><div id='note-"+d+"'></div></td></tr>"});
+   h+="<tr><td><div>"+esc(t.title)+"</div><div class='tid'>"+d+" <a href='#' onclick='toggleDet(\""+d+"\");return false'>details</a></div>"+
+     "</td><td>"+badges+"</td>"+
+     "<td><div id='st-"+d+"'></div><div id='unmet-"+d+"'></div><div id='note-"+d+"'></div></td>"+
+     "<td id='last-"+d+"'></td>"+
+     "<td><button class='pri' id='btn-"+d+"' onclick='startTest(\""+d+"\")'>Start</button></td></tr>"+
+     "<tr class='detrow'><td colspan='5'>"+det+"</td></tr>"});
   h+="</table></div>"});
  $('groups').innerHTML=h;rowEls={};
  catalog.forEach(function(t){rowEls[t.id]={st:$('st-'+t.id),last:$('last-'+t.id),btn:$('btn-'+t.id),
