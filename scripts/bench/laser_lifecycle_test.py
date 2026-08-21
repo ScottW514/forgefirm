@@ -28,6 +28,11 @@ reported messages:
      reset with the position kept (no alarm), the head returns to the
      job start on its own; with lid_policy = hold the stock door hold and
      cycle-start resume apply
+  9. the job start survives a pause: a job paused and resumed by the
+     button, then cancelled by the lid, returns to where the job began,
+     not to where it was paused (the core restarts a held cycle through
+     Idle); a job abandoned in a hold and reset ends there, so the next
+     job's start is captured afresh where it begins
 
 The disarm grace is shortened via a temp config (GFHOME_CONF), the
 cooling verdict is published hermetically (GF_VERDICT_FILE), the same
@@ -546,6 +551,77 @@ def test_lid_cancels_and_returns():
         s.close()
 
 
+def test_pause_then_lid_cancel_returns_to_the_job_start():
+    """Rule 9: the button pause + resume does not move the job start. The
+    lid cancel after a resume returns the head to where the job began;
+    the pause point is not a job start. Then the other side: a job left
+    in a hold and soft-reset is over, and the next job from that spot
+    returns to that spot, not to the earlier job's start."""
+    s = Session("pause-lid-cancel", disarm_s=60, switches=SW_CLOSED)
+    try:
+        start_armed_move(s, "pause-lid-cancel", gcode="G1 X30 F600")
+        time.sleep(0.6)
+        s.press_button()
+        if not s.wait_state("Hold", 3):
+            fail("[pause-lid-cancel] the press did not feed-hold (state %s)" % s.state())
+        time.sleep(0.5)
+        x_hold = s.mpos_x()
+        if x_hold is None or x_hold < 1.0:
+            fail("[pause-lid-cancel] the hold landed too close to the start to tell (X=%s)" % x_hold)
+        s.press_button()
+        if not s.wait_state("Run", 3):
+            fail("[pause-lid-cancel] the second press did not resume (state %s)" % s.state())
+        time.sleep(0.4)
+        s.set_switches(SW_LID_OPEN)
+        if not wait_for(s.log, "lid opened - job cancelled", 5, s.sock):
+            fail("[pause-lid-cancel] the lid open did not cancel the job")
+        if not wait_for(s.log, "returned to the job start", 15, s.sock):
+            fail("[pause-lid-cancel] the head did not report returning to the job start")
+        if not s.wait_state("Idle", 5):
+            fail("[pause-lid-cancel] not Idle after the return (state %s)" % s.state())
+        x_end = s.mpos_x()
+        if x_end is None or abs(x_end) > 0.05:
+            fail("[pause-lid-cancel] the head returned to X=%s, not to the job start X=0 "
+                 "(paused at X=%.3f: the resume was taken as a new job start)" % (x_end, x_hold))
+        print("PASS [pause-lid-cancel]: paused at X=%.3f, resumed, lid cancel returned to X=%.3f"
+              % (x_hold, x_end))
+        s.close()
+
+        # A job abandoned in a hold and reset is over: the next job starts
+        # where it starts.
+        s = Session("hold-reset-restart", disarm_s=60, switches=SW_CLOSED)
+        start_armed_move(s, "hold-reset-restart", gcode="G1 X30 F600")
+        time.sleep(0.6)
+        s.press_button()
+        if not s.wait_state("Hold", 3):
+            fail("[hold-reset-restart] the press did not feed-hold (state %s)" % s.state())
+        time.sleep(0.5)
+        s.sock.sendall(b"\x18")
+        if not wait_for(s.log, "for help]", 5, s.sock):
+            fail("[hold-reset-restart] no reset banner")
+        if not s.wait_state("Idle", 5):
+            fail("[hold-reset-restart] not Idle after the reset (state %s)" % s.state())
+        x_new_start = s.mpos_x()
+        if x_new_start is None or x_new_start < 1.0:
+            fail("[hold-reset-restart] the reset did not keep the position (X=%s)" % x_new_start)
+        read_avail(s.sock, s.log, 0.3)
+        start_armed_move(s, "hold-reset-restart", gcode="G1 X60 F600")     # absolute: past the old start
+        time.sleep(0.5)
+        s.set_switches(SW_LID_OPEN)
+        if not wait_for(s.log, "returned to the job start", 15, s.sock):
+            fail("[hold-reset-restart] no return to the job start after the lid cancel")
+        if not s.wait_state("Idle", 5):
+            fail("[hold-reset-restart] not Idle after the return (state %s)" % s.state())
+        x_end = s.mpos_x()
+        if x_end is None or abs(x_end - x_new_start) > 0.05:
+            fail("[hold-reset-restart] the head returned to X=%s, not to this job's start X=%.3f "
+                 "(the earlier job's start survived the reset)" % (x_end, x_new_start))
+        print("PASS [hold-reset-restart]: a job reset from a hold ended there; the next job "
+              "returned to its own start X=%.3f" % x_end)
+    finally:
+        s.close()
+
+
 def test_lid_policy_hold():
     """lid_policy = hold keeps stock grblHAL behavior: the lid parks the job
     in Door and a cycle start resumes it once closed."""
@@ -580,6 +656,7 @@ def main():
     test_lid_open_in_wait()
     test_button_pause_resume()
     test_lid_cancels_and_returns()
+    test_pause_then_lid_cancel_returns_to_the_job_start()
     test_lid_policy_hold()
     test_verdict_blocks_arm()
     test_sigterm_mid_job()

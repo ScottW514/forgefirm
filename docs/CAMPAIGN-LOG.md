@@ -3167,6 +3167,39 @@ that only showed up when a real 53 MB job was replayed through a fake ring
 rather than a synthetic one. The job that hung the bench is kept as the
 regression fixture.
 
+## 2026-08-21: a lid cancel that went back to the wrong place
+
+`laser.pause-resume-lid-cancel` failed its first run on the dev image of
+2026-08-21 with "head not back at the job start (drift 14.925 mm)", and at the
+bench the job had looked right: the button paused the cut, the button resumed
+it, the lid stopped it, and the head came back. It came back to the wrong
+place. The kernel counters agreed with the controller's own position report:
+Y exactly where the job began, X 14.925 mm along the first leg, which at F200
+is about four and a half seconds of cutting, the moment the pause landed.
+
+**The controller had told the truth by its own bookkeeping.** The driver takes
+the job start as the machine position at the Idle to Cycle transition, and the
+grblHAL core restarts a held cycle by passing through Idle: `state_await_resume`
+sets Idle and then Cycle back to back, so every resume from a feed hold was
+recorded as a new job beginning where the hold had stopped. The lid cancel then
+returned the head to the pause point and reported "returned to the job start",
+which was exactly what it had written down.
+
+**The fix is a definition.** A job is under way from that first transition
+until the core is Idle with the planner empty (the program ran out, a stop, a
+reset) or in an alarm. A resume passes through Idle with the planner still
+loaded, so it is the same job and keeps its start; a job abandoned in a hold
+and reset is over, and the next one starts where it starts. Both sides are
+held by the null-sink lifecycle harness now, which reproduced the bench
+failure to the millimeter (returned to X=13.088, the pause point) before the
+fix and returns to X=0.000 after it.
+
+**Why the acceptance test caught it and the eye did not:** the test measures
+the return against the position it recorded before the job, not against the
+controller's message. An operator watching the head come back has no such
+reference, and fifteen millimeters on a forty millimeter square reads as
+"back". The test stays as it is.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
