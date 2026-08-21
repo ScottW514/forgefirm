@@ -184,6 +184,12 @@ class PageTests(unittest.TestCase):
         self.assertIn("function updateBench()", html)
         # the prompt buttons are rebuilt only when the prompt changes
         self.assertIn("if(pk!==promptKey)", html)
+        # the queue controls are static markup: a poll relabels them and
+        # flips disabled, it never replaces the node
+        for bid in ("q-unattended", "q-attended", "q-stop"):
+            self.assertIn("id='%s'" % bid, html)
+            self.assertNotIn("id='" + bid + "-", html)
+        self.assertIn("function renderQueue()", html)
 
     def test_page_is_self_contained_ascii(self):
         html = page.render("0" * 32)

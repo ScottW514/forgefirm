@@ -19,6 +19,9 @@ Routes
   GET  /log                 the raw JSONL
   GET  /export/acceptance.json | .md   the last export
   POST /start {test, ack_live, ignore_requires}   start an acceptance test
+  POST /batch {group, ack_live, ignore_requires}  run everything a queue
+                            still owes, in prerequisite order
+  POST /batch/stop          cancel what is still queued
   POST /bench/start {tool, args, ack_live}
   POST /answer {prompt_id, value}
   POST /abort
@@ -260,6 +263,14 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/start":
                 ok, msg = r.start_test(str(body.get("test", "")), ack_live=bool(body.get("ack_live")),
                                        ignore_requires=bool(body.get("ignore_requires")))
+                self._send(200 if ok else 409, {"ok": ok, "message": msg})
+            elif path == "/batch":
+                ok, msg, order = r.start_batch(str(body.get("group", "")),
+                                               ack_live=bool(body.get("ack_live")),
+                                               ignore_requires=bool(body.get("ignore_requires")))
+                self._send(200 if ok else 409, {"ok": ok, "message": msg, "order": order})
+            elif path == "/batch/stop":
+                ok, msg = r.stop_batch()
                 self._send(200 if ok else 409, {"ok": ok, "message": msg})
             elif path == "/bench/start":
                 args = body.get("args") or {}

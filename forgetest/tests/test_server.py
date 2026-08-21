@@ -167,25 +167,6 @@ class ServerTests(unittest.TestCase):
         st, d = self.call("GET", "/nope")
         self.assertEqual(st, 404)
 
-    def test_01b_state_is_conditional(self):
-        """The page polls; an unchanged state must cost a 304, and the
-        ETag must move as soon as the state does."""
-        st, d, hdrs = self.call_h("GET", "/state")
-        self.assertEqual(st, 200)
-        etag = hdrs.get("ETag")
-        self.assertTrue(etag and etag.startswith('"'), "no ETag on /state")
-        st, _, hdrs2 = self.call_h("GET", "/state", headers={"If-None-Match": etag})
-        self.assertEqual(st, 304)
-        self.assertEqual(hdrs2.get("ETag"), etag)
-        # a stale validator must not be honored
-        st, _, _ = self.call_h("GET", "/state", headers={"If-None-Match": '"stale"'})
-        self.assertEqual(st, 200)
-        # and the validator moves with the state
-        self.call("POST", "/invalidate", {"reason": "etag check"})
-        st, _, hdrs3 = self.call_h("GET", "/state", headers={"If-None-Match": etag})
-        self.assertEqual(st, 200)
-        self.assertNotEqual(hdrs3.get("ETag"), etag)
-
     def test_01c_connection_is_kept_alive(self):
         """A poll per second over a fresh TCP connection each time is
         waste the board does not need to pay."""
@@ -398,6 +379,31 @@ class ServerTests(unittest.TestCase):
         r = Runner(self.log, self.man, self.reg, self.bench)
         self.assertTrue(any("recovered" in m for m in r.messages))
         self.assertFalse(os.path.exists(marker))
+
+    def test_10_state_is_conditional(self):
+        """The page polls; an unchanged state must cost a 304, and the
+        ETag must move as soon as the state does.
+
+        Runs last because it invalidates: timestamps are whole seconds, and
+        a PASS stamped in the same second as an invalidate is deliberately
+        not inheritable, so an invalidate early in this class would decide
+        the inheritance the earlier tests are checking.
+        """
+        st, d, hdrs = self.call_h("GET", "/state")
+        self.assertEqual(st, 200)
+        etag = hdrs.get("ETag")
+        self.assertTrue(etag and etag.startswith('"'), "no ETag on /state")
+        st, _, hdrs2 = self.call_h("GET", "/state", headers={"If-None-Match": etag})
+        self.assertEqual(st, 304)
+        self.assertEqual(hdrs2.get("ETag"), etag)
+        # a stale validator must not be honored
+        st, _, _ = self.call_h("GET", "/state", headers={"If-None-Match": '"stale"'})
+        self.assertEqual(st, 200)
+        # and the validator moves with the state
+        self.call("POST", "/invalidate", {"reason": "etag check"})
+        st, _, hdrs3 = self.call_h("GET", "/state", headers={"If-None-Match": etag})
+        self.assertEqual(st, 200)
+        self.assertNotEqual(hdrs3.get("ETag"), etag)
 
 
 if __name__ == "__main__":

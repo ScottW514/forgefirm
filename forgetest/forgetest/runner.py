@@ -10,6 +10,13 @@ the campaign rules (campaign.py) do the rest.
 Bench tools are subprocesses (bench.py registry): same single slot, same
 log pane, no campaign effect.
 
+A queue (BATCH_GROUPS) runs what a campaign still owes, one test at a
+time through that same single slot: the unattended tests for an empty
+room, the attended ones for an operator at the machine. It runs them in
+prerequisite order and stops on the first result that is not a PASS,
+because a FAIL closes the campaign and going on would quietly open a
+second one.
+
 Safety, in code rather than convention: a live test starts only with the
 operator's acknowledgment in the request; the runner never touches the
 laser latch; a takeover always ends with forgectrl started again, and a
@@ -30,6 +37,16 @@ from . import hw
 from .log import now_ts, data_dir
 
 MAX_LINES = 4000
+
+# The two queues the page offers. A campaign is mostly waiting: the
+# unattended tests need nobody in the room, the attended ones need the
+# operator at the machine, and sorting them that way lets one set run
+# while the operator is elsewhere. Each queue takes everything of its
+# kinds the campaign does not already count as satisfied.
+BATCH_GROUPS = {
+    "unattended": ("auto",),
+    "attended": ("operator", "live"),
+}
 
 
 class Aborted(Exception):
@@ -308,6 +325,7 @@ class Runner:
         self._lock = threading.Lock()
         self.current = None
         self.last = None
+        self.batch = None
         self.messages = []
         self.boot_ref = None
         self.recover()
@@ -363,6 +381,10 @@ class Runner:
         st["running"] = r.snapshot() if r and not r.finished else None
         last = r if (r and r.finished) else self.last
         st["last_run"] = last.snapshot() if last else None
+        st["batch"] = self.batch_snapshot()
+        # what each queue would run if started now, so the page can label
+        # its buttons with the work rather than a bare verb
+        st["batch_available"] = {g: self.batch_selection(g, st) for g in BATCH_GROUPS}
         return st, records
 
     def busy(self):
@@ -407,19 +429,27 @@ class Runner:
         evidence records which prerequisites were unmet (the release gate
         needs every test satisfied anyway, so nothing is hidden - the
         record just says the order was the operator's)."""
+        if self.batch_active():
+            return False, "a queue is running"
+        ok, msg, _ = self._start_test(test_id, ack_live, ignore_requires)
+        return ok, msg
+
+    def _start_test(self, test_id, ack_live=False, ignore_requires=False, batch=None):
+        """As start_test, and hands back the Run so the queue driver can
+        follow it without racing another start for `current`."""
         t = _catalog.get(test_id, self.registry)
         if t is None:
-            return False, "unknown test"
+            return False, "unknown test", None
         with self._lock:
             if self.busy():
-                return False, "a run is in progress"
+                return False, "a run is in progress", None
             state, _ = self.state()
             ts = state["tests"][t.id]
             missing = list(ts["missing_requires"])
             if missing and not ignore_requires:
-                return False, "prerequisites not satisfied: %s" % ", ".join(missing)
+                return False, "prerequisites not satisfied: %s" % ", ".join(missing), None
             if t.kind == "live" and not ack_live:
-                return False, "live test: acknowledge eye protection, fire watch, and exhaust first"
+                return False, "live test: acknowledge eye protection, fire watch, and exhaust first", None
             campaign = self._open_campaign_if_needed(state)
             run = Run("test", t.id, t.title)
             self.last = self.current
@@ -430,10 +460,117 @@ class Runner:
             run.evidence["prerequisites"] = {"overridden": True, "missing": missing, "ts": now_ts()}
         if t.kind == "live":
             run.evidence["operator"] = {"ack_live": True, "ts": now_ts()}
+        if batch:
+            run.log("queued by the %s queue opened %s" % (batch["group"], batch["ts"]))
+            run.evidence["batch"] = {"group": batch["group"], "ts": batch["ts"]}
         th = threading.Thread(target=self._exec_test, args=(t, run, campaign), daemon=True,
                               name="forgetest-run")
         th.start()
-        return True, "started"
+        return True, "started", run
+
+    # -- the queue ----------------------------------------------------------
+    def batch_active(self):
+        b = self.batch
+        return bool(b and not b["finished"])
+
+    def batch_selection(self, group, state=None):
+        """The ids the given queue would run, in prerequisite order: every
+        test of those kinds that the campaign does not already count as
+        satisfied, which is exactly what is left to do."""
+        kinds = BATCH_GROUPS.get(group)
+        if kinds is None:
+            return None
+        if state is None:
+            state, _ = self.state()
+        tests = self.tests()
+        want = [t.id for t in tests
+                if t.kind in kinds and not state["tests"][t.id]["satisfied"]]
+        return _catalog.order_by_requires(tests, want)
+
+    def start_batch(self, group, ack_live=False, ignore_requires=False):
+        if group not in BATCH_GROUPS:
+            return False, "unknown queue", None
+        if self.batch_active():
+            return False, "a queue is already running", None
+        if self.busy():
+            return False, "a run is in progress", None
+        order = self.batch_selection(group)
+        if not order:
+            return False, "nothing to run: every %s test is already satisfied" % group, None
+        live = [tid for tid in order
+                if _catalog.get(tid, self.registry).kind == "live"]
+        if live and not ack_live:
+            return False, ("this queue fires the laser (%s): acknowledge eye protection, "
+                           "fire watch, and exhaust first" % ", ".join(live)), None
+        with self._lock:
+            if self.batch_active() or self.busy():
+                return False, "a run is in progress", None
+            self.batch = {"group": group, "ts": now_ts(), "order": list(order), "done": [],
+                          "skipped": [], "current": None, "stop": False, "stopped": None,
+                          "finished": None, "ack_live": bool(ack_live),
+                          "ignore_requires": bool(ignore_requires)}
+            b = self.batch
+        self._note("queue %s: %d test(s) to run: %s" % (group, len(order), ", ".join(order)))
+        threading.Thread(target=self._drive_batch, args=(b,), daemon=True,
+                         name="forgetest-queue").start()
+        return True, "queue started: %d test(s)" % len(order), list(order)
+
+    def stop_batch(self):
+        """Cancel what is still queued. The run in progress finishes and is
+        recorded; Abort is the lever that stops that one."""
+        b = self.batch
+        if not self.batch_active():
+            return False, "no queue is running"
+        left = len(self.batch_snapshot()["pending"])
+        b["stop"] = True
+        b["stopped"] = b["stopped"] or "stopped by the operator"
+        self._note("queue %s: stop requested, %d test(s) will not run" % (b["group"], left))
+        return True, "queue stopped; the run in progress finishes"
+
+    def _drive_batch(self, b):
+        """One test at a time, in order, until the queue empties or a run
+        comes back anything other than PASS. A FAIL closes the campaign, so
+        carrying on would only open a second one behind the operator's
+        back; an ABORTED means they asked it to stop."""
+        try:
+            for tid in b["order"]:
+                if b["stop"]:
+                    break
+                b["current"] = tid
+                ok, msg, run = self._start_test(tid, ack_live=b["ack_live"],
+                                                ignore_requires=b["ignore_requires"], batch=b)
+                if not ok:
+                    b["skipped"].append({"test": tid, "reason": msg})
+                    self._note("queue %s: skipped %s: %s" % (b["group"], tid, msg))
+                    continue
+                # stop_batch lets the run in progress finish; Abort is what
+                # ends this one, and lands here as a non-PASS result.
+                while run.finished is None:
+                    time.sleep(0.2)
+                result = run.finished["result"]
+                b["done"].append({"test": tid, "result": result})
+                if result != _campaign.PASS:
+                    b["stop"] = True
+                    b["stopped"] = "%s on %s" % (result, tid)
+                    self._note("queue %s: stopped on %s (%s)" % (b["group"], tid, result))
+                    break
+        except Exception as e:  # noqa: BLE001 - a broken queue must not wedge the runner
+            b["stopped"] = "%s: %s" % (type(e).__name__, e)
+            self._note("queue %s: driver errored: %s" % (b["group"], b["stopped"]))
+        finally:
+            b["current"] = None
+            b["finished"] = now_ts()
+
+    def batch_snapshot(self):
+        b = self.batch
+        if b is None:
+            return None
+        done_ids = set(x["test"] for x in b["done"]) | set(x["test"] for x in b["skipped"])
+        return {"group": b["group"], "ts": b["ts"], "order": list(b["order"]),
+                "done": list(b["done"]), "skipped": list(b["skipped"]),
+                "pending": [t for t in b["order"] if t not in done_ids and t != b["current"]],
+                "current": b["current"], "stopping": bool(b["stop"]) and not b["finished"],
+                "stopped": b["stopped"], "finished": b["finished"]}
 
     # -- baseline around every run -----------------------------------------
     def _baseline_pre(self, run):
@@ -490,6 +627,8 @@ class Runner:
 
     # -- bench tools ---------------------------------------------------------
     def start_bench(self, tool_id, args=None, ack_live=False):
+        if self.batch_active():
+            return False, "a queue is running"
         if self.bench is None:
             return False, "no bench registry"
         tool = self.bench.get(tool_id)

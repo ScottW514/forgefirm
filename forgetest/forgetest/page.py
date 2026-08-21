@@ -76,6 +76,16 @@ pre#log{background:#1d1e26;color:#d7dae0;font-family:ui-monospace,Consolas,monos
 .switch .on{color:var(--warn);font-weight:600}
 .req.over{color:var(--dim)}
 .grp{margin-top:6px}
+.queue{background:#f7f8fa;margin:10px 0 0;padding:10px 12px}
+.queue h2{margin-bottom:8px}
+.queue .hint{margin-top:8px}
+.qline{font-size:12.5px;color:var(--dim);line-height:1.7;margin-top:8px}
+.qline b{color:var(--txt)}
+.qbar{display:flex;height:6px;border-radius:3px;overflow:hidden;background:#e2e4e9;margin:6px 0}
+.qbar i{display:block}
+.qbar i.ok{background:var(--ok)}.qbar i.bad{background:var(--red)}
+.qbar i.skip{background:var(--warn)}.qbar i.now{background:var(--blue)}
+.badge.queued{background:#dde7f5;color:#24507f}
 .tool .argrow{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
 .tool .argrow label{font-size:12px;color:var(--dim)}
 </style></head><body>
@@ -88,6 +98,19 @@ pre#log{background:#1d1e26;color:#d7dae0;font-family:ui-monospace,Consolas,monos
    <div class='banner'><div class='auth' id='auth'>?</div>
     <div class='kv' id='banner'></div></div>
    <div id='invnote'></div><div id='msgs'></div>
+   <div class='card queue'><h2>Run what is left</h2>
+    <div class='actions'>
+     <button class='pri' id='q-unattended' onclick='startBatch("unattended")'>Unattended</button>
+     <button class='pri' id='q-attended' onclick='startBatch("attended")'>Operator and live</button>
+     <button class='danger' id='q-stop' onclick='stopBatch()' disabled>Stop the queue</button>
+    </div>
+    <div id='qstate'></div><div id='qmsg'></div>
+    <p class='hint'>Each queue takes every test of its kind that the campaign does not
+     already count as satisfied, runs them one at a time in prerequisite order, and stops
+     on the first result that is not a PASS. The unattended queue needs nobody in the room.
+     The other one does: it prompts, and it fires the laser. Stop-the-queue cancels what is
+     still waiting and lets the run in progress finish; Abort ends that one too.</p>
+   </div>
    <div class='actions' style='margin-top:10px'>
     <button class='pri' id='exportbtn' onclick='doExport()'>Export release artifact</button>
     <a id='dljson' href='/export/acceptance.json' style='display:none'><button>acceptance.json</button></a>
@@ -159,7 +182,7 @@ function api(method,path,body,cb,hdrs,timeoutMs){var x=new XMLHttpRequest();x.op
 /* The state poll. It carries the last ETag, so an unchanged state costs
    a 304 and no re-render; a run gets a faster tick, and every action
    pulls the next poll forward instead of waiting out the interval. */
-function pollDelay(){return (state&&state.running)?1000:2000}
+function pollDelay(){return (state&&(state.running||batchActive()))?1000:2000}
 function schedule(ms){if(pollTimer)window.clearTimeout(pollTimer);pollTimer=window.setTimeout(poll,ms)}
 function kick(){schedule(120)}
 function poll(){if(polling){schedule(150);return}polling=true;
@@ -181,12 +204,14 @@ function setIgnoreReq(on){ignoreReq=!!on;try{window.localStorage.setItem('forget
  if(state&&catalog)renderGroups()}
 /* A start already sent but not yet seen in the state counts as busy, so
    the buttons grey out on the click rather than on the next poll. The
-   window is capped in case the answer never arrives. */
-function isBusy(){if(state&&state.running)return true;
+   window is capped in case the answer never arrives. A queue holds the
+   machine between its tests as well as during them. */
+function batchActive(){return !!(state&&state.batch&&!state.batch.finished)}
+function isBusy(){if(state&&(state.running||batchActive()))return true;
  return !!(pending&&(nowMs()-pending)<PENDING_MS)}
 function fmtTs(t){return t?t.replace('T',' ').replace('Z',' UTC'):'-'}
 function render(){if(!state||!catalog)return;
- if(state.running){pending=0;pendingId=null}
+ if(state.running||batchActive()){pending=0;pendingId=null}
  var m=state.manifest||{};setText($('hdrver'),(m.version||'?'));setText($('hdrsub'),m.image||'');
  var a=$('auth');setText(a,'Release authorized: '+(state.authorized?'YES':'NO'));setProp(a,'className','auth'+(state.authorized?' yes':''));
  var c=state.campaign,cn=state.counts||{};var b='';
@@ -197,7 +222,34 @@ function render(){if(!state||!catalog)return;
  setHtml($('banner'),b);
  var inv=state.invalidate;setHtml($('invnote'),inv?"<div class='note'>Full campaign required since "+esc(fmtTs(inv.ts))+": "+esc(inv.reason)+"</div>":'');
  var ms='';(state.messages||[]).forEach(function(x){ms+="<div class='note'>"+esc(x)+"</div>"});setHtml($('msgs'),ms);
- renderGroups();renderRun();if(bench)renderBench()}
+ renderQueue();renderGroups();renderRun();if(bench)renderBench()}
+/* The two queues: what each would run now, and how the running one is
+   getting on. Built from the state, so a reload picks the queue back up
+   exactly where it is - the queue lives in the runner, not in this tab. */
+var QUEUES=[['unattended','Unattended'],['attended','Operator and live']];
+function renderQueue(){var av=state.batch_available||{},b=state.batch,busy=isBusy();
+ QUEUES.forEach(function(p){var e=$('q-'+p[0]);if(!e)return;
+  var ids=av[p[0]]||[];
+  setText(e,ids.length?(p[1]+' ('+ids.length+')'):(p[1]+' (none left)'));
+  setDis(e,busy||!ids.length);
+  setProp(e,'title',!ids.length?('nothing left: every '+p[0]+' test is satisfied')
+   :(busy?'a run is in progress':('in order: '+ids.join(', '))))});
+ setDis($('q-stop'),!batchActive()||!!(b&&b.stopping));
+ if(!b){setHtml($('qstate'),'');return}
+ var total=b.order.length||1,ok=0,bad=0;
+ b.done.forEach(function(x){if(x.result==='PASS')ok++;else bad++});
+ function seg(cls,n){return n?("<i class='"+cls+"' style='width:"+(100*n/total)+"%'></i>"):''}
+ var h="<div class='qbar'>"+seg('ok',ok)+seg('bad',bad)+seg('skip',b.skipped.length)+
+   (b.current?seg('now',1):'')+"</div><div class='qline'><b>"+esc(b.group)+"</b> queue, opened "+
+   esc(fmtTs(b.ts))+" &middot; ";
+ h+=b.finished?('finished '+esc(fmtTs(b.finished))):(b.current?('running <b>'+esc(b.current)+'</b>'):
+   (b.stopping?'stopping':'starting'));
+ h+=" &middot; <b>"+ok+"</b> passed, <b>"+bad+"</b> not, <b>"+b.skipped.length+
+   "</b> skipped, <b>"+b.pending.length+"</b> waiting";
+ if(b.stopped)h+="<br><span class='req'>stopped: "+esc(b.stopped)+"</span>";
+ if(b.skipped.length)h+="<br>skipped: "+esc(b.skipped.map(function(x){return x.test+' ('+x.reason+')'}).join('; '));
+ if(b.pending.length)h+="<br>waiting: <span class='tid'>"+esc(b.pending.join(', '))+"</span>";
+ setHtml($('qstate'),h+"</div>")}
 /* The rows are built once for a given catalog and then only updated in
    place: a poll never rewrites the table, so a Start button survives the
    press that is landing on it. */
@@ -225,11 +277,13 @@ function buildGroups(){var groups={},order=[];
  catalog.forEach(function(t){rowEls[t.id]={st:$('st-'+t.id),last:$('last-'+t.id),btn:$('btn-'+t.id),
   unmet:$('unmet-'+t.id),note:$('note-'+t.id),detdyn:$('detdyn-'+t.id)}})}
 function updateGroups(){if(!rowEls||!state)return;var busy=isBusy();
+ var queued={};if(batchActive()){(state.batch.pending||[]).forEach(function(x){queued[x]=1})}
  catalog.forEach(function(t){var e=rowEls[t.id];if(!e)return;var s=state.tests[t.id]||{};
   var st;
   if(pendingId===t.id&&isBusy()&&!state.running){st="<span class='st running'>starting&hellip;</span>"}
   else{st="<span class='st "+esc(s.status)+"'>"+esc(s.status||'none')+"</span>";
    if(s.required&&s.status!=='running')st+="<br><span class='req'>required: "+esc(s.reason)+"</span>"}
+  if(queued[t.id])st+="<br><span class='badge queued'>queued</span>";
   setHtml(e.st,st);
   var last=s.last?(esc(s.last.result)+' '+esc(fmtTs(s.last.ts))):'-';
   if(s.status==='inherited'&&s.origin)last+="<br><span class='tid'>from "+esc(s.origin.campaign)+" on "+esc(s.origin.image)+"</span>";
@@ -275,7 +329,28 @@ function startTest(id){if(isBusy())return;var t=findTest(id);var body={test:id};
  api('POST','/start',body,function(s,d){
   if(s!==200){pending=0;pendingId=null;rowMsg[id]=d.message||d.error;updateGroups()}
   setMsg('actmsg',d.message||d.error,s!==200);kick()})}
-function confirmLive(){return window.confirm('LIVE LASER TEST.\n\nConfirm before starting:\n - eye protection on, everyone in the room\n - fire watch present, extinguisher at hand\n - exhaust running, lid closed, scrap in place\n - you will press the physical button to arm when prompted\n\nStart the test?')}
+function confirmLive(live){return window.confirm(
+ (live?('LIVE LASER QUEUE.\n\nThese fire the laser:\n - '+live.join('\n - ')+'\n'):'LIVE LASER TEST.\n')+
+ '\nConfirm before starting:\n - eye protection on, everyone in the room\n - fire watch present, extinguisher at hand\n - exhaust running, lid closed, scrap in place\n - you will press the physical button to arm when prompted\n\n'+
+ (live?'Start the queue?':'Start the test?'))}
+/* A queue takes the machine for a long stretch, so both what it will run
+   and the acknowledgment it needs are put in front of the operator once,
+   before anything starts. */
+function startBatch(group){if(isBusy())return;
+ var ids=(state&&state.batch_available&&state.batch_available[group])||[];
+ if(!ids.length)return;
+ var body={group:group};if(ignoreReq)body.ignore_requires=true;
+ var live=[];catalog.forEach(function(t){if(t.kind==='live'&&ids.indexOf(t.id)>=0)live.push(t.id)});
+ if(live.length){if(!confirmLive(live))return;body.ack_live=true}
+ else if(!window.confirm('Run these '+ids.length+' test(s), in this order?\n\n - '+ids.join('\n - ')))return;
+ pending=nowMs();pendingId=null;rowMsg={};updateGroups();renderQueue();
+ setMsg('qmsg','starting the '+group+' queue...');
+ api('POST','/batch',body,function(s,d){
+  if(s!==200){pending=0;updateGroups();renderQueue()}
+  setMsg('qmsg',d.message||d.error,s!==200);kick()})}
+function stopBatch(){var e=$('q-stop');if(e.disabled)return;setDis(e,true);
+ setMsg('qmsg','stopping the queue...');
+ api('POST','/batch/stop',{},function(s,d){setMsg('qmsg',d.message||d.error,s!==200);kick()})}
 function promptBusy(on){var b=$('promptb').getElementsByTagName('button');for(var i=0;i<b.length;i++)setDis(b[i],on)}
 function answerIdx(i){if(!curPrompt)return;var p=curPrompt,v=p.options[i];
  promptBusy(true);setMsg('actmsg','answer sent: '+v);

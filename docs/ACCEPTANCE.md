@@ -122,7 +122,22 @@ bench, or one whose `/data` has been wiped, starts from a full campaign.
    and the following ones reuse the live session; nothing switches back -
    switch on the control panel when done. `cloud.mode-switch` is the one
    round trip and starts in GRBL mode.
-4. When *Release authorized: YES*, **Export release artifact**, download
+4. Or hand the whole list to a queue. **Run what is left** offers two:
+   **Unattended** takes every `auto` test the campaign does not already
+   count as satisfied, and needs nobody in the room; **Operator and live**
+   takes the `operator` and `live` ones, and needs somebody at the
+   machine, since it prompts and it fires the laser. Each button says how
+   many it would run, and asks before it starts: the live queue names the
+   tests that fire and takes the acknowledgment once, for all of them.
+   A queue runs one test at a time in prerequisite order and stops on the
+   first result that is not a PASS, because a FAIL closes the campaign. A
+   test it cannot start is skipped with the reason on the page and the
+   rest carry on, which is what happens to an `auto` test waiting on an
+   `operator` one: run the attended queue, then the unattended one again.
+   **Stop the queue** cancels what is still waiting and lets the run in
+   progress finish; **Abort** ends that one too. The queue lives in the
+   runner, so closing the page or reloading it does not disturb the run.
+5. When *Release authorized: YES*, **Export release artifact**, download
    `acceptance.json` and `acceptance.md`, and commit them as
    `releases/v<version>/acceptance.json` and `.md`.
 
@@ -253,7 +268,7 @@ recorded in `/data/forgetest/bench.jsonl` and never enter a campaign.
       catalog.py                 @test registry, catalog hash
       campaign.py                the rules (pure functions)
       artifact.py                export + gate verification
-      runner.py                  one run at a time, prompts, abort, takeover
+      runner.py                  one run at a time, prompts, abort, takeover, queues
       baseline.py                the fresh-boot idle state around every run
       server.py / page.py        HTTP API + the page (forgectrl's access rules)
       bench.py / coverage.py     bench registry + subprocess runner; the lint

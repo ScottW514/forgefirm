@@ -120,6 +120,35 @@ def get(id, registry=None):
     return (registry if registry is not None else REGISTRY).get(id)
 
 
+def order_by_requires(tests, selected):
+    """`selected` ids in an order that runs a prerequisite before the test
+    that names it.
+
+    Registration order otherwise, so a run reads down the page. A
+    prerequisite outside the selection places nothing: either it is
+    already satisfied, or the run that needs it will be refused and
+    recorded as skipped. validate() has ruled out cycles; the stack check
+    only keeps a malformed registry from recursing forever.
+    """
+    want = set(selected)
+    by_id = {t.id: t for t in tests}
+    out, placed = [], set()
+
+    def visit(tid, stack):
+        if tid in placed or tid not in want or tid not in by_id or tid in stack:
+            return
+        stack.add(tid)
+        for r in by_id[tid].requires:
+            visit(r, stack)
+        stack.discard(tid)
+        placed.add(tid)
+        out.append(tid)
+
+    for t in tests:
+        visit(t.id, set())
+    return out
+
+
 def validate(registry=None):
     """Every `requires` names a known test and there are no cycles."""
     reg = registry if registry is not None else REGISTRY
