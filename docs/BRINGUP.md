@@ -48,11 +48,13 @@ hardware-validated.**
   modes (cancel-and-return on a lid or interlock open, button pause/resume),
   bench-validated 2026-08-17.
 - **Releases are gated by the acceptance tool** (`forgetest`, dev image only):
-  a 35-test catalog, domain-scoped inheritance, an always-required safety core,
-  and a release gate that reads the exported artifact. The last full campaign
-  reached 26 of 26 on the then-current catalog; **no release is cut yet.**
+  a 42-test catalog, domain-scoped inheritance, an always-required safety core,
+  and a release gate that reads the exported artifact. The full campaign on
+  dev image `20260821181036` (the first built on the `<recipe>-pin.inc`
+  layout) satisfied 42 of 42 and its export authorizes a release;
+  **no release is cut yet.**
 
-Current bench state: dev image `20260817124714`, the board resting on the SD
+Current bench state: dev image `20260821181036`, the board resting on the SD
 dev image (eMMC slot 1 = factory 2024, slot 2 = ForgeFIRM v0.1.0, archives in
 `/data/forgefirm/archive`).
 
@@ -571,12 +573,13 @@ The release acceptance tool — catalog, campaigns, domain fingerprints,
 inheritance, the always-required core, invalidate-all, the release gate and the
 coverage currency rule — is specified in `docs/ACCEPTANCE.md`; the tool lives in
 `forgetest/` and ships only on the dev image (`/etc/init.d/forgetest`, HTTP
-:8090). It is **bench-validated**: a full catalog run reached 26 of 26 on the
-then-current catalog, and `scripts/acceptance-gate.py` authorized that image's
-own manifest from the export. That was an exercise of the release mechanism,
-not a release.
+:8090). It is **bench-validated**: the full campaign on dev image
+`20260821181036` satisfied 42 of 42 (12 run on that image, 30 inherited
+under the domain model from the day's earlier dev images) and the export reads "Release authorized:
+YES" for that image's manifest. That authorizes a release; it is not one
+until `releases/v<version>/acceptance.json` is committed.
 
-- **Catalog: 35 tests** in `forgetest/forgetest/suite/`, every one a port of a
+- **Catalog: 42 tests** in `forgetest/forgetest/suite/`, every one a port of a
   proven bench drill or a bench-verified check — the always-required core
   (`image.health`, `kernel.latch-locked-idle`, `kernel.k1-k2`,
   `kernel.fire-line`), `forgectrl.*`, `logs.*`, `update.*`, `motion.*`
@@ -983,31 +986,36 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
    the carrier a factory-session capture settled: the `type:"progress"` frame
    that is the periodic settings report, every 30 s and at every phase change,
    divided by the job's own length rather than by the kernel byte counter that
-   climbs all job long under a live feed. The remaining gaps are tracked in
-   `python3-gfhardware/forgefirm-app/docs/CLOUD.md` "Outstanding items": a
-   live job longer than the ring (built and covered, never yet run from the
-   service), the memory guards against a real ceiling rather than a reasoned
-   one, a print watched from the app to see the bar actually move,
-   packaged-path boot with
-   `controller_mode = cloud`, the lid-flash LED, and driving the park and the two lifecycle
-   periods off the header (`CFrh`, `CCwp`, `CCrp`) once a capture confirms
-   what they mean; the machine warms up and rests on the factory's measured
-   timings meanwhile, and logs those keys on every job. (`CCbp`/`CCbt`, read
-   earlier as the pause constants, are refuted: the factory's tag table marks
-   them report-only, so they cannot appear in a pulse header at all.) The
-   four actions the service has never been seen to send are no longer open:
-   they were read out of the factory binary instead. `user_image` is a lid
-   capture and is implemented; `update_check`, `factory_reset` and
-   `head_firmware_update` each hand off to a program this machine does not
-   have (a factory updater, a reset script, a head firmware push), so each
-   is answered on the wire and none is performed, and `focus` is ignored
-   exactly as the factory ignores it. Not
-   inducible from the bench: the
-   cancel-with-a-rejected-`settings`-action case, a malformed frame (needs a
-   MITM), a body past the memory guard (the service has no such job to send),
-   and a wedged feed (a healthy machine will not stall on request). The pulse header's unenforced safety envelope is item 19: it is
-   listed separately because the enforcement lands in the cooling engine and
-   has to hold in GRBL mode too, not only under the cloud client.
+   climbs all job long under a live feed. The `cloud.*` acceptance tests
+   cover all of it on the bench, a print longer than the ring fed from the
+   live service included, and the app has been watched reporting a print's
+   progress. `gfcloud.init` autostart with `controller_mode = cloud` is
+   validated on a flashed image, and the lid flash follows the action's
+   `LCfl`. What is left is tracked in
+   `python3-gfhardware/forgefirm-app/docs/CLOUD.md` "Outstanding items" and
+   is short: whether the service accepts an 8 MP machine's larger images (no
+   HD machine has been on the bench), and the pulse header's unenforced
+   safety envelope, which is item 19, listed separately because the
+   enforcement lands in the cooling engine and has to hold in GRBL mode too,
+   not only under the cloud client. The memory guards
+   (`pulse_reject_threshold_bytes`, 128 MiB of compressed body) stay
+   reasoned rather than measured, by decision: nothing the service sends
+   comes near them, and every job logs the body and program sizes the
+   guards are reasoned from. The lifecycle keys (`CFrh`, `CCwp`, `CCrp`,
+   `CCup`) are settled as inert, in the factory too, so the configured
+   warm-up and rest on the factory's measured timings are the model, and
+   `CCbp`/`CCbt` are report-only tags that cannot appear in a header. The
+   four actions the service has never been seen to send were read out of
+   the factory binary: `user_image` is a lid capture and is implemented;
+   `update_check`, `factory_reset` and `head_firmware_update` each hand off
+   to a program this machine does not have (a factory updater, a reset
+   script, a head firmware push), so each is answered on the wire and none
+   is performed, and `focus` is ignored exactly as the factory ignores it.
+   Declined outright: SPKI pinning, emulator full-session parity, and the
+   factory's ten-event pause phase machine. Not inducible from the bench:
+   the cancel-with-a-rejected-`settings`-action case, a malformed frame
+   (needs a MITM), a body past the memory guard (the service has no such job
+   to send), and a wedged feed (a healthy machine will not stall on request).
 8. **Shared machine services — remaining polish.** None of it blocking:
    - **Diagnostics as engine modes.** The flow tools still drive the thermal
      hardware themselves while the engine suspends its writes; the check
@@ -1046,20 +1054,17 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     matter. Only if it still recurs, cap the bus with
     `max-frequency = <25000000>` on `&usdhc1` (halves Wi-Fi throughput — last
     resort; the factory ran 50 MHz on these pads).
-12. **Release acceptance follow-through.** A full campaign is owed on the first
-    image built with the `<recipe>-pin.inc` layout: that image is a platform
-    change against everything recorded so far, unavoidably, and only from then
-    on does a component pin bump re-require just the tests covering that
-    component. It now also carries the 32 MiB pulse ring (DT pool plus the
-    module default, batched into that flash), which is a platform change in its
-    own right and the first bench sighting of the larger ring: `image.health`
-    reads the pool and `ring_mb` back, and a preloaded cloud job past the old
-    28-minute cap is the capability proof. `20260817124714` was built after the pin files landed and the
-    parity tests were driven on it, but no full-campaign export is recorded for
-    it — confirm on the bench and write the record here. Also still owed:
-    exercising the ported bench tools from the page (they are registered and
-    unit-tested, not yet driven from the page), and the first release, which
-    runs the campaign and commits `releases/v<version>/acceptance.json`.
+12. **Release acceptance follow-through.** The full campaign on the first
+    image built with the `<recipe>-pin.inc` layout is done: dev image
+    `20260821181036`, 42 of 42, release authorized (the export is on the
+    board at `/data/forgetest/export/`). From here a component pin bump
+    re-requires only the tests covering that component. That image also
+    carries the 32 MiB pulse ring (DT pool plus the module default):
+    `image.health` reads the pool and `ring_mb` back, and
+    `cloud.oversize-stream` fed a print longer than the ring from the live
+    service. Still owed: exercising the ported bench tools from the page
+    (they are registered and unit-tested, not yet driven from the page), and
+    the first release, which commits `releases/v<version>/acceptance.json`.
     Catalog gaps left from the tool's own plan: `cooling.confirm-escalate` and
     `cooling.fire-gate-blocks-arm` are not ported (both need the pump switched
     by hand mid-run, so they are bench-tab material first), and whether
@@ -1304,8 +1309,10 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     is not header-legal is rejected too. The service fills the safety-relevant
     ones with real values per job rather than echoing back what the machine
     reported. ForgeFIRM applies thirteen tags (the three run fan duties,
-    `STfr`, the X/Y current, decay and microstep set, `ZSmd`) and drops the
-    rest. Nineteen of the mandatory ones are among the dropped.
+    `STfr`, the X/Y current, decay and microstep set, `ZSmd`), refuses the
+    file on two (`MCsn`, the serial it is locked to, and `PDfm`, the pulse
+    data format, both checked before a byte reaches the ring) and drops the
+    rest. Seventeen of the mandatory ones are among the dropped.
 
     Nothing here can put energy where it was not commanded: the hardware chain
     is the emission boundary and no header field touches it, and forgectrl runs
@@ -1415,10 +1422,6 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
       `beam_detect_abort` aborts it, and a `beam_detect_report` is uploaded
       afterward at whatever severity the report-upload condition selects. See
       also item 15, which is circling the same hardware from the other side.
-    - **`MCsn` and `PDfm` are not checked.** The factory refuses a pulse file
-      whose serial does not match the machine, and refuses a pulse-data format
-      it does not recognize. ForgeFIRM runs both. These are cheap: two
-      comparisons at the top of the job path, and a refusal is a clean abort.
 
     Deciding what to adopt is part of the work, not a foregone conclusion. A
     limit that arrives from a remote service is a limit that service can raise,

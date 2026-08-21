@@ -3200,6 +3200,16 @@ controller's message. An operator watching the head come back has no such
 reference, and fifteen millimeters on a forty millimeter square reads as
 "back". The test stays as it is.
 
+## 2026-08-21: the first full campaign on a pin-file image
+
+Completed. Dev image `20260821181036`, the first built on the
+`<recipe>-pin.inc` layout: 42 of 42 satisfied (12 run on that image, 30
+inherited under the domain model from the day's earlier dev images), all
+eight `cloud.*` tests run on that image, and the export reads "Release authorized:
+YES" for that image's manifest (campaign `c-20260821182204-dc01`, exported
+2026-08-21T18:40:30Z, artifact sha256 `6f17f690...43273055`). No release is
+cut from it.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
