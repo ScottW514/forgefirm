@@ -38,8 +38,9 @@ pins; the coverage lint is `python3 -m forgetest.coverage --manifest ...`.
 ## Adding a test
 
 Register it in the subsystem module under `forgetest/suite/` with
-`@test(...)`: id `subsystem.name`, kind, hardware, `covers`, `requires`,
-`always`, steps. The body gets a `Context` (`log`, `check`, `fail`,
+`@test(...)`: id `subsystem.name`, kind, hardware, `mode` (the controller
+mode the test needs; the runner switches to it first), `covers`,
+`requires`, `always`, steps. The body gets a `Context` (`log`, `check`, `fail`,
 `prompt`, `confirm`, `instruct`, `sleep`, `evidence`, `forgectrl`, `sysfs`,
 `grbl`, `takeover`). Return normally for PASS, raise `runner.Failed` for
 FAIL. Then run the unit tests and the coverage lint.

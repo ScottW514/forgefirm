@@ -101,6 +101,7 @@ SETTLE_S = 150                      # the supervisor's probe + rail-off ladder
 CAM_IDLE_S = 20                     # camera engine idle stop is 10 s
 COOL_IDLE_S = 120                   # cooldown after motion
 IDLE_S = 30                         # cnc/state back to idle after a job
+GRBL_PORT_S = 30                    # the Grbl port after the supervisor reports grblHAL running
 
 XY_STEPS_PER_MM = 53.333            # boards/glowforge.h (x8 microstepping)
 RETURN_MAX_MM = 100.0               # a displaced head is jogged back at most this far
@@ -258,6 +259,35 @@ class Baseline:
             time.sleep(1.0)
         self.log("WARNING - forgectrl did not settle within %d s (last /mode: %s)" % (timeout, last))
         return last
+
+    # -- the mode a test needs -------------------------------------------
+    def switch_mode(self, want, timeout=SETTLE_S):
+        """Put the machine in controller mode `want` through the supervisor
+        and wait for it to settle there: the controller running, motion
+        verified, and in GRBL mode the Grbl port answering. Returns (ok,
+        detail). Used by the runner for a test that declares a mode, before
+        the preserved state is captured - so the baseline keeps the mode
+        the test asked for, not the one the run found."""
+        st, mode = self.fc_get("/mode")
+        if st != 200 or not isinstance(mode, dict):
+            return False, "forgectrl not answering (/mode -> %s)" % st
+        if mode.get("mode") == want and mode.get("controller") == "running":
+            self.mode = want
+            return True, "already in %s mode" % want
+        self.log("switching to %s mode (found %s, controller %s)"
+                 % (want, mode.get("mode"), mode.get("controller")))
+        st, body = self.fc_post("/mode", data={"controller": want})
+        if st != 200:
+            return False, "POST /mode controller=%s -> %s %s" % (want, st, body)
+        mode = self.wait_settled(timeout=timeout) or {}
+        self.mode = mode.get("mode")
+        if mode.get("mode") != want or mode.get("controller") != "running":
+            return False, "%s mode did not come up: %s" % (want, mode)
+        if want == "grbl":
+            w = self._wait("Grbl port", lambda: hw.grbl_port_open(2), GRBL_PORT_S)
+            if w is None:
+                return False, "grbl controller is running but the Grbl port never opened"
+        return True, "%s mode up" % want
 
     # -- capture -------------------------------------------------------
     def capture(self):

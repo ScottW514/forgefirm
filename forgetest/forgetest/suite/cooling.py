@@ -64,7 +64,7 @@ def flow_verify(ctx):
 
 
 @test("cooling.fans-quiet-after-motion", title="Fan profile returns to idle after motion and after M8/M9",
-      subsystem="cooling", kind="auto", est_min=2,
+      subsystem="cooling", kind="auto", mode="grbl", est_min=2,
       covers=_COOL_COVERS + [("forgectrl", "src/super.c")], requires=["motion.pacing"],
       steps=["Bed clear; the head needs 20 mm of free +X travel."],
       description="A dry jog and an M8/M9 cycle must not leave the run fan profile on: within "

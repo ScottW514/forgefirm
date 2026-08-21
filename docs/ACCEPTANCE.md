@@ -27,6 +27,12 @@ Every test declares, in code (`forgetest/forgetest/suite/*.py`):
 - **hardware** - `api` (forgectrl and the controller stay up) or
   `takeover` (forgectrl is stopped for the duration; a marker file makes a
   crash recoverable at the next start);
+- **mode** - the controller mode the test needs live when it starts
+  (`grbl` or `cloud`), or none. The runner switches the machine there
+  before the test (through `POST /mode`, settled and with the Grbl port
+  answering) and leaves it there; a test with no mode runs in whatever
+  mode it finds, or manages the mode itself (the `cloud.*` job tests,
+  through `enter_cloud`, which also waits for the service session);
 - **covers** - the source paths whose content the test stands for, as
   `(component, glob)` pairs;
 - **requires** - tests that must be satisfied first (the emission tests
@@ -119,9 +125,13 @@ bench, or one whose `/data` has been wiped, starts from a full campaign.
    started under it says so in its record).
    The `cloud.*` job tests run **in cloud mode and stay there**: the first
    one switches from GRBL mode (once, its connect-time hunt waited out)
-   and the following ones reuse the live session; nothing switches back -
-   switch on the control panel when done. `cloud.mode-switch` is the one
-   round trip and starts in GRBL mode.
+   and the following ones reuse the live session; nothing switches back
+   after them. The tests that need GRBL mode (`motion.*`, `laser.*`,
+   `cooling.fans-quiet-after-motion`, `cloud.mode-switch`,
+   `cloud.gfhome-homing`) declare it, and the runner switches back the
+   moment one of them starts - so the mode changes only where the next
+   test asks for it, never between tests of the same mode.
+   `cloud.mode-switch` is the one round trip.
 4. Or hand the whole list to a queue. **Run what is left** offers two:
    **Unattended** takes every `auto` test the campaign does not already
    count as satisfied, and needs nobody in the room; **Operator and live**
@@ -166,9 +176,11 @@ its lid-image level; the position counters, re-zeroed at every service
 action) is left to it, and the safety readbacks, latch, ring, module
 defaults, and forgectrl's engines are checked as always. The mode itself
 is preserved unless the run declared the change (`ctx.mode_changed()`,
-the cloud tests entering cloud mode); the persisted `controller_mode`
-setting is never written back as a bare setting - only the switch keeps
-it in step with the live mode. Deviations are
+the cloud tests entering cloud mode) or the test declared a `mode`, in
+which case the runner makes the switch in the pre pass, before the
+preserved state is captured, and the post pass keeps the mode the test
+asked for; the persisted `controller_mode` setting is never written back
+as a bare setting - only the switch keeps it in step with the live mode. Deviations are
 **leftovers**: logged in the run pane, kept in the result's `evidence`
 (`baseline.pre` / `baseline.post`), and surfaced in the page's message
 line - a leftover found before a run is attributed to the previous run; one

@@ -70,6 +70,7 @@ tr:last-child td{border-bottom:0}
 .badge.live{background:#fbe1e1;color:#a11}
 .badge.operator{background:#fdf3e3;color:#8a5200}
 .badge.takeover{background:#e6e8f5;color:#33407a}
+.badge.mode{background:#e3f1e8;color:#1f5e3a}
 .badge.core{background:var(--navy);color:#fff}
 .st{font-weight:600}
 .st.pass{color:var(--ok)}.st.inherited{color:var(--inh)}.st.fail,.st.error{color:var(--red)}
@@ -287,6 +288,7 @@ function buildGroups(){var groups={},order=[];
   groups[g].forEach(function(t){var d=esc(t.id);var badges='';
    if(t.always)badges+="<span class='badge core'>core</span>";badges+="<span class='badge "+esc(t.kind)+"'>"+esc(t.kind)+"</span>";
    if(t.hardware==='takeover')badges+="<span class='badge takeover'>takeover</span>";
+   if(t.mode)badges+="<span class='badge mode'>"+esc(t.mode)+"</span>";
    var det="<div class='details"+(openDetails[t.id]?' on':'')+"' id='det-"+d+"'>"+
      (t.description?("<div class='dsc'>"+esc(t.description)+"</div>"):'')+
      (t.steps&&t.steps.length?"<b>Operator steps:</b><ol>"+t.steps.map(function(x){return '<li>'+esc(x)+'</li>'}).join('')+"</ol>":'')+

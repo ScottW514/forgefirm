@@ -4,7 +4,6 @@ grbl -> cloud -> grbl round trip; the job-behavior tests run in cloud mode
 and leave the machine there (see enter_cloud)."""
 import json
 import os
-import socket
 import time
 
 from ..catalog import test
@@ -91,18 +90,8 @@ def wait_mode(ctx, fc, want_mode, want_controller="running", timeout=90):
     return last
 
 
-def grbl_port_open(timeout=5):
-    try:
-        s = socket.create_connection((os.environ.get("GRBL_HOST") or "127.0.0.1",
-                                      int(os.environ.get("GRBL_PORT") or 23)), timeout=timeout)
-        s.close()
-        return True
-    except OSError:
-        return False
-
-
 @test("cloud.mode-switch", title="Controller mode switch grbl -> cloud -> grbl", subsystem="cloud",
-      kind="auto", est_min=4,
+      kind="auto", mode="grbl", est_min=4,
       covers=_CLOUD_COVERS, requires=["forgectrl.auth", "motion.pacing"],
       steps=["Bed clear: the cloud client homes the head to the corner on connect (the factory "
              "hunt) and the test jogs it back to where it started afterward. Cloud credentials "
@@ -174,7 +163,7 @@ def mode_switch(ctx):
               "grbl controller did not come back: %s", m)
     ctx.check(m.get("motion") != "fault", "motion fault after the switch")
     ctx.sleep(3)
-    ctx.check(grbl_port_open(), "Grbl port not open after the switch back")
+    ctx.check(hw.grbl_port_open(), "Grbl port not open after the switch back")
     with ctx.grbl() as g:
         st = g.status_report()["state"]
         ev["grbl_state"] = st
@@ -199,7 +188,7 @@ def mode_switch(ctx):
 
 
 @test("cloud.gfhome-homing", title="Glowforge web-service homing ($H with homing_mode=gfcloud)",
-      subsystem="cloud", kind="operator", est_min=5,
+      subsystem="cloud", kind="operator", mode="grbl", est_min=5,
       covers=_CLOUD_COVERS + [("grblhal-glowforge", "src/**")], requires=[],
       steps=["homing_mode = gfcloud and cloud credentials configured; bed clear, lid closed.",
              "Watch the gantry: the service drives it to the corner with camera corrections.",

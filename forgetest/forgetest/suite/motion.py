@@ -19,7 +19,13 @@ _MOTION_COVERS = [("grblhal-glowforge", "src/**"), ("kernel-module-glowforge", "
 def controller_pid():
     pids = hw.pidof("grblHAL_glowfor")
     if not pids:
-        raise Failed("controller process not found (grblHAL_glowforge)")
+        try:
+            st, m = hw.Forgectrl().get("/mode")
+            where = ("forgectrl reports mode=%s controller=%s" % (m.get("mode"), m.get("controller"))
+                     if st == 200 and isinstance(m, dict) else "forgectrl /mode -> %s" % st)
+        except hw.HwError as e:
+            where = "forgectrl unreachable (%s)" % e
+        raise Failed("controller process not found (grblHAL_glowforge); %s" % where)
     return pids[0]
 
 
@@ -133,7 +139,7 @@ def clean_slate(ctx, g):
 
 
 @test("motion.pacing", title="Protocol-loop pacing (idle, parked, moving) and hold/resume position",
-      subsystem="motion", kind="auto", est_min=1,
+      subsystem="motion", kind="auto", mode="grbl", est_min=1,
       covers=_MOTION_COVERS, requires=["kernel.latch-locked-idle"],
       steps=["Bed clear; the head needs 30 mm of free +X travel."],
       description="Idle CPU is low; a job parked in a completed feed hold is coarse-paced (not "
@@ -193,7 +199,7 @@ def pacing(ctx):
 
 
 @test("motion.jog-roundtrip", title="Motion quality: bounded jogs, max rate, diagonal, hold/resume",
-      subsystem="motion", kind="operator", est_min=3,
+      subsystem="motion", kind="operator", mode="grbl", est_min=3,
       covers=_MOTION_COVERS, requires=["kernel.latch-locked-idle"],
       steps=["Park the head with at least 60 mm of free +X and 40 mm of free +Y travel; bed clear.",
              "Watch the gantry: it must move on every jog and end where it started."],
@@ -372,7 +378,7 @@ def _liveness_masked_restart(ctx, fc, ev):
 # ---------------------------------------------------------------- cancel / abort
 
 @test("motion.cancel-abort", title="Jog cancel and controlled abort recover cleanly", subsystem="motion",
-      kind="auto", est_min=2,
+      kind="auto", mode="grbl", est_min=2,
       covers=_MOTION_COVERS, requires=["motion.pacing"],
       steps=["Bed clear; the head needs 40 mm of free +X travel."],
       description="A jog-cancel (0x85) stops a jog short of its target and returns to Idle with "
@@ -463,7 +469,7 @@ def _return_x(ctx, delta_mm):
 
 
 @test("motion.deadman", title="Dead-man: controller kill, controller hang, forgectrl restart mid-move",
-      subsystem="motion", kind="auto", est_min=4,
+      subsystem="motion", kind="auto", mode="grbl", est_min=4,
       covers=_MOTION_COVERS + [("forgectrl", "src/main.c"), ("forgectrl", "init/**")],
       requires=["motion.cancel-abort", "kernel.k1-k2"],
       steps=["Bed clear; the head needs 40 mm of free +X travel and must not be at the left rail."],
@@ -693,7 +699,7 @@ def expect_cancel_and_return(ctx, g, ev, start, k0, why, tag):
 
 
 @test("motion.button-hold-resume", title="The button pauses and resumes a job",
-      subsystem="motion", kind="operator", est_min=2,
+      subsystem="motion", kind="operator", mode="grbl", est_min=2,
       covers=_LID_COVERS, requires=["motion.pacing"],
       steps=["Bed clear; the head needs 40 mm of free +X travel. No laser is involved.",
              "Press the button once when told (pause), and once more when told (resume)."],
@@ -751,7 +757,7 @@ def button_hold_resume(ctx):
 
 @test("motion.lid-cancel-home", title="Lid open during a job - running or paused - cancels it and returns "
                                      "to the job start",
-      subsystem="motion", kind="operator", est_min=5,
+      subsystem="motion", kind="operator", mode="grbl", est_min=5,
       covers=_LID_COVERS, requires=["motion.pacing", "motion.cancel-abort"],
       steps=["Bed clear; the head needs 40 mm of free +X travel. No laser is involved.",
              "Open the lid when told, and leave it open until the head has come back (twice: once "
@@ -833,7 +839,7 @@ def lid_cancel_home(ctx):
 
 @test("motion.interlock-cancel-home", title="The interlock loop cancels a job like the lid and returns to "
                                            "the job start",
-      subsystem="motion", kind="operator", est_min=4,
+      subsystem="motion", kind="operator", mode="grbl", est_min=4,
       covers=_LID_COVERS, requires=["motion.lid-cancel-home"],
       steps=["Bed clear; the head needs 60 mm of free +X travel. No laser is involved.",
              "Be able to open the remote-interlock loop: unplug the Pro's interlock plug, or pull the "
@@ -894,7 +900,7 @@ def interlock_cancel_home(ctx):
 
 
 @test("motion.lid-policy-hold", title="lid_policy=hold parks the job in Door and a cycle start resumes it",
-      subsystem="motion", kind="operator", est_min=4,
+      subsystem="motion", kind="operator", mode="grbl", est_min=4,
       covers=_LID_COVERS + [("forgectrl", "src/settings.*")], requires=["motion.lid-cancel-home"],
       steps=["Bed clear; the head needs 40 mm of free +X travel. No laser is involved.",
              "Open the lid when told, then close it when told; the job finishes after that."],
@@ -981,7 +987,7 @@ def _thread_sched(pid):
 
 @test("motion.step-timing-under-load",
       title="Step timing holds while userspace competes for the core",
-      subsystem="motion", kind="auto", est_min=2,
+      subsystem="motion", kind="auto", mode="grbl", est_min=2,
       covers=_MOTION_COVERS, requires=["kernel.latch-locked-idle", "motion.jog-roundtrip"],
       steps=["Bed clear, lid closed; the head needs >= 40 mm of free +X travel."],
       description="The board has one core, so the thread that stamps steps onto the pulse grid "

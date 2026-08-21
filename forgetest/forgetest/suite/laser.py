@@ -229,7 +229,7 @@ def wait_disarm(ctx, timeout):
 
 
 @test("laser.power-floor", title="The shipped duty floor holds commanded power above the lasing threshold",
-      subsystem="laser", kind="auto", est_min=1,
+      subsystem="laser", kind="auto", mode="grbl", est_min=1,
       covers=[("grblhal-glowforge", "src/**")],
       description="$35 floors the bottom of the laser's output range, and unfloored the low end "
                   "of S asks for pulses too far apart for the discharge to re-strike - a "
@@ -274,7 +274,7 @@ def power_floor(ctx):
 
 
 @test("laser.emission-witness", title="Live emission witness (S400 vector mark) and job-based disarm",
-      subsystem="laser", kind="live", always=True, est_min=5,
+      subsystem="laser", kind="live", mode="grbl", always=True, est_min=5,
       covers=_LASER_COVERS,
       requires=["kernel.latch-locked-idle", "kernel.k1-k2", "motion.jog-roundtrip"],
       steps=["Scrap under the head with 20 mm of free +X and +Y travel; lid closed; exhaust on.",
@@ -334,7 +334,7 @@ def emission_witness(ctx):
 
 
 @test("laser.disarm-in-hold", title="Disarm grace counts down in Hold", subsystem="laser",
-      kind="live", est_min=4,
+      kind="live", mode="grbl", est_min=4,
       covers=_LASER_COVERS,
       requires=["laser.emission-witness"],
       steps=["Scrap under the head with 40 mm of free +X travel; lid closed; exhaust on.",
@@ -400,7 +400,7 @@ def disarm_in_hold(ctx):
 
 
 @test("laser.armed-kill", title="Armed kill mid-fire: the expected stop, then a SIGKILL",
-      subsystem="laser", kind="live", est_min=6,
+      subsystem="laser", kind="live", mode="grbl", est_min=6,
       covers=_LASER_COVERS + [("forgectrl", "src/main.c")],
       requires=["laser.emission-witness", "motion.deadman"],
       steps=["Scrap under the head with 40 mm of free +X and +Y travel; lid closed; exhaust on.",
@@ -497,7 +497,7 @@ def armed_kill(ctx):
 
 
 @test("laser.arm-wait-lid", title="Lid open during the arm wait cancels the job",
-      subsystem="laser", kind="operator", est_min=3,
+      subsystem="laser", kind="operator", mode="grbl", est_min=3,
       covers=_LASER_COVERS + [("grblhal-glowforge", "src/glowforge_laser.c"),
                               ("grblhal-glowforge", "src/glowforge_switches.c"),
                               ("grblhal-glowforge", "src/glowforge_switch_map.h")],
@@ -568,7 +568,7 @@ def arm_wait_lid(ctx):
 
 @test("laser.pause-resume-lid-cancel", title="One live cut: the button pauses and resumes it, the lid "
                                              "cancels it and sends the head home",
-      subsystem="laser", kind="live", est_min=7,
+      subsystem="laser", kind="live", mode="grbl", est_min=7,
       covers=_LASER_COVERS + [("grblhal-glowforge", "src/glowforge_switches.c"),
                               ("grblhal-glowforge", "src/glowforge_switch_map.h")],
       requires=["laser.emission-witness", "motion.lid-cancel-home", "motion.button-hold-resume"],

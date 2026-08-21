@@ -573,10 +573,14 @@ class Runner:
                 "stopped": b["stopped"], "finished": b["finished"]}
 
     # -- baseline around every run -----------------------------------------
-    def _baseline_pre(self, run):
+    def _baseline_pre(self, run, mode=None):
         """Bring the machine to the fresh-boot idle state before a run and
-        record what the previous run left behind. Returns the captured
-        preserved state for the post pass."""
+        record what the previous run left behind; then, for a test that
+        declares a controller mode, put the machine in that mode. The
+        preserved state is captured after the switch, so the post pass
+        keeps the mode the test asked for: a queue that crosses from the
+        cloud tests to a motion test switches once, there, and stays.
+        Returns the captured preserved state for the post pass."""
         bl = _baseline.Baseline(run.log, abort=run.aborted.is_set)
         left = bl.enforce("pre", captured=None)
         if left:
@@ -584,6 +588,15 @@ class Runner:
             self.messages.append("leftovers before %s (left by %s): %s"
                                  % (run.id, who, "; ".join(str(x) for x in left)))
         run.evidence["baseline"] = {"pre": [x.as_dict() for x in left]}
+        if mode:
+            found = bl.mode
+            ok, detail = bl.switch_mode(mode)
+            run.log("mode: test needs %s - %s" % (mode, detail))
+            run.evidence["mode"] = {"needs": mode, "found": found, "switched": found != mode,
+                                    "ok": ok, "detail": detail}
+            if not ok:
+                raise Failed("the test needs %s mode and the machine could not be brought "
+                             "there: %s" % (mode, detail))
         run.baseline_captured = bl.capture()
         return run.baseline_captured
 
@@ -601,7 +614,7 @@ class Runner:
         result, message = _campaign.PASS, ""
         captured = None
         try:
-            captured = self._baseline_pre(run)
+            captured = self._baseline_pre(run, mode=t.mode)
             t.fn(ctx)
             if run.aborted.is_set():
                 result, message = _campaign.ABORTED, "aborted"

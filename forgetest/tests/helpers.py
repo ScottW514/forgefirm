@@ -69,9 +69,9 @@ def _noop(ctx):
     pass
 
 
-def make_test(id, covers, always=False, requires=(), kind="auto", fn=None, subsystem=None):
+def make_test(id, covers, always=False, requires=(), kind="auto", fn=None, subsystem=None, mode=None):
     return catalog_mod.Test(id, "Title " + id, subsystem or id.split(".")[0], kind, "api",
-                            covers, requires, always, 1, (), "desc", fn or _noop)
+                            covers, requires, always, 1, (), "desc", fn or _noop, mode=mode)
 
 
 def registry(*tests):

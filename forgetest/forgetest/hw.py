@@ -195,6 +195,17 @@ def run(cmd, timeout=60):
 
 # ------------------------------------------------------------------ grbl
 
+def grbl_port_open(timeout=5):
+    """True when the Grbl port accepts a connection (closed again at once)."""
+    try:
+        s = socket.create_connection((os.environ.get("GRBL_HOST") or "127.0.0.1",
+                                      int(os.environ.get("GRBL_PORT") or 23)), timeout=timeout)
+        s.close()
+        return True
+    except OSError:
+        return False
+
+
 class Grbl:
     """Minimal Grbl-over-TCP client. The suite is the only client while a
     motion test runs; nothing here is used to poll status when a sender

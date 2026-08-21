@@ -3,8 +3,9 @@
 A test is a function decorated with @test(...). The decorator records
 what the release gate needs to know without running anything: the id,
 the subsystem, the kind (auto / operator / live), how it takes the
-hardware (api / takeover), what source it covers, what it requires, and
-whether it belongs to the always-required core. The function body runs
+hardware (api / takeover), the controller mode it needs (if any), what
+source it covers, what it requires, and whether it belongs to the
+always-required core. The function body runs
 under the runner with a Context (log, prompts, evidence, hardware
 helpers) and reports by returning normally (PASS) or raising
 runner.Failed (FAIL).
@@ -18,6 +19,7 @@ from . import manifest as _manifest
 
 KINDS = ("auto", "operator", "live")
 HARDWARE = ("api", "takeover")
+MODES = ("grbl", "cloud")
 _ID_RX = re.compile(r"^[a-z][a-z0-9-]*\.[a-z][a-z0-9-]*$")
 
 REGISTRY = {}
@@ -25,12 +27,13 @@ REGISTRY = {}
 
 class Test:
     def __init__(self, id, title, subsystem, kind, hardware, covers, requires,
-                 always, est_min, steps, description, fn):
+                 always, est_min, steps, description, fn, mode=None):
         self.id = id
         self.title = title
         self.subsystem = subsystem
         self.kind = kind
         self.hardware = hardware
+        self.mode = mode
         self.covers = tuple((str(c), str(g)) for c, g in covers)
         self.requires = tuple(requires)
         self.always = bool(always)
@@ -78,7 +81,7 @@ class Test:
 
     def describe(self):
         d = self.definition()
-        d.update({"title": self.title, "est_min": self.est_min,
+        d.update({"title": self.title, "est_min": self.est_min, "mode": self.mode,
                   "steps": list(self.steps), "description": self.description})
         return d
 
@@ -89,14 +92,22 @@ def source_file_sha(path):
     return hashlib.sha256(data).hexdigest()
 
 
-def test(id, *, title, subsystem, kind="auto", hardware="api", covers=(),
+def test(id, *, title, subsystem, kind="auto", hardware="api", mode=None, covers=(),
          requires=(), always=False, est_min=1, steps=(), description=""):
+    """`mode` names the controller mode the test needs live when it starts
+    ("grbl" or "cloud"); the runner switches the machine there before the
+    test and leaves it there, so a queue crosses modes only where a test
+    asks it to. None means the test runs in whatever mode it finds (or
+    manages the mode itself, as the cloud tests do through enter_cloud,
+    which also waits for the service session)."""
     if not _ID_RX.match(id):
         raise ValueError("test id %r must look like subsystem.name" % id)
     if kind not in KINDS:
         raise ValueError("test %s: kind %r" % (id, kind))
     if hardware not in HARDWARE:
         raise ValueError("test %s: hardware %r" % (id, hardware))
+    if mode is not None and mode not in MODES:
+        raise ValueError("test %s: mode %r" % (id, mode))
     for c, g in covers:
         if c in _manifest.DEV_ONLY_COMPONENTS:
             raise ValueError("test %s: may not cover dev-only component %r" % (id, c))
@@ -105,7 +116,7 @@ def test(id, *, title, subsystem, kind="auto", hardware="api", covers=(),
         if id in REGISTRY:
             raise ValueError("duplicate test id %r" % id)
         REGISTRY[id] = Test(id, title, subsystem, kind, hardware, covers, requires,
-                            always, est_min, steps, description, fn)
+                            always, est_min, steps, description, fn, mode=mode)
         return fn
     return deco
 
