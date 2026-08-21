@@ -63,12 +63,39 @@ def flow_verify(ctx):
     ctx.check(fc.wait_idle(120, abort=ctx.aborted), "machine did not return to idle after the diagnostic")
 
 
+IDLE_DUTY = {"thermal/exhaust_pwm": 0, "thermal/intake_pwm": 0}   # forgectrl's idle posture
+TACH_KEYS = ("exhaust", "intake_1", "intake_2")
+SAMPLE_S = 5                # tach sampling period (the big exhaust fan coasts for tens of seconds)
+STABLE_SAMPLES = 3          # consecutive agreeing samples that make an idle reference
+IDLE_REF_TIMEOUT_S = 180    # a previous test's cooldown + spin-down
+COOLDOWN_TIMEOUT_S = 240    # the engine's smoke phase + idle drop + spin-down
+
+
+def _duties():
+    return {k: hw.sysfs_int(k) for k in IDLE_DUTY}
+
+
+def _tach_close(now, ref):
+    """Every tach at or below its idle reference, within the tolerance a
+    tach reading wanders by (150 rpm or 15 %). Lower is quieter, never a
+    fault: the reference is an idle level, not a target."""
+    return all(now.get(k, 0) - ref.get(k, 0) <= max(150, 0.15 * max(ref.get(k, 0), 1))
+               for k in TACH_KEYS)
+
+
+def _tach_stable(a, b):
+    return all(abs(a.get(k, 0) - b.get(k, 0)) <= max(100, 0.10 * max(a.get(k, 0), 1)) for k in TACH_KEYS)
+
+
 @test("cooling.fans-quiet-after-motion", title="Fan profile returns to idle after motion and after M8/M9",
-      subsystem="cooling", kind="auto", mode="grbl", est_min=2,
+      subsystem="cooling", kind="auto", mode="grbl", est_min=3,
       covers=_COOL_COVERS + [("forgectrl", "src/super.c")], requires=["motion.pacing"],
       steps=["Bed clear; the head needs 20 mm of free +X travel."],
       description="A dry jog and an M8/M9 cycle must not leave the run fan profile on: within "
-                  "the cooldown the exhaust/intake tachs return to the idle level seen before.")
+                  "the cooldown the engine is back at its idle duty and the exhaust/intake tachs "
+                  "are back at (or below) the idle level they held before the test. The idle "
+                  "reference is taken only once the engine is idle and the tachs have stopped "
+                  "changing, so a previous test's spin-down cannot be mistaken for idle.")
 def fans_quiet(ctx):
     fc = ctx.forgectrl
     ev = ctx.evidence
@@ -77,9 +104,32 @@ def fans_quiet(ctx):
         s = fc.status()
         return dict(s.get("fans") or {})
 
-    before = fans()
+    def phase():
+        st, c = fc.get("/cool/status")
+        return (c or {}).get("phase") if st == 200 and isinstance(c, dict) else None
+
+    # The idle reference: engine idle, idle duty applied, and tachs that
+    # have stopped changing (STABLE_SAMPLES consecutive samples that
+    # agree). A test that ran just before leaves the fans spinning down
+    # for tens of seconds after the engine goes idle; a reference taken
+    # then is not idle, and two samples can agree by chance mid-coast.
+    t0 = time.time()
+    before = None
+    recent = []
+    while time.time() - t0 < IDLE_REF_TIMEOUT_S:
+        ctx.sleep(SAMPLE_S)
+        now, ph, d = fans(), phase(), _duties()
+        ctx.log("  idle ref: phase %s duty %s fans %s", ph, d, now)
+        recent = (recent + [now])[-STABLE_SAMPLES:] if ph == "idle" and d == IDLE_DUTY else []
+        if len(recent) == STABLE_SAMPLES and all(_tach_stable(a, b) for a, b in zip(recent, recent[1:])):
+            before = now
+            break
     ev["before"] = before
-    ctx.log("fans before: %s", before)
+    ev["idle_ref_s"] = round(time.time() - t0, 1)
+    ctx.check(before is not None, "the fans never settled to an idle reference within %d s (last %s, "
+              "phase %s, duty %s)", IDLE_REF_TIMEOUT_S, recent[-1:] or None, phase(), _duties())
+    ctx.log("idle reference after %s s: %s", ev["idle_ref_s"], before)
+
     with ctx.grbl() as g:
         st = g.status_report()
         ctx.check(st["state"].startswith("Idle"), "controller is %s", st["state"])
@@ -95,21 +145,26 @@ def fans_quiet(ctx):
         ctx.sleep(3)
         during = fans()
         ev["during_m8"] = during
-        ctx.log("fans during M8: %s", during)
+        ev["duty_m8"] = _duties()
+        ctx.log("fans during M8: %s (duty %s)", during, ev["duty_m8"])
+        ctx.check(ev["duty_m8"] != IDLE_DUTY, "M8 did not raise the fan duty off idle: %s", ev["duty_m8"])
         g.command("M9")
         g.command("G90")
-    # cooldown: forgectrl's engine takes cool_cooldown_s (default tens of seconds)
+    # Cooldown: the engine's smoke phase, then the drop to idle duty, then
+    # the tachs coast down. Every sample is logged: a quiet pane here
+    # looks like a hang.
     settle = None
     t0 = time.time()
-    while time.time() - t0 < 240:
-        ctx.sleep(5)
-        now = fans()
-        close = all(abs(now.get(k, 0) - before.get(k, 0)) <= max(150, 0.15 * max(before.get(k, 0), 1))
-                    for k in ("exhaust", "intake_1", "intake_2"))
-        if close:
+    while time.time() - t0 < COOLDOWN_TIMEOUT_S:
+        ctx.sleep(SAMPLE_S)
+        now, ph, d = fans(), phase(), _duties()
+        ctx.log("  cooldown +%3.0f s: phase %s duty %s fans %s", time.time() - t0, ph, d, now)
+        if ph == "idle" and d == IDLE_DUTY and _tach_close(now, before):
             settle = time.time() - t0
             break
     ev["after"] = fans()
+    ev["duty_after"] = _duties()
     ev["settle_s"] = round(settle, 1) if settle is not None else None
-    ctx.log("fans after: %s (settled in %s s)", ev["after"], ev["settle_s"])
-    ctx.check(settle is not None, "fans did not return to the idle profile within 240 s: %s", ev["after"])
+    ctx.log("fans after: %s duty %s (settled in %s s)", ev["after"], ev["duty_after"], ev["settle_s"])
+    ctx.check(settle is not None, "fans did not return to the idle profile within %d s: %s, duty %s, "
+              "phase %s (idle reference %s)", COOLDOWN_TIMEOUT_S, ev["after"], ev["duty_after"], phase(), before)
