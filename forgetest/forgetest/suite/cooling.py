@@ -178,6 +178,7 @@ def fans_quiet(ctx):
 
 GATE_KEYS = ("cool_temp_max", "cool_temp_resume")
 VERDICT_WAIT_S = 20         # the engine reloads settings at run start and ticks at 1 Hz
+SESSION_END_WAIT_S = 15     # M9 -> the engine's phase leaves "run" (1 Hz reports, 1 Hz ticks)
 GATE_LOG_LINES = "400"      # how far back the run-start gate lines can sit in the forgectrl log
 
 
@@ -200,9 +201,25 @@ def _set_gates(ctx, fc, values):
     return body
 
 
+def _session_ended(ctx, fc, what):
+    """After M9 the GRBL client's next report ends the engine's run
+    session; the client reports at 1 Hz and the engine samples at 1 Hz,
+    so an M8 sent inside that window is not a new session and nothing is
+    re-read. Wait until the phase has left "run"."""
+    t0 = time.time()
+    while time.time() - t0 < SESSION_END_WAIT_S:
+        ctx.sleep(1)
+        if _cool(fc).get("phase") != "run":
+            return True
+    ctx.log("%s: the engine is still in phase run %d s after M9", what, SESSION_END_WAIT_S)
+    return False
+
+
 def _run_session(ctx, g, fc, until, what):
     """M8 opens a run session (the engine re-reads its settings there and
-    ticks the gates at 1 Hz); wait for `until(cool)` to hold, then M9."""
+    ticks the gates at 1 Hz); wait for `until(cool)` to hold, then M9 and
+    wait for the session to end, so the next M8 is a new one."""
+    ctx.check(_cool(fc).get("phase") != "run", "%s: a run session is already open", what)
     g.command("M8")
     try:
         t0 = time.time()
@@ -217,6 +234,7 @@ def _run_session(ctx, g, fc, until, what):
         return c
     finally:
         g.command("M9")
+        _session_ended(ctx, fc, what)
 
 
 def _tail_has(fc, needle):
@@ -256,10 +274,10 @@ def gate_off(ctx):
     ctx.check(isinstance(top, (int, float)) and isinstance(bottom, (int, float)), "no range in the reply: %s", g_default)
 
     restored = False
-    try:
-        with ctx.grbl() as grbl:
-            st = grbl.status_report()
-            ctx.check(st["state"].startswith("Idle"), "controller is %s", st["state"])
+    with ctx.grbl() as grbl:
+        st = grbl.status_report()
+        ctx.check(st["state"].startswith("Idle"), "controller is %s", st["state"])
+        try:
 
             # Leg 1: a ceiling the coolant is already over. Legal, outside
             # the band (warned), and it must trip at the next run start.
@@ -301,10 +319,20 @@ def gate_off(ctx):
             ctx.check(c.get("verdict") == "OK" and c.get("gates_off") == [],
                       "engine did not return to OK with no gate off after the restore: %s", c)
             ctx.log("restored ceiling %s reports state %s", val, state)
-    finally:
-        if not restored:
-            st, body = fc.post("/settings", params=orig)
-            ctx.log("restore on failure: POST /settings %s -> %s", orig, st)
+        finally:
+            if not restored:
+                # The engine reads settings at run start only: restoring
+                # the file is not enough, a hold taken against the test's
+                # ceiling would stand until the operator's next job.
+                st, body = fc.post("/settings", params=orig)
+                ctx.log("restore on failure: POST /settings %s -> %s", orig, st)
+                try:
+                    c = _run_session(ctx, grbl, fc,
+                                     lambda c: c.get("verdict") == "OK" and not c.get("gates_off"),
+                                     "restore on failure")
+                    ctx.log("restore on failure: engine %s gates_off %s", c.get("verdict"), c.get("gates_off"))
+                except Exception as e:      # the original failure is the one to report
+                    ctx.log("restore on failure: run session did not complete (%s)", e)
     after = fc.settings()
     ctx.check(all(after.get(k, "") == orig[k] for k in GATE_KEYS),
               "settings not restored: %s", {k: after.get(k) for k in GATE_KEYS})

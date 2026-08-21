@@ -224,8 +224,9 @@ class GateOffTests(unittest.TestCase):
     def setUp(self):
         self.fc = helpers.FakeForgectrl().start()
         self.grbl = FakeGrbl()
-        self.saved = cooling.VERDICT_WAIT_S
+        self.saved = (cooling.VERDICT_WAIT_S, cooling.SESSION_END_WAIT_S)
         cooling.VERDICT_WAIT_S = 3
+        cooling.SESSION_END_WAIT_S = 3
         self.fc.state["status"] = dict(self.fc.state["status"],
                                        coolant={"down_c": 22.4, "up_c": 22.3, "pump": True, "tec": False},
                                        gates_off=[])
@@ -235,12 +236,13 @@ class GateOffTests(unittest.TestCase):
         self.log_line = True        # the engine writes its run-start line
         self.report_off = True      # the engine reports the off gate
         self.trips = True           # the engine trips a low ceiling
+        self.sessions = 0           # run sessions the engine saw (M8 with the phase not run)
         self._describe()
         self.grbl.on_command = self._engine
         self.fc.on_post = self._on_post
 
     def tearDown(self):
-        cooling.VERDICT_WAIT_S = self.saved
+        cooling.VERDICT_WAIT_S, cooling.SESSION_END_WAIT_S = self.saved
         self.grbl.close()
         self.fc.stop()
 
@@ -267,11 +269,25 @@ class GateOffTests(unittest.TestCase):
         return (200, self.fc.state["settings"])
 
     def _engine(self, line):
+        """M8 opens a run session: the engine re-reads the ceiling and
+        ticks the gate. M9 ends it a report period later (the phase
+        leaves run); a hold taken against the old ceiling stands until
+        the next session re-reads."""
         self._describe()
+        cool = self.fc.state["cool"]
+        if line == "M9":
+            def end():
+                time.sleep(0.3)
+                cool["phase"] = "smoke"
+                time.sleep(0.2)
+                cool["phase"] = "idle"
+            threading.Thread(target=end, daemon=True).start()
+            return
         if line != "M8":
             return
+        self.sessions += 1
+        cool["phase"] = "run"
         v = self.ceiling()
-        cool = self.fc.state["cool"]
         off = v >= self.TOP
         if off and self.log_line:
             self.fc.state["logs_tail"]["text"] += (
@@ -314,6 +330,28 @@ class GateOffTests(unittest.TestCase):
         self.assertIn("did not trip", str(cm.exception))
         self.assertEqual(self.settings_posts()[-1], {"cool_temp_max": "", "cool_temp_resume": ""})
         self.assertEqual(self.fc.state["settings"]["cool_temp_max"], "")
+        # The restore cycles a run session so the engine re-reads the
+        # restored values; the bench is not left holding on the test's.
+        self.assertEqual(self.grbl.commands.count("M8"), 2)
+        self.assertEqual(self.grbl.commands.count("M9"), 2)
+        self.assertEqual(self.fc.state["cool"]["verdict"], "OK")
+
+    def test_every_session_waits_for_the_previous_one_to_end(self):
+        """Each M8 must find the engine out of phase run, or the engine
+        never re-reads: the bench failure behind this case sent M9 and
+        the next M8 300 ms apart and the 1 Hz report pipeline swallowed
+        the session end."""
+        seen = []
+        inner = self._engine
+
+        def engine(line):
+            if line == "M8":
+                seen.append(self.fc.state["cool"]["phase"])
+            inner(line)
+        self.grbl.on_command = engine
+        self.run_test()
+        self.assertEqual(seen, ["idle", "idle", "idle"])
+        self.assertEqual(self.sessions, 3)
 
     def test_an_engine_that_hides_the_off_gate_fails(self):
         self.report_off = False
