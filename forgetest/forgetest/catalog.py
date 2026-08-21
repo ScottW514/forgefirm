@@ -39,6 +39,7 @@ class Test:
         self.description = description or (fn.__doc__ or "").strip()
         self.fn = fn
         self._source_sha = None
+        self._fp = (None, None)   # (manifest content sha, fingerprint)
 
     @property
     def source_sha(self):
@@ -51,7 +52,17 @@ class Test:
         return self._source_sha
 
     def fingerprint(self, manifest):
-        return _manifest.fingerprint(manifest, self.covers, extra=[self.source_sha])
+        """The domain fingerprint on this manifest, memoized by the
+        manifest's content hash: the page recomputes every test's
+        fingerprint on every poll, and a manifest never changes under a
+        running tool."""
+        key = manifest.content_sha
+        if key and self._fp[0] == key:
+            return self._fp[1]
+        fp = _manifest.fingerprint(manifest, self.covers, extra=[self.source_sha])
+        if key:
+            self._fp = (key, fp)
+        return fp
 
     def definition(self):
         """The gate-visible definition (no implementation, no prose)."""

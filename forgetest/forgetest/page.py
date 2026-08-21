@@ -1,8 +1,16 @@
 """The single page: acceptance tab + bench tab. Self-contained (inline
 CSS/JS, ES5, no external assets); the visual identity follows the
-forgectrl control panel. State comes from GET /state on a 2 s poll; the
-catalog and the bench listing are fetched once per tab and refreshed
-after a run finishes."""
+forgectrl control panel. State comes from GET /state, polled every 2 s
+when the machine is idle and every second during a run; the catalog and
+the bench listing are fetched once per tab and refreshed after a run
+finishes.
+
+Rows, prompt buttons and tool entries are built once and thereafter only
+updated in place. A poll that rebuilt them would swallow the click it
+landed on: the button that took the mousedown would be gone before the
+mouseup, so no click event would ever be raised. Every action also greys
+its control out on the press and pulls the next poll forward, so the page
+answers the operator rather than the timer."""
 
 _HTML = r"""<!DOCTYPE html><html><head><meta charset='utf-8'>
 <meta name='viewport' content='width=device-width,initial-scale=1'>
@@ -81,7 +89,7 @@ pre#log{background:#1d1e26;color:#d7dae0;font-family:ui-monospace,Consolas,monos
     <div class='kv' id='banner'></div></div>
    <div id='invnote'></div><div id='msgs'></div>
    <div class='actions' style='margin-top:10px'>
-    <button class='pri' onclick='doExport()'>Export release artifact</button>
+    <button class='pri' id='exportbtn' onclick='doExport()'>Export release artifact</button>
     <a id='dljson' href='/export/acceptance.json' style='display:none'><button>acceptance.json</button></a>
     <a id='dlmd' href='/export/acceptance.md' style='display:none'><button>acceptance.md</button></a>
     <a href='/log'><button>Raw log</button></a>
@@ -120,107 +128,208 @@ pre#log{background:#1d1e26;color:#d7dae0;font-family:ui-monospace,Consolas,monos
 <script>
 var TOKEN='__TOKEN__';
 var state=null, catalog=null, catalogHash=null, bench=null, tab='acceptance', openDetails={};
-var lastRunKey=null;
+var lastRunKey=null, stateEtag=null, curPrompt=null, promptKey=null, abortSent=false;
+var pollTimer=null, polling=false, pending=0, pendingId=null, rowMsg={};
+var rowEls=null, groupsKey=null, benchEls=null, benchKey=null, benchNeedsRefresh=false;
+var PENDING_MS=6000;
+/* A poll that never answers must not wedge the loop: it times out
+   and the next one is scheduled as usual. Actions carry no timeout,
+   because a POST the server did act on must not read as a failure. */
+var POLL_TIMEOUT_MS=20000;
 var ignoreReq=false;try{ignoreReq=window.localStorage.getItem('forgetest.ignoreReq')==='1'}catch(e){}
 function $(id){return document.getElementById(id)}
-function setIgnoreReq(on){ignoreReq=!!on;try{window.localStorage.setItem('forgetest.ignoreReq',ignoreReq?'1':'0')}catch(e){}
- $('ignreq').checked=ignoreReq;$('ignreqon').innerHTML=ignoreReq?"<span class='on'>ON - prerequisites are not enforced</span>":'';if(state&&catalog)renderGroups()}
+function nowMs(){return (new Date()).getTime()}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
-function api(method,path,body,cb){var x=new XMLHttpRequest();x.open(method,path,true);x.setRequestHeader('X-ForgeFIRM-Token',TOKEN);
+/* Touch the DOM only where the value really changed. Replacing a node
+   under the operator's finger loses the click: the button that took the
+   mousedown is gone before the mouseup, so no click event is ever
+   raised, and the press does nothing. Nothing on a poll may rebuild a
+   control that is only sitting there unchanged. */
+function setHtml(e,h){if(e&&e.__h!==h){e.__h=h;e.innerHTML=h}}
+function setText(e,t){if(e&&e.__t!==t){e.__t=t;e.textContent=t}}
+function setDis(e,d){if(e&&e.disabled!==d)e.disabled=d}
+function setProp(e,k,v){if(e&&e[k]!==v)e[k]=v}
+function api(method,path,body,cb,hdrs,timeoutMs){var x=new XMLHttpRequest();x.open(method,path,true);
+ if(timeoutMs)x.timeout=timeoutMs;
+ x.setRequestHeader('X-ForgeFIRM-Token',TOKEN);
+ if(hdrs){for(var k in hdrs){if(hdrs.hasOwnProperty(k))x.setRequestHeader(k,hdrs[k])}}
  if(body!==undefined&&body!==null){x.setRequestHeader('Content-Type','application/json')}
- x.onreadystatechange=function(){if(x.readyState!==4)return;var d=null;try{d=JSON.parse(x.responseText)}catch(e){d={error:x.responseText}}cb(x.status,d)};
+ x.onreadystatechange=function(){if(x.readyState!==4)return;var d=null;try{d=JSON.parse(x.responseText)}catch(e){d={error:x.responseText}}cb(x.status,d,x)};
  x.send(body===undefined||body===null?null:JSON.stringify(body))}
+/* The state poll. It carries the last ETag, so an unchanged state costs
+   a 304 and no re-render; a run gets a faster tick, and every action
+   pulls the next poll forward instead of waiting out the interval. */
+function pollDelay(){return (state&&state.running)?1000:2000}
+function schedule(ms){if(pollTimer)window.clearTimeout(pollTimer);pollTimer=window.setTimeout(poll,ms)}
+function kick(){schedule(120)}
+function poll(){if(polling){schedule(150);return}polling=true;
+ /* While an action is still in flight the state is asked for in full:
+    a 304 would skip the render that releases the greyed-out buttons. */
+ var h=(stateEtag&&!pending)?{'If-None-Match':stateEtag}:null;
+ api('GET','/state',null,function(s,d,x){polling=false;
+  if(s===200){stateEtag=x.getResponseHeader('ETag');state=d;
+   if(!catalog||catalogHash!==d.catalog_hash){loadCatalog(render)}else{render()}}
+  schedule(pollDelay())},h,POLL_TIMEOUT_MS)}
 function showTab(t){tab=t;$('tab-acceptance').className=t==='acceptance'?'on':'';$('tab-bench').className=t==='bench'?'on':'';
  $('pane-acceptance').style.display=t==='acceptance'?'':'none';$('pane-bench').style.display=t==='bench'?'':'none';
  if(t==='bench'&&!bench)loadBench()}
-function setMsg(id,txt,err){var e=$(id);e.innerHTML=txt?"<div class='"+(err?'err':'msg')+"'>"+esc(txt)+"</div>":''}
+function setMsg(id,txt,err){setHtml($(id),txt?"<div class='"+(err?'err':'msg')+"'>"+esc(txt)+"</div>":'')}
 function loadCatalog(cb){api('GET','/catalog',null,function(s,d){if(s===200){catalog=d.tests;catalogHash=d.catalog_hash;if(cb)cb()}})}
-function loadBench(){api('GET','/bench',null,function(s,d){if(s===200){bench=d;renderBench()}})}
-function poll(){api('GET','/state',null,function(s,d){if(s===200){state=d;if(!catalog||catalogHash!==d.catalog_hash){loadCatalog(render)}else{render()}}
- setTimeout(poll,2000)})}
+function loadBench(){api('GET','/bench',null,function(s,d){if(s===200){bench=d;benchKey=null;renderBench()}})}
+function setIgnoreReq(on){ignoreReq=!!on;try{window.localStorage.setItem('forgetest.ignoreReq',ignoreReq?'1':'0')}catch(e){}
+ $('ignreq').checked=ignoreReq;setHtml($('ignreqon'),ignoreReq?"<span class='on'>ON - prerequisites are not enforced</span>":'');
+ if(state&&catalog)renderGroups()}
+/* A start already sent but not yet seen in the state counts as busy, so
+   the buttons grey out on the click rather than on the next poll. The
+   window is capped in case the answer never arrives. */
+function isBusy(){if(state&&state.running)return true;
+ return !!(pending&&(nowMs()-pending)<PENDING_MS)}
 function fmtTs(t){return t?t.replace('T',' ').replace('Z',' UTC'):'-'}
 function render(){if(!state||!catalog)return;
- var m=state.manifest||{};$('hdrver').textContent=(m.version||'?');$('hdrsub').textContent=m.image||'';
- var a=$('auth');a.textContent='Release authorized: '+(state.authorized?'YES':'NO');a.className='auth'+(state.authorized?' yes':'');
+ if(state.running){pending=0;pendingId=null}
+ var m=state.manifest||{};setText($('hdrver'),(m.version||'?'));setText($('hdrsub'),m.image||'');
+ var a=$('auth');setText(a,'Release authorized: '+(state.authorized?'YES':'NO'));setProp(a,'className','auth'+(state.authorized?' yes':''));
  var c=state.campaign,cn=state.counts||{};var b='';
  b+='<b>'+cn.satisfied+'</b> of <b>'+cn.total+'</b> satisfied ('+cn.inherited+' inherited), <b>'+cn.required+'</b> required<br>';
  b+=c?('campaign <span class="mono">'+esc(c.id)+'</span> opened '+esc(fmtTs(c.ts))):('no open campaign'+(state.closed_by?(' (last one closed by '+esc(state.closed_by)+')'):'')+' - the first Start opens one');
  b+='<br>manifest identity <span class="mono">'+esc((m.sha||'').slice(0,16))+'</span> &middot; catalog <span class="mono">'+esc((state.catalog_hash||'').slice(0,12))+'</span>';
  if(state.log_corrupt)b+='<br><span style="color:var(--red)">'+state.log_corrupt+' corrupt log line(s) skipped</span>';
- $('banner').innerHTML=b;
- var inv=state.invalidate;$('invnote').innerHTML=inv?"<div class='note'>Full campaign required since "+esc(fmtTs(inv.ts))+": "+esc(inv.reason)+"</div>":'';
- var ms='';(state.messages||[]).forEach(function(x){ms+="<div class='note'>"+esc(x)+"</div>"});$('msgs').innerHTML=ms;
- renderGroups();renderRun()}
-function renderGroups(){var groups={},order=[];catalog.forEach(function(t){if(!groups[t.subsystem]){groups[t.subsystem]=[];order.push(t.subsystem)}groups[t.subsystem].push(t)});
- var busy=!!state.running;var h='';
+ setHtml($('banner'),b);
+ var inv=state.invalidate;setHtml($('invnote'),inv?"<div class='note'>Full campaign required since "+esc(fmtTs(inv.ts))+": "+esc(inv.reason)+"</div>":'');
+ var ms='';(state.messages||[]).forEach(function(x){ms+="<div class='note'>"+esc(x)+"</div>"});setHtml($('msgs'),ms);
+ renderGroups();renderRun();if(bench)renderBench()}
+/* The rows are built once for a given catalog and then only updated in
+   place: a poll never rewrites the table, so a Start button survives the
+   press that is landing on it. */
+function renderGroups(){var ids=[];catalog.forEach(function(t){ids.push(t.id)});
+ var sig=catalogHash+'|'+ids.join(',');
+ if(sig!==groupsKey){groupsKey=sig;buildGroups()}
+ updateGroups()}
+function buildGroups(){var groups={},order=[];
+ catalog.forEach(function(t){if(!groups[t.subsystem]){groups[t.subsystem]=[];order.push(t.subsystem)}groups[t.subsystem].push(t)});
+ var h='';
  order.forEach(function(g){h+="<div class='card grp'><h2>"+esc(g)+"</h2><table><tr><th>Test</th><th>Kind</th><th>Status</th><th>Last result</th><th></th></tr>";
-  groups[g].forEach(function(t){var s=state.tests[t.id]||{};var badges='';
+  groups[g].forEach(function(t){var d=esc(t.id);var badges='';
    if(t.always)badges+="<span class='badge core'>core</span>";badges+="<span class='badge "+esc(t.kind)+"'>"+esc(t.kind)+"</span>";
    if(t.hardware==='takeover')badges+="<span class='badge takeover'>takeover</span>";
-   var st="<span class='st "+esc(s.status)+"'>"+esc(s.status||'none')+"</span>";
-   if(s.required&&s.status!=='running')st+="<br><span class='req'>required: "+esc(s.reason)+"</span>";
-   var last=s.last?(esc(s.last.result)+' '+esc(fmtTs(s.last.ts))):'-';
-   if(s.status==='inherited'&&s.origin)last+="<br><span class='tid'>from "+esc(s.origin.campaign)+" on "+esc(s.origin.image)+"</span>";
-   var unmet=s.requires_met===false;var canStart=!busy&&(!unmet||ignoreReq);
-   var why=busy?'a run is in progress':(unmet?((ignoreReq?'prerequisites overridden - needs: ':'needs: ')+(s.missing_requires||[]).join(', ')):'');
-   var startBtn="<button class='pri' "+(canStart?'':'disabled')+" title='"+esc(why)+"' onclick='startTest(\""+esc(t.id)+"\")'>Start</button>";
-   if(unmet)startBtn+="<div class='req"+(ignoreReq?' over':'')+"'>"+(ignoreReq?'unmet: ':'needs: ')+esc((s.missing_requires||[]).join(', '))+"</div>";
-   var det="<div class='details"+(openDetails[t.id]?' on':'')+"' id='det-"+esc(t.id)+"'>"+esc(t.description||'')+
+   var det="<div class='details"+(openDetails[t.id]?' on':'')+"' id='det-"+d+"'>"+esc(t.description||'')+
      (t.steps&&t.steps.length?"<br><b>Operator steps:</b><ol>"+t.steps.map(function(x){return '<li>'+esc(x)+'</li>'}).join('')+"</ol>":'')+
      "<b>Requires:</b> "+esc((t.requires||[]).join(', ')||'-')+"<br><b>Covers:</b> "+esc((t.covers||[]).map(function(c){return c[0]+':'+c[1]}).join(', ')||'-')+
-     "<br><b>Fingerprint:</b> <span class='mono'>"+esc((s.fingerprint||'').slice(0,16))+"</span> &middot; est. "+esc(t.est_min)+" min"+
-     (s.last?"<br><a href='/result?test="+encodeURIComponent(t.id)+"&ts="+encodeURIComponent(s.last.ts)+"'>last result record</a>":'')+"</div>";
-   h+="<tr><td><div>"+esc(t.title)+"</div><div class='tid'>"+esc(t.id)+" <a href='#' onclick='toggleDet(\""+esc(t.id)+"\");return false'>details</a></div>"+det+"</td><td>"+badges+"</td><td>"+st+"</td><td>"+last+"</td><td>"+startBtn+"</td></tr>"});
+     "<br><span id='detdyn-"+d+"'></span></div>";
+   h+="<tr><td><div>"+esc(t.title)+"</div><div class='tid'>"+d+" <a href='#' onclick='toggleDet(\""+d+"\");return false'>details</a></div>"+det+
+     "</td><td>"+badges+"</td><td id='st-"+d+"'></td><td id='last-"+d+"'></td>"+
+     "<td><button class='pri' id='btn-"+d+"' onclick='startTest(\""+d+"\")'>Start</button>"+
+     "<div id='unmet-"+d+"'></div><div id='note-"+d+"'></div></td></tr>"});
   h+="</table></div>"});
- $('groups').innerHTML=h}
+ $('groups').innerHTML=h;rowEls={};
+ catalog.forEach(function(t){rowEls[t.id]={st:$('st-'+t.id),last:$('last-'+t.id),btn:$('btn-'+t.id),
+  unmet:$('unmet-'+t.id),note:$('note-'+t.id),detdyn:$('detdyn-'+t.id)}})}
+function updateGroups(){if(!rowEls||!state)return;var busy=isBusy();
+ catalog.forEach(function(t){var e=rowEls[t.id];if(!e)return;var s=state.tests[t.id]||{};
+  var st;
+  if(pendingId===t.id&&isBusy()&&!state.running){st="<span class='st running'>starting&hellip;</span>"}
+  else{st="<span class='st "+esc(s.status)+"'>"+esc(s.status||'none')+"</span>";
+   if(s.required&&s.status!=='running')st+="<br><span class='req'>required: "+esc(s.reason)+"</span>"}
+  setHtml(e.st,st);
+  var last=s.last?(esc(s.last.result)+' '+esc(fmtTs(s.last.ts))):'-';
+  if(s.status==='inherited'&&s.origin)last+="<br><span class='tid'>from "+esc(s.origin.campaign)+" on "+esc(s.origin.image)+"</span>";
+  setHtml(e.last,last);
+  var unmet=s.requires_met===false;var can=!busy&&(!unmet||ignoreReq);
+  setDis(e.btn,!can);
+  setProp(e.btn,'title',busy?'a run is in progress':(unmet?((ignoreReq?'prerequisites overridden - needs: ':'needs: ')+(s.missing_requires||[]).join(', ')):''));
+  setProp(e.unmet,'className','req'+(ignoreReq?' over':''));
+  setHtml(e.unmet,unmet?((ignoreReq?'unmet: ':'needs: ')+esc((s.missing_requires||[]).join(', '))):'');
+  setHtml(e.note,rowMsg[t.id]?"<div class='err'>"+esc(rowMsg[t.id])+"</div>":'');
+  setHtml(e.detdyn,"<b>Fingerprint:</b> <span class='mono'>"+esc((s.fingerprint||'').slice(0,16))+"</span> &middot; est. "+esc(t.est_min)+" min"+
+   (s.last?"<br><a href='/result?test="+encodeURIComponent(t.id)+"&ts="+encodeURIComponent(s.last.ts)+"'>last result record</a>":''))})}
 function toggleDet(id){openDetails[id]=!openDetails[id];var e=$('det-'+id);if(e)e.className='details'+(openDetails[id]?' on':'')}
 function renderRun(){var r=state.running||state.last_run;var key=r?(r.kind+':'+r.id+':'+r.started):null;
- if(!r){$('runhead').textContent='idle';$('log').textContent='';$('prompt').style.display='none';$('abortbtn').disabled=true;$('runtitle').textContent='Run';return}
- $('runtitle').textContent=(r.kind==='bench'?'Bench: ':'Test: ')+r.title;
- var hd=r.id+' &middot; started '+esc(fmtTs(r.started))+' &middot; '+r.elapsed_s+' s';
+ if(key!==lastRunKey)abortSent=false;
+ if(!r){setText($('runhead'),'idle');setText($('log'),'');$('prompt').style.display='none';
+  curPrompt=null;promptKey=null;setDis($('abortbtn'),true);setText($('runtitle'),'Run');lastRunKey=null;return}
+ setText($('runtitle'),(r.kind==='bench'?'Bench: ':'Test: ')+r.title);
+ var hd=esc(r.id)+' &middot; started '+esc(fmtTs(r.started))+' &middot; '+r.elapsed_s+' s';
  if(r.finished){hd+=' &middot; <b class="st '+(r.finished.result==='PASS'||r.finished.result==='OK'?'pass':'fail')+'">'+esc(r.finished.result)+'</b>'+(r.finished.message?' - '+esc(r.finished.message):'')}
  else if(r.aborting){hd+=' &middot; <b class="st stale">aborting</b>'}
- $('runhead').innerHTML=hd;
- var lg=$('log');var atBottom=lg.scrollTop+lg.clientHeight>=lg.scrollHeight-20;lg.textContent=(r.dropped?('... '+r.dropped+' earlier lines dropped\n'):'')+r.log.join('\n');
- if(atBottom||key!==lastRunKey)lg.scrollTop=lg.scrollHeight;lastRunKey=key;
- if(r.prompt&&!r.finished){$('prompt').style.display='';$('promptq').textContent=r.prompt.question;var pb='';
-  r.prompt.options.forEach(function(o){pb+="<button class='pri' onclick='answer(\""+esc(r.prompt.id)+"\",\""+esc(o)+"\")'>"+esc(o)+"</button>"});$('promptb').innerHTML=pb}
- else{$('prompt').style.display='none'}
- $('abortbtn').disabled=!!r.finished;
+ setHtml($('runhead'),hd);
+ var lg=$('log');var txt=(r.dropped?('... '+r.dropped+' earlier lines dropped\n'):'')+r.log.join('\n');
+ if(lg.__t!==txt){var atBottom=lg.scrollTop+lg.clientHeight>=lg.scrollHeight-20;
+  lg.__t=txt;lg.textContent=txt;if(atBottom||key!==lastRunKey)lg.scrollTop=lg.scrollHeight}
+ lastRunKey=key;
+ /* The prompt buttons are rebuilt only when the prompt itself changes -
+    they are the ones the operator stares at before pressing. */
+ if(r.prompt&&!r.finished){var pk=r.prompt.id+'|'+r.prompt.question+'|'+r.prompt.options.length+':'+r.prompt.options.join(',');
+  if(pk!==promptKey){promptKey=pk;curPrompt=r.prompt;
+   $('promptq').textContent=r.prompt.question;var pb='';
+   r.prompt.options.forEach(function(o,i){pb+="<button class='pri' onclick='answerIdx("+i+")'>"+esc(o)+"</button>"});
+   $('promptb').innerHTML=pb;$('promptb').__h=pb;$('prompt').style.display=''}}
+ else if(promptKey!==null){promptKey=null;curPrompt=null;$('prompt').style.display='none'}
+ setDis($('abortbtn'),!!r.finished||abortSent||!!r.aborting);
  if(r.finished&&tab==='bench'&&r.kind==='bench'&&benchNeedsRefresh){benchNeedsRefresh=false;loadBench()}}
-var benchNeedsRefresh=false;
 function findTest(id){for(var i=0;i<catalog.length;i++)if(catalog[i].id===id)return catalog[i];return null}
-function startTest(id){var t=findTest(id);var body={test:id};
+function startTest(id){if(isBusy())return;var t=findTest(id);var body={test:id};
  if(ignoreReq)body.ignore_requires=true;
  if(t&&t.kind==='live'){if(!confirmLive())return;body.ack_live=true}
- api('POST','/start',body,function(s,d){setMsg('actmsg',d.message||d.error,s!==200)})}
+ pending=nowMs();pendingId=id;rowMsg={};updateGroups();
+ setMsg('actmsg','starting '+id+'...');
+ api('POST','/start',body,function(s,d){
+  if(s!==200){pending=0;pendingId=null;rowMsg[id]=d.message||d.error;updateGroups()}
+  setMsg('actmsg',d.message||d.error,s!==200);kick()})}
 function confirmLive(){return window.confirm('LIVE LASER TEST.\n\nConfirm before starting:\n - eye protection on, everyone in the room\n - fire watch present, extinguisher at hand\n - exhaust running, lid closed, scrap in place\n - you will press the physical button to arm when prompted\n\nStart the test?')}
-function answer(pid,v){api('POST','/answer',{prompt_id:pid,value:v},function(s,d){if(s!==200)setMsg('actmsg',d.message||d.error,true)})}
-function doAbort(){api('POST','/abort',{},function(s,d){setMsg('actmsg',d.message||d.error,s!==200)})}
-function doExport(){api('POST','/export',{},function(s,d){if(s===200){setMsg('actmsg','exported: authorized='+d.authorized+', sha256 '+d.sha256.slice(0,16)+' - download below');$('dljson').style.display='';$('dlmd').style.display=''}else setMsg('actmsg',d.message||d.error,true)})}
+function promptBusy(on){var b=$('promptb').getElementsByTagName('button');for(var i=0;i<b.length;i++)setDis(b[i],on)}
+function answerIdx(i){if(!curPrompt)return;var p=curPrompt,v=p.options[i];
+ promptBusy(true);setMsg('actmsg','answer sent: '+v);
+ api('POST','/answer',{prompt_id:p.id,value:v},function(s,d){
+  if(s!==200){promptBusy(false);setMsg('actmsg',d.message||d.error,true)}kick()})}
+function doAbort(){var b=$('abortbtn');if(b.disabled)return;abortSent=true;setDis(b,true);
+ setMsg('actmsg','aborting...');
+ api('POST','/abort',{},function(s,d){if(s!==200)abortSent=false;setMsg('actmsg',d.message||d.error,s!==200);kick()})}
+function doExport(){var b=$('exportbtn');if(b.disabled)return;setDis(b,true);setMsg('actmsg','exporting...');
+ api('POST','/export',{},function(s,d){setDis(b,false);
+  if(s===200){setMsg('actmsg','exported: authorized='+d.authorized+', sha256 '+d.sha256.slice(0,16)+' - download below');$('dljson').style.display='';$('dlmd').style.display=''}
+  else setMsg('actmsg',d.message||d.error,true)})}
 function toggleInv(){var f=$('invform');f.style.display=f.style.display==='none'?'':'none'}
 function doInvalidate(){var r=$('invreason').value;if(!r){setMsg('actmsg','a reason is required',true);return}
- api('POST','/invalidate',{reason:r},function(s,d){setMsg('actmsg',d.message||d.error,s!==200);if(s===200){$('invform').style.display='none';$('invreason').value=''}})}
-function doReset(){api('POST','/reset',{reason:'operator reset from the page'},function(s,d){setMsg('actmsg',d.message||d.error,s!==200)})}
-function renderBench(){if(!bench)return;var busy=!!(state&&state.running);var groups={dry:[],takeover:[],live:[],scope:[]};
+ api('POST','/invalidate',{reason:r},function(s,d){setMsg('actmsg',d.message||d.error,s!==200);
+  if(s===200){$('invform').style.display='none';$('invreason').value=''}kick()})}
+function doReset(){api('POST','/reset',{reason:'operator reset from the page'},function(s,d){setMsg('actmsg',d.message||d.error,s!==200);kick()})}
+/* Same rule as the acceptance rows: the tool list is built once and then
+   only updated, so a run starting never rewrites the arg fields the
+   operator has typed into or the button being pressed. */
+function renderBench(){if(!bench)return;var ids=[];
+ bench.tools.forEach(function(t){ids.push(t.id+':'+(t.ported?1:0)+(t.installed?1:0))});
+ var sig=ids.join(',');
+ if(sig!==benchKey){benchKey=sig;buildBench()}
+ updateBench()}
+function buildBench(){var groups={dry:[],takeover:[],live:[],scope:[]};
  bench.tools.forEach(function(t){(groups[t.safety]||(groups[t.safety]=[])).push(t)});var h='';
  ['dry','takeover','scope','live'].forEach(function(g){if(!groups[g]||!groups[g].length)return;
   h+="<div class='card grp'><h2>"+esc(g)+"</h2>";
-  groups[g].forEach(function(t){var can=t.ported&&t.installed&&!busy;var why=!t.ported?'not yet ported to the bench page':(!t.installed?'script not installed on this image':(busy?'a run is in progress':''));
+  groups[g].forEach(function(t){var d=esc(t.id);
    h+="<div class='tool' style='border-bottom:1px solid var(--line);padding:8px 0'><div><b>"+esc(t.title)+"</b> <span class='tid'>"+esc(t.script)+"</span> <span class='badge'>"+esc(t.where)+"</span>"+(t.ported?'':"<span class='badge'>unported</span>")+"</div>";
    h+="<div class='hint' style='margin:2px 0 4px'>"+esc(t.desc)+"</div>";
    if(t.args&&t.args.length){h+="<div class='argrow'>";t.args.forEach(function(a){var iid='arg-'+t.id+'-'+a.name;
      if(a.type==='choice'){h+="<label>"+esc(a.name)+" <select id='"+iid+"'>"+a.choices.map(function(c){return "<option"+(c===a.default?' selected':'')+">"+esc(c)+"</option>"}).join('')+"</select></label>"}
      else{h+="<label>"+esc(a.name)+" <input type='"+(a.type==='str'?'text':'number')+"' step='any' id='"+iid+"' value='"+esc(a.default==null?'':a.default)+"' title='"+esc(a.help)+"' style='width:90px'></label>"}});h+="</div>"}
-   h+="<div class='actions'><button class='pri' "+(can?'':'disabled')+" title='"+esc(why)+"' onclick='startTool(\""+esc(t.id)+"\")'>Start</button>";
-   if(t.last)h+="<span class='hint'>last: "+esc(t.last.result?t.last.result.result:'?')+" "+esc(fmtTs(t.last.ts))+"</span>";
-   h+="</div></div>"});
+   h+="<div class='actions'><button class='pri' id='tbtn-"+d+"' onclick='startTool(\""+d+"\")'>Start</button>";
+   h+="<span class='hint' id='tlast-"+d+"'></span></div></div>"});
   h+="</div>"});
- $('tools').innerHTML=h}
-function startTool(id){var t=null;bench.tools.forEach(function(x){if(x.id===id)t=x});if(!t)return;var args={};
+ $('tools').innerHTML=h;benchEls={};
+ bench.tools.forEach(function(t){benchEls[t.id]={btn:$('tbtn-'+t.id),last:$('tlast-'+t.id)}})}
+function updateBench(){if(!benchEls)return;var busy=isBusy();
+ bench.tools.forEach(function(t){var e=benchEls[t.id];if(!e)return;
+  var can=t.ported&&t.installed&&!busy;
+  setDis(e.btn,!can);
+  setProp(e.btn,'title',!t.ported?'not yet ported to the bench page':(!t.installed?'script not installed on this image':(busy?'a run is in progress':'')));
+  setHtml(e.last,t.last?("last: "+esc(t.last.result?t.last.result.result:'?')+" "+esc(fmtTs(t.last.ts))):'')})}
+function startTool(id){if(isBusy())return;var t=null;bench.tools.forEach(function(x){if(x.id===id)t=x});if(!t)return;var args={};
  (t.args||[]).forEach(function(a){var e=$('arg-'+id+'-'+a.name);if(e)args[a.name]=e.value});
  var body={tool:id,args:args};if(t.safety==='live'){if(!confirmLive())return;body.ack_live=true}
- api('POST','/bench/start',body,function(s,d){setMsg('benchmsg',d.message||d.error,s!==200);if(s===200)benchNeedsRefresh=true})}
+ pending=nowMs();pendingId=null;updateBench();updateGroups();
+ setMsg('benchmsg','starting '+id+'...');
+ api('POST','/bench/start',body,function(s,d){
+  if(s!==200){pending=0;updateBench();updateGroups()}
+  setMsg('benchmsg',d.message||d.error,s!==200);if(s===200)benchNeedsRefresh=true;kick()})}
 setIgnoreReq(ignoreReq);
 poll();
 </script></body></html>

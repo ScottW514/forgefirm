@@ -13,6 +13,11 @@ One JSON object per line under the data directory (default
 Every record carries "t" (type) and "ts" (UTC, ISO 8601, seconds).
 The file is only ever appended; a corrupt line is skipped, counted, and
 reported, never repaired in place.
+
+Because the file only grows, `read` parses each line once and keeps what
+it parsed; a later call reads only the bytes appended since. A result
+record carries the whole run log, so the file reaches megabytes over a
+campaign, and the page asks for the state every second or two.
 """
 import json
 import os
@@ -35,6 +40,9 @@ class Log:
         self.path = path or os.path.join(data_dir(), "results.jsonl")
         self._lock = threading.Lock()
         self.corrupt = 0
+        self._recs = []       # every record parsed so far, in file order
+        self._offset = 0      # bytes of the file already consumed
+        self._tail = b""      # bytes past the last newline: not a record yet
 
     def append(self, rec):
         rec = dict(rec)
@@ -48,28 +56,54 @@ class Log:
                 os.fsync(f.fileno())
         return rec
 
-    def read(self):
-        recs = []
+    def _forget(self):
+        """Drop what was parsed: the next read starts from the top."""
+        self._recs = []
+        self._offset = 0
+        self._tail = b""
         self.corrupt = 0
-        if not os.path.exists(self.path):
-            return recs
-        with self._lock:
-            with open(self.path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-        for line in lines:
+
+    def _consume(self, chunk):
+        """Parse the whole lines in `chunk`, holding back a partial tail."""
+        data = self._tail + chunk
+        cut = data.rfind(b"\n")
+        if cut < 0:
+            self._tail = data
+            return
+        self._tail = data[cut + 1:]
+        for line in data[:cut].split(b"\n"):
             line = line.strip()
             if not line:
                 continue
             try:
-                rec = json.loads(line)
-            except ValueError:
+                rec = json.loads(line.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
                 self.corrupt += 1
                 continue
             if isinstance(rec, dict) and "t" in rec:
-                recs.append(rec)
+                self._recs.append(rec)
             else:
                 self.corrupt += 1
-        return recs
+
+    def read(self):
+        """Every record, in file order. Only the bytes appended since the
+        last call are parsed; a file that shrank or was replaced is read
+        again from the top."""
+        with self._lock:
+            try:
+                size = os.path.getsize(self.path)
+            except OSError:
+                self._forget()
+                return []
+            if size < self._offset:
+                self._forget()
+            if size != self._offset:
+                with open(self.path, "rb") as f:
+                    f.seek(self._offset)
+                    chunk = f.read()
+                self._offset += len(chunk)
+                self._consume(chunk)
+            return list(self._recs)
 
     def raw(self):
         if not os.path.exists(self.path):

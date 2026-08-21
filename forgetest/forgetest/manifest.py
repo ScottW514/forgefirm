@@ -10,6 +10,7 @@ plus the test's own implementation. A recorded PASS applies to a build
 exactly when the fingerprint recomputed from that build's manifest is the
 same - the same code runs on the board and in the release gate.
 """
+import functools
 import hashlib
 import json
 import os
@@ -32,9 +33,11 @@ def sha256_text(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+@functools.lru_cache(maxsize=512)
 def glob_to_regex(pattern):
     """Coverage glob -> anchored regex. '**' spans directories, '*' and '?'
-    stay inside one path segment. Paths use '/' (git paths)."""
+    stay inside one path segment. Paths use '/' (git paths). Cached: the
+    catalog matches the same few hundred globs over and over."""
     out = []
     i, n = 0, len(pattern)
     while i < n:
@@ -71,6 +74,7 @@ class Manifest:
         self.platform = data.get("platform", {}) or {}
         self.image = data.get("image", {}) or {}
         self.content_sha = data.get("content_sha256")
+        self._files = {}
 
     @classmethod
     def load(cls, path=None):
@@ -91,12 +95,15 @@ class Manifest:
         return self.image.get("name") or "unknown"
 
     def files(self, component):
-        """The [path, blob] list of a component, or None if the component
-        is not in this manifest."""
+        """The (path, blob) pairs of a component, or None if the component
+        is not in this manifest. Built once per component: the manifest is
+        immutable and every coverage glob asks for the same lists."""
+        if component in self._files:
+            return self._files[component]
         c = self.components.get(component)
-        if c is None:
-            return None
-        return [tuple(x) for x in c.get("files", [])]
+        out = None if c is None else [tuple(x) for x in c.get("files", [])]
+        self._files[component] = out
+        return out
 
     def component_names(self):
         return sorted(self.components)

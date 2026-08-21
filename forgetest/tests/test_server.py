@@ -97,6 +97,11 @@ class ServerTests(unittest.TestCase):
 
     # -- helpers ----------------------------------------------------------
     def call(self, method, path, body=None, token=True, headers=None):
+        st, payload, _ = self.call_h(method, path, body, token, headers)
+        return st, payload
+
+    def call_h(self, method, path, body=None, token=True, headers=None):
+        """As call, plus the response headers."""
         url = "http://127.0.0.1:%d%s" % (self.port, path)
         hdrs = {"Host": "127.0.0.1:%d" % self.port}
         if token:
@@ -112,14 +117,15 @@ class ServerTests(unittest.TestCase):
             with urllib.request.urlopen(req, timeout=10) as r:
                 raw = r.read()
                 st = r.status
-                ct = r.headers.get("Content-Type", "")
+                rh = r.headers
         except urllib.error.HTTPError as e:
             raw = e.read()
             st = e.code
-            ct = e.headers.get("Content-Type", "")
+            rh = e.headers
+        ct = rh.get("Content-Type", "")
         if "json" in ct:
-            return st, json.loads(raw.decode())
-        return st, raw
+            return st, json.loads(raw.decode()), rh
+        return st, raw, rh
 
     def wait_idle(self, timeout=10):
         deadline = time.time() + timeout
@@ -160,6 +166,66 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(len(d["tests"]), 7)
         st, d = self.call("GET", "/nope")
         self.assertEqual(st, 404)
+
+    def test_01b_state_is_conditional(self):
+        """The page polls; an unchanged state must cost a 304, and the
+        ETag must move as soon as the state does."""
+        st, d, hdrs = self.call_h("GET", "/state")
+        self.assertEqual(st, 200)
+        etag = hdrs.get("ETag")
+        self.assertTrue(etag and etag.startswith('"'), "no ETag on /state")
+        st, _, hdrs2 = self.call_h("GET", "/state", headers={"If-None-Match": etag})
+        self.assertEqual(st, 304)
+        self.assertEqual(hdrs2.get("ETag"), etag)
+        # a stale validator must not be honored
+        st, _, _ = self.call_h("GET", "/state", headers={"If-None-Match": '"stale"'})
+        self.assertEqual(st, 200)
+        # and the validator moves with the state
+        self.call("POST", "/invalidate", {"reason": "etag check"})
+        st, _, hdrs3 = self.call_h("GET", "/state", headers={"If-None-Match": etag})
+        self.assertEqual(st, 200)
+        self.assertNotEqual(hdrs3.get("ETag"), etag)
+
+    def test_01c_connection_is_kept_alive(self):
+        """A poll per second over a fresh TCP connection each time is
+        waste the board does not need to pay."""
+        import http.client
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        try:
+            for _ in range(3):
+                c.request("GET", "/state", headers={"Host": "127.0.0.1:%d" % self.port})
+                r = c.getresponse()
+                r.read()
+                self.assertEqual(r.status, 200)
+                self.assertEqual(r.version, 11)
+                self.assertNotEqual((r.getheader("Connection") or "").lower(), "close")
+                self.assertIsNotNone(r.getheader("Content-Length"))
+        finally:
+            c.close()
+
+    def test_01d_refused_post_does_not_poison_the_connection(self):
+        """A POST refused before its body is read leaves that body in the
+        socket. On a kept-alive connection the next read would take it for
+        a request line, so a refusal must end the connection instead."""
+        import http.client
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        try:
+            body = json.dumps({"test": "fake.pass"}).encode()
+            c.request("POST", "/start", body=body,
+                      headers={"Host": "127.0.0.1:%d" % self.port,
+                               "Content-Type": "application/json"})   # no token
+            r = c.getresponse()
+            payload = json.loads(r.read().decode())
+            self.assertEqual(r.status, 403)
+            self.assertEqual(payload["error"], "authentication required")
+            self.assertEqual((r.getheader("Connection") or "").lower(), "close",
+                             "an unread body was left on a connection kept alive")
+        finally:
+            c.close()
+        # the server is still healthy, and the body was never taken for a request
+        st, d = self.call("GET", "/state")
+        self.assertEqual(st, 200)
+        self.assertIsNone(d["running"])
 
     def test_02_run_pass_opens_campaign(self):
         st, d = self.call("GET", "/state")

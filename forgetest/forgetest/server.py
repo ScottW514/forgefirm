@@ -9,7 +9,10 @@ page. Read-only calls need the origin checks only.
 
 Routes
   GET  /                    the page
-  GET  /state               campaign + per-test state + running run
+  GET  /state               campaign + per-test state + running run.
+                            Carries an ETag; If-None-Match on an
+                            unchanged state gets a 304, which is what an
+                            idle page polls for.
   GET  /catalog             test definitions (title, steps, covers...)
   GET  /bench               bench tool listing
   GET  /result?test&ts      one full result record (log, evidence)
@@ -23,6 +26,7 @@ Routes
   POST /reset {reason}
   POST /export              build + save the artifact, returns it
 """
+import hashlib
 import hmac
 import json
 import os
@@ -96,6 +100,11 @@ class App:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "forgetest"
+    # Keep-alive: the page polls, so a handshake and a fresh thread per
+    # request is pure overhead. Idle connections are dropped after the
+    # timeout rather than holding a thread forever.
+    protocol_version = "HTTP/1.1"
+    timeout = 30
     app = None  # set on the server class
 
     # -- plumbing ---------------------------------------------------------
@@ -108,6 +117,7 @@ class Handler(BaseHTTPRequestHandler):
             body = json.dumps(body, sort_keys=True).encode("utf-8")
         elif isinstance(body, str):
             body = body.encode("utf-8")
+        self.responded = True
         self.send_response(status)
         self.send_header("Content-Type", ctype + ("; charset=utf-8" if ctype.startswith("text/") else ""))
         self.send_header("Content-Length", str(len(body)))
@@ -119,8 +129,25 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
+    def _send_304(self, etag):
+        self.responded = True
+        self.send_response(304)
+        self.send_header("ETag", etag)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def _deny(self, status, msg):
-        self._send(status, {"error": msg})
+        # One response per request: on a kept-alive connection a second
+        # one would desynchronize the stream.
+        if getattr(self, "responded", False):
+            return
+        # A refused POST still has its body in the socket. Leaving it
+        # there would make the next read on this connection take the
+        # body for a request line, so the connection ends here.
+        # send_header sets close_connection from this.
+        extra = None if getattr(self, "body_read", True) else {"Connection": "close"}
+        self._send(status, {"error": msg}, extra=extra)
 
     def _read_ok(self):
         if not origin_ok(self.headers):
@@ -141,10 +168,12 @@ class Handler(BaseHTTPRequestHandler):
     def _body_json(self):
         n = int(self.headers.get("Content-Length") or 0)
         if n <= 0:
+            self.body_read = True
             return {}
         if n > 1 << 20:
             raise ValueError("body too large")
         raw = self.rfile.read(n)
+        self.body_read = True
         ctype = self.headers.get("Content-Type", "")
         if "json" in ctype:
             data = json.loads(raw.decode("utf-8"))
@@ -161,14 +190,22 @@ class Handler(BaseHTTPRequestHandler):
         path = url.path
         query = urllib.parse.parse_qs(url.query)
         r = self.app.runner
+        self.responded = False
         if not self._read_ok():
             return
         try:
             if path == "/":
                 self._send(200, _page.render(self.app.token), "text/html")
             elif path == "/state":
+                # Conditional: an idle page polls an unchanged state, and
+                # a 304 spares both ends the payload and the re-render.
                 state, _ = r.state()
-                self._send(200, state)
+                body = json.dumps(state, sort_keys=True).encode("utf-8")
+                etag = '"%s"' % hashlib.sha256(body).hexdigest()[:32]
+                if self.headers.get("If-None-Match") == etag:
+                    self._send_304(etag)
+                else:
+                    self._send(200, body, extra={"ETag": etag})
             elif path == "/catalog":
                 self._send(200, {"tests": [t.describe() for t in r.tests()],
                                  "catalog_hash": r.catalog_hash})
@@ -210,6 +247,8 @@ class Handler(BaseHTTPRequestHandler):
         path = url.path
         query = urllib.parse.parse_qs(url.query)
         r = self.app.runner
+        self.responded = False
+        self.body_read = False
         if not self._write_ok(query):
             return
         try:
