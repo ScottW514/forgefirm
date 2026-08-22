@@ -264,14 +264,20 @@ def leds_root():
 
 
 def button_leds():
-    """The three button LED brightnesses, or None where unreadable."""
+    """The three button LEDs' commanded levels (the smooth trigger's
+    `target`, which the controller writes; `brightness` follows it with
+    a fade and is read where no target exists), or None where unreadable."""
     out = []
     for name in BUTTON_LEDS:
-        try:
-            with open(leds_root() + name + "/brightness") as f:
-                out.append(int(f.read().strip()))
-        except (OSError, ValueError):
-            out.append(None)
+        val = None
+        for attr in ("target", "brightness"):
+            try:
+                with open(leds_root() + name + "/" + attr) as f:
+                    val = int(f.read().strip())
+                break
+            except (OSError, ValueError):
+                continue
+        out.append(val)
     return out
 
 

@@ -102,11 +102,17 @@ def judge_beam(ctx, b, what="the burn"):
               "or the detector is not reading)", what, b["idle"], b["peak"])
 
 
-def check_button_dark(ctx, ev, key="button_dark"):
+def check_button_dark(ctx, ev, key="button_dark", settle_s=5.0):
+    """The button commanded dark (the LEDs' target level) within a few
+    seconds: the controller writes it a moment after the cancel or the
+    disarm it reports."""
+    dt = ctx.wait_for(lambda: hw.button_lit() is False, settle_s)
     lit = hw.button_lit()
     ev[key] = lit
     ctx.check(lit is not None, "the button LEDs are not readable")
-    ctx.check(lit is False, "the button is still lit")
+    ctx.check(lit is False, "the button is still lit %.0f s after it should have gone dark", settle_s)
+    if dt:
+        ctx.log("button dark after %.1f s", dt)
 
 
 def prepare(ctx, g):
