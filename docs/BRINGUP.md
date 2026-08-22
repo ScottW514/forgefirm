@@ -49,10 +49,9 @@ hardware-validated.**
   bench-validated 2026-08-17.
 - **Releases are gated by the acceptance tool** (`forgetest`, dev image only):
   a 43-test catalog, domain-scoped inheritance, an always-required safety core,
-  and a release gate that reads the exported artifact. The full campaign on
-  dev image `20260821181036` (the first built on the `<recipe>-pin.inc`
-  layout) satisfied 42 of 42 and its export authorizes a release;
-  **no release is cut yet.**
+  and a release gate that reads the exported artifact. The latest full
+  campaign, on dev image `20260822204234`, satisfied 43 of 43 from nothing and
+  authorizes a release; **no release is cut yet.**
 
 Current bench state: dev image `20260821181036`, the board resting on the SD
 dev image (eMMC slot 1 = factory 2024, slot 2 = ForgeFIRM v0.1.0, archives in
@@ -600,8 +599,11 @@ until `releases/v<version>/acceptance.json` is committed.
   emission witness's mark). The head accelerometer, the beam detector, the
   button LEDs, and a lid-lamp toggle between two snapshots replaced the
   other eyeball confirmations; `kernel.fire-line` and `camera.snapshot` are
-  `auto`. Code-complete 2026-08-22 with host replays; **bench validation
-  pending** on the next dev image.
+  `auto`. Bench-validated 2026-08-22 on dev image `20260822204234`: campaign
+  `c-20260822220701-a1c0`, 43 of 43 from nothing, the attended block 19
+  minutes. A test's implementation hash is its own function plus its
+  module's shared code, so a fix inside one test re-requires that test
+  alone.
 - **Machine identity is content-defined.** Every component recipe contributes
   `forgefirm-manifest.bbclass` entries (the kernel and the module through
   `do_deploy`), `forgefirm-image-manifest.bbclass` assembles them plus the layer
@@ -1148,11 +1150,10 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     the first release, which commits `releases/v<version>/acceptance.json`.
     Cutting the operator's part of a campaign: the forgetest-only step
     (the operator channel, the merged mode-switch, the sensor witnesses,
-    the steps pane, the journal) is code-complete and host-replayed; it
-    needs a bench run of every re-ported attended test on the next dev
-    image. The steps after it, an offline cloud service for the
-    machine-behavior tests and a bench actuator for the lid, interlock and
-    button, are planned, not started. Catalog
+    the steps pane, the journal, per-test implementation hashing) is done
+    and bench-validated (CAMPAIGN-LOG 2026-08-22). The steps after it, an
+    offline cloud service for the machine-behavior tests and a bench
+    actuator for the lid, interlock and button, are planned, not started. Catalog
     gaps left from the tool's own plan: `cooling.confirm-escalate` and
     `cooling.fire-gate-blocks-arm` are not ported (both need the pump switched
     by hand mid-run, so they are bench-tab material first), and whether

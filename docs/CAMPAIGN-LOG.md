@@ -3445,6 +3445,64 @@ pin). The build was stopped, the tree synced and every moved pin checked
 in it, and the build relaunched detached; the image manifest carries all
 three components at the intended commits.
 
+## 2026-08-22: the operator's part cut down, and the first campaign with it
+
+Dev image `20260822204234` (forgefirm de324cc packaged forgetest, the
+pins unchanged from the envelope close-out), the first image with the
+catalog as rebuilt for fewer hands: every attended test asking for its
+operator's part by name (Ready prompts before timed steps, standing
+notices the test takes down when the machine shows the action done,
+one confirm by eye left), `cloud.mode-switch` carrying the lid-open
+hunt and the web-service homing, and `kernel.fire-line`,
+`camera.snapshot` and `motion.jog-roundtrip` run unattended.
+
+Three bench findings, all in the harness, none in the machine:
+
+- `motion.jog-roundtrip` failed its first run on the accelerometer
+  witness: the sysfs read lands two or three samples in a one-second
+  leg, and two samples on the constant-velocity stretch read near idle
+  with the head in full flight (the accelerometer sees the ramps, not
+  the travel); where a ramp was caught the head was plainly moving (p2p
+  3019, 1330, 1698, 1663). The verdict became the whole sequence (p2p
+  across the eight legs at or above the liveness threshold, motion on at
+  least two distinct legs). Rerun: p2p 2897 over 17 samples, motion on
+  three legs. forgefirm 9139e92.
+- `laser.arm-wait-lid` failed its first run on "the button is still
+  lit": the cancel had relocked, disarmed and emitted nothing, but the
+  check read the LEDs' `brightness` the instant after, and the smooth
+  trigger fades it; the controller writes `target`. The readback is the
+  commanded level now, with a few seconds for it to land. forgefirm
+  296fd68.
+- The operator's campaign showed `cloud.oversize-stream` and
+  `cloud.pause-cancel-paths` both cancelling a print from the app. The
+  app cancel stays in the oversize test, which has to end that way, and
+  is judged in full there; the other became `cloud.paused-lid-cancel`,
+  one print instead of two. Same commit.
+
+Those fixes showed the catalog's implementation hash for what it was: a
+whole suite file, so a two-line fix in `laser.py` re-required every
+laser test and the cloud rename every cloud test. The hash is now the
+test's own function plus the module's code outside the `@test`
+functions (forgefirm 2547a8e), every recorded fingerprint moved once,
+and the campaign was run from nothing on the board's installed copy of
+that tree (the six changed files verified identical to the commit).
+
+Campaign `c-20260822220701-a1c0`: **43 of 43 PASS, nothing inherited,
+release authorized**; 29 minutes of test time in all, the 16 attended
+tests 19 minutes of it (22:16 to 22:46 UTC) against the catalog's own
+111-minute estimate for the attended set before this work. No release
+cut. What the witnesses read on the machine: the head accelerometer
+p2p 4206/2442 over 17 samples across the jogs, motion on four legs; the
+beam detector idle 1864, peak 2364 during the emission witness (delta
+500 against the 300 the test asks, digital flag seen), 479 during the
+pause/resume/lid cut; the lid camera 98.8 kB lit against 49.5 kB with
+the lamp off; the cloud round trip's hunt `:completed` with the lid
+open and gfhome's `homing complete (service quiet 10s, 6 motion
+windows)` 40 s after `$H`. Every one of the 74 machine actions the
+campaign asked for was performed by the operator and recorded so in
+the evidence; a bench actuator, when there is one, takes the same
+calls.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
