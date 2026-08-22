@@ -720,6 +720,15 @@ def offline_events(off):
     return [e.get("event") for e in off.events if e.get("event")]
 
 
+def offline_cleanup(ctx):
+    """The jobs the offline tests wrote are gone when the test is (tmpfs
+    would lose them at reboot; the bench rule is sooner)."""
+    import shutil
+    if os.path.isdir(JOB_DIR):
+        shutil.rmtree(JOB_DIR, ignore_errors=True)
+        ctx.log("offline jobs removed from %s", JOB_DIR)
+
+
 def offline_job(ctx, name, **kw):
     """Write a synthesized, laser-never-commanded job for the offline
     service and return its path (under JOB_DIR, tmpfs)."""
@@ -858,6 +867,7 @@ def lid_interlock_abort(ctx):
         lid_interlock_abort_body(ctx, ev, off, job, offset)
     finally:
         off.__exit__(None, None, None)
+        offline_cleanup(ctx)
 
 
 def lid_interlock_abort_body(ctx, ev, off, job, offset):
@@ -956,6 +966,7 @@ def lid_during_button_wait(ctx):
         lid_during_button_wait_body(ctx, ev, off, job, offset)
     finally:
         off.__exit__(None, None, None)
+        offline_cleanup(ctx)
 
 
 def lid_during_button_wait_body(ctx, ev, off, job, offset):
@@ -1135,6 +1146,7 @@ def oversize_stream(ctx):
         oversize_stream_body(ctx, ev, off, job, offset, before)
     finally:
         off.__exit__(None, None, None)
+        offline_cleanup(ctx)
 
 
 def oversize_stream_body(ctx, ev, off, job, offset, before):
@@ -1252,6 +1264,7 @@ def paused_lid_cancel(ctx):
         paused_lid_cancel_body(ctx, ev, off, job, offset)
     finally:
         off.__exit__(None, None, None)
+        offline_cleanup(ctx)
 
 
 def paused_lid_cancel_body(ctx, ev, off, job, offset):

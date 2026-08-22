@@ -3503,6 +3503,45 @@ campaign asked for was performed by the operator and recorded so in
 the evidence; a bench actuator, when there is one, takes the same
 calls.
 
+## 2026-08-22: the machine's print behavior without the service
+
+Dev image `20260822232347` (forgefirm 628f2f7; python3-gfutilities 768730e
+and python3-gfhardware a3ca36f pinned by meta-openglow a52e68c and the
+forgefirm-app pin), the first image with the offline service: gfcloud
+restarted under the `/run/gfcloud-offline` marker comes up with no
+account and no network, takes the service's action messages on
+`/run/gfcloud-offline.sock`, and hands the machine's events back. Four
+cloud tests run on it with a job synthesized on the board
+(`forgetest/puls.py`: a factory print's header over a square the laser is
+never commanded on): the lid and interlock aborts, the button-wait
+cancel, a paused print ended by the lid, and a print longer than the ring
+ended the way the app ends one. Nothing on the bed; the arm press is the
+operator's only hand on a print.
+
+Before the operator's run the plumbing was dry-checked from a shell:
+stop, marker, start, the `OFFLINE service` line and the socket, a
+`settings` action answered `settings:completed`, then a restart without
+the marker and the web session `ready` again. One lesson from the dry
+script, not the harness: the marker has to stay until the offline line
+is logged, because the supervisor reports the client running seconds
+before Python has finished importing and read it.
+
+Campaign `c-20260822233344-08de`: 30 of 43 inherited across the pin bump
+(the catalog's covers put every `cloud.*` test on the moved components,
+and the core always runs), **13 run, 13 PASS, 43 of 43, release
+authorized**; 11 minutes of test time, the four offline tests 5.5 of it.
+No release cut. What the machine said under the offline service: the
+lid edge to the stop 10 ms; the button-wait cancel with no run started;
+the paused print cancelled by the lid, parked to the job start, latch
+locked, button dark; the long job (33.4 MiB of ticks in an 87 kB gzip)
+live-fed with the kernel's program total climbing 33.29 to 34.60 MB while
+the report divided by the job's 35.0 MB, no underrun, the backtrack held
+at 164 214 steps, the pause and resume taken, and the cancel's tail the
+same as the lid's. Every print's `print:running`,
+`print:return_to_home:succeeded` and `print:cancelled` came back over
+the socket. The real service was still proven on the same image by
+`cloud.mode-switch` and the one real print, `cloud.pause-resume`.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

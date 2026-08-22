@@ -1155,11 +1155,11 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     (the operator channel, the merged mode-switch, the sensor witnesses,
     the steps pane, the journal, per-test implementation hashing) is done
     and bench-validated (CAMPAIGN-LOG 2026-08-22). The offline cloud
-    service for the machine-behavior tests is code-complete (gfutilities
-    `OfflineService`, `gfcloud --offline`, `forgetest/puls.py`, four tests
-    re-ported) with host replays; **its bench run on the next dev image is
-    owed.** A bench actuator for the lid, interlock and button is planned,
-    not started. Catalog
+    service for the machine-behavior tests (gfutilities `OfflineService`,
+    `gfcloud --offline`, `forgetest/puls.py`, four tests re-ported) is done
+    and bench-validated on dev image `20260822232347` (43 of 43, the four
+    offline tests in 5.5 minutes, nothing on the bed). A bench actuator for
+    the lid, interlock and button is planned, not started. Catalog
     gaps left from the tool's own plan: `cooling.confirm-escalate` and
     `cooling.fire-gate-blocks-arm` are not ported (both need the pump switched
     by hand mid-run, so they are bench-tab material first), and whether
