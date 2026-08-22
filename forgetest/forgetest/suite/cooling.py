@@ -422,6 +422,14 @@ def critical_tier(ctx):
     after = fc.settings()
     ctx.check(all(after.get(k, "") == orig[k] for k in CRIT_KEYS),
               "the refused POST changed a setting: %s", {k: after.get(k) for k in CRIT_KEYS})
+    # A ceiling at its off end is no ceiling: the default line stands
+    # alone, and the POST that turns the ceiling off is accepted.
+    st, body = fc.post("/settings", params={"cool_temp_max": str(ceil.get("hi"))})
+    ev["ceiling_off_accepted"] = st
+    if st == 200:
+        fc.post("/settings", params=orig)
+    ctx.check(st == 200, "the ceiling at its off end %s was refused against the critical line: %s %s",
+              ceil.get("hi"), st, body)
 
     restored = False
     with ctx.grbl() as grbl:

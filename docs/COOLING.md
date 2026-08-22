@@ -287,8 +287,9 @@ The engine uses the factory's coolant windows:
   ends with the session; the ceiling's pause keeps holding while the loop is
   hot, and the next session judges the line afresh. A cloud job's header
   carries no critical line for the coolant, so this one is always the local
-  setting; the settings API keeps it above the ceiling, and at its top
-  (70 °C) it is the gate turned off (§8a).
+  setting; the settings API keeps it above the ceiling while the ceiling is
+  a gate (a ceiling at its off end leaves the line standing alone), and at
+  its top (70 °C) it is the gate turned off (§8a).
 
 The **upstream** sensor gates, because it reads the coolant actually entering
 the tube.
@@ -380,7 +381,7 @@ start of every run, so a change takes effect on your next job.
 | `cool_confirm_max_s` | 480 s | 60 to 3600 s | | How long a suspicion may stay unresolved before it escalates to a fault. |
 | `cool_temp_max` | 33 °C | 5 to 60 °C | 25 to 38 °C | Run ceiling: above it, hold. `60` turns the gate off (§8a). |
 | `cool_temp_resume` | 31 °C | 5 to 59 °C | 20 to 36 °C | Resume gate: below it, continue. Always kept below the ceiling. |
-| `cool_temp_critical_c` | 38 °C | 6 to 70 °C | 36 to 45 °C | Critical line: a fault with no resume in the job (§5). Always kept above the ceiling; `70` turns the gate off. |
+| `cool_temp_critical_c` | 38 °C | 6 to 70 °C | 36 to 45 °C | Critical line: a fault with no resume in the job (§5). Kept above the ceiling while the ceiling is a gate (a ceiling at 60 leaves the line standing alone); `70` turns the gate off. |
 | `cool_cooldown_s` | 15 s | 0 to 1800 s | | Smoke-clear phase at run duty after a job. |
 | `cool_cooldown_max_s` | 300 s | 0 to 1800 s | | Cap on the thermal cooldown phase. |
 | `cool_tach_exhaust_min_rpm` | 6400 rpm | 0 to 20000 | 5800 to 7000 | Exhaust fan floor at run duty (§3a). `0` turns the gate off. |

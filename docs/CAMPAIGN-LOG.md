@@ -3402,6 +3402,22 @@ names itself only on its rising edge and the critical fault had overwritten
 it. The engine now re-publishes the standing hold's reason when a critical
 fault clears (no new log line), and `cooling.critical-tier` checks it.
 
+## 2026-08-22: the board temperatures on an image, and a cross-check that bound too far
+
+Dev image `20260822165832` (forgectrl 76115fd pinned by forgefirm 9fae47c):
+`cooling.critical-tier` PASS; `cooling.gate-off` FAIL in its off leg: the
+POST that sets the ceiling to its off end (60 C) came back `400
+cool_temp_critical_c must be above cool_temp_max`, because the step 3
+cross-check compared the default critical line (38 C) against the ceiling
+wherever the ceiling stood. Under the settings rule every gate is off by
+value on its own, so a ceiling at its off end is no ceiling and the
+critical line stands alone as the fail tier: the cross-check now binds
+only while the ceiling is a gate (its own table row's off end decides),
+`cooling.critical-tier` pins that the off-end POST is accepted with the
+default line, and the unit fake mirrors it. The test restored the
+settings on its failure path as designed (the trip leg had passed: a 6 C
+ceiling read `OVERTEMP` in 1 s).
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

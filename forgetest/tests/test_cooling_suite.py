@@ -448,7 +448,8 @@ class CriticalTierTests(unittest.TestCase):
             merged.update(form)
             tmax = float(merged.get("cool_temp_max") or 33.0)
             tcrit = float(merged.get("cool_temp_critical_c") or 38.0)
-            if tcrit <= tmax:
+            ceiling_off = tmax >= self.ROWS["cool_temp_max"][3]
+            if not ceiling_off and tcrit <= tmax:
                 return (400, {"error": "cool_temp_critical_c must be above cool_temp_max"})
         self.fc.state["settings"].update(form)
         self._describe()
@@ -508,8 +509,11 @@ class CriticalTierTests(unittest.TestCase):
         self.assertEqual(run.evidence["critical_after"]["verdict"], "OVERTEMP")
         self.assertEqual(run.evidence["critical_off"]["gates_off"], ["coolant_critical"])
         self.assertEqual(run.evidence["restored"]["verdict"], "OK")
+        self.assertEqual(run.evidence["ceiling_off_accepted"], 200)
         posts = self.settings_posts()
-        self.assertEqual(posts[1], {"cool_temp_max": "6.0", "cool_temp_resume": "5.0",
+        # refused cross-check, the ceiling at its off end (accepted), its undo, then the low leg
+        self.assertEqual(posts[1], {"cool_temp_max": "60.0"})
+        self.assertEqual(posts[3], {"cool_temp_max": "6.0", "cool_temp_resume": "5.0",
                                     "cool_temp_critical_c": "7.0"})
         self.assertEqual(posts[-1], {"cool_temp_max": "", "cool_temp_resume": "", "cool_temp_critical_c": ""})
         self.assertEqual(self.grbl.commands.count("M8"), 3)
