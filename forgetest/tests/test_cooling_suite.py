@@ -376,6 +376,156 @@ class GateOffTests(unittest.TestCase):
         self.assertEqual(self.fc.state["settings"]["cool_temp_max"], "30")
 
 
+class CriticalTierTests(unittest.TestCase):
+    """cooling.critical-tier against a scripted engine: two tiers on the
+    coolant, the fail tier winning over the pause tier in a run session
+    and ending with it, the critical line off at its top, and the settings
+    cross-check refusing a critical line at or below the ceiling."""
+
+    UP = 22.3
+    ROWS = {  # key: (gate, default, lo, hi, band_lo, band_hi, off)
+        "cool_temp_max": ("coolant_max", 33.0, 5.0, 60.0, 25.0, 38.0, "high"),
+        "cool_temp_resume": (None, 31.0, 5.0, 59.0, 20.0, 36.0, "none"),
+        "cool_temp_critical_c": ("coolant_critical", 38.0, 6.0, 70.0, 36.0, 45.0, "high"),
+    }
+
+    def setUp(self):
+        self.fc = helpers.FakeForgectrl().start()
+        self.grbl = FakeGrbl()
+        self.saved = (cooling.VERDICT_WAIT_S, cooling.SESSION_END_WAIT_S)
+        cooling.VERDICT_WAIT_S = 3
+        cooling.SESSION_END_WAIT_S = 3
+        self.fc.state["status"] = dict(self.fc.state["status"],
+                                       coolant={"down_c": 22.4, "up_c": self.UP, "pump": True, "tec": False},
+                                       gates_off=[])
+        self.fc.state["cool"] = {"phase": "idle", "verdict": "OK", "fire_ok": False, "hold": False,
+                                 "gates_off": []}
+        for k in self.ROWS:
+            self.fc.state["settings"].setdefault(k, "")
+        self.fc.state["logs_tail"] = {"text": ""}
+        self.faults = True          # the engine has the critical tier
+        self.ends_with_session = True
+        self.cross_checks = True    # the settings API refuses crit <= max
+        self._describe()
+        self.grbl.on_command = self._engine
+        self.fc.on_post = self._on_post
+
+    def tearDown(self):
+        cooling.VERDICT_WAIT_S, cooling.SESSION_END_WAIT_S = self.saved
+        self.grbl.close()
+        self.fc.stop()
+
+    def setting(self, key):
+        v = self.fc.state["settings"].get(key) or ""
+        return float(v) if v else self.ROWS[key][1]
+
+    def _describe(self):
+        gates = {}
+        for k, (gate, d, lo, hi, blo, bhi, off) in self.ROWS.items():
+            v = self.setting(k)
+            state = "off" if (off == "high" and v >= hi) else ("ok" if blo <= v <= bhi else "warn")
+            gates[k] = {"gate": gate, "def": d, "lo": lo, "hi": hi, "band": [blo, bhi], "off": off,
+                        "value": v, "state": state}
+        self.fc.state["settings"]["gates"] = gates
+
+    def _on_post(self, path, form):
+        if path != "/settings":
+            return None
+        if self.cross_checks:
+            merged = dict(self.fc.state["settings"])
+            merged.update(form)
+            tmax = float(merged.get("cool_temp_max") or 33.0)
+            tcrit = float(merged.get("cool_temp_critical_c") or 38.0)
+            if tcrit <= tmax:
+                return (400, {"error": "cool_temp_critical_c must be above cool_temp_max"})
+        self.fc.state["settings"].update(form)
+        self._describe()
+        return (200, self.fc.state["settings"])
+
+    def _verdict_idle(self):
+        """Outside a run only the ceiling's pause tier stands."""
+        return "OVERTEMP" if self.UP > self.setting("cool_temp_max") else "OK"
+
+    def _engine(self, line):
+        self._describe()
+        cool = self.fc.state["cool"]
+        if line == "M9":
+            def end():
+                time.sleep(0.3)
+                cool["phase"] = "idle"
+                if self.ends_with_session or cool["verdict"] != "CRITICAL":
+                    v = self._verdict_idle()
+                    cool.update(verdict=v, fire_ok=v == "OK", hold=v != "OK", reason="")
+            threading.Thread(target=end, daemon=True).start()
+            return
+        if line != "M8":
+            return
+        cool["phase"] = "run"
+        tmax, tcrit = self.setting("cool_temp_max"), self.setting("cool_temp_critical_c")
+        crit_off = tcrit >= self.ROWS["cool_temp_critical_c"][3]
+        off = ["coolant_critical"] if crit_off else []
+        if crit_off:
+            self.fc.state["logs_tail"]["text"] += (
+                "Aug 22 12:00:00 forgectrl: cool: gate coolant_critical OFF: cool_temp_critical_c = 70 "
+                "(the high end of 6 to 70; recommended 36 to 45, default 38)\n")
+        if self.faults and not crit_off and self.UP >= tcrit:
+            cool.update(verdict="CRITICAL", fire_ok=False, hold=True, resume_ok=False,
+                        reason="CRITICAL: coolant %.1f C at or over the %.0f C critical line - hold, "
+                               "no resume this job" % (self.UP, tcrit), gates_off=off)
+        elif self.UP > tmax:
+            cool.update(verdict="OVERTEMP", fire_ok=False, hold=True, resume_ok=False,
+                        reason="coolant over the ceiling", gates_off=off)
+        else:
+            cool.update(verdict="OK", fire_ok=True, hold=False, resume_ok=True, reason="", gates_off=off)
+        self.fc.state["status"]["gates_off"] = off
+
+    def run_test(self):
+        run = Run("test", "cooling.critical-tier", "t")
+        ctx = Context(run, None, helpers.make_test("cooling.critical-tier", []))
+        cooling.critical_tier(ctx)
+        return run
+
+    def settings_posts(self):
+        return [f for p, f in self.fc.posts if p == "/settings"]
+
+    # -- cases ------------------------------------------------------------------
+    def test_fault_then_off_then_restored_passes(self):
+        run = self.run_test()
+        self.assertEqual(run.evidence["cross_check"]["status"], 400)
+        self.assertEqual(run.evidence["critical"]["verdict"], "CRITICAL")
+        self.assertEqual(run.evidence["critical_after"]["verdict"], "OVERTEMP")
+        self.assertEqual(run.evidence["critical_off"]["gates_off"], ["coolant_critical"])
+        self.assertEqual(run.evidence["restored"]["verdict"], "OK")
+        posts = self.settings_posts()
+        self.assertEqual(posts[1], {"cool_temp_max": "6.0", "cool_temp_resume": "5.0",
+                                    "cool_temp_critical_c": "7.0"})
+        self.assertEqual(posts[-1], {"cool_temp_max": "", "cool_temp_resume": "", "cool_temp_critical_c": ""})
+        self.assertEqual(self.grbl.commands.count("M8"), 3)
+        self.assertEqual(self.grbl.commands.count("M9"), 3)
+
+    def test_an_engine_without_the_tier_fails_and_restores(self):
+        self.faults = False
+        with self.assertRaises(Failed) as cm:
+            self.run_test()
+        self.assertIn("did not fault", str(cm.exception))
+        self.assertEqual(self.settings_posts()[-1],
+                         {"cool_temp_max": "", "cool_temp_resume": "", "cool_temp_critical_c": ""})
+        self.assertEqual(self.fc.state["cool"]["verdict"], "OK")
+
+    def test_a_fault_that_outlives_its_session_fails(self):
+        self.ends_with_session = False
+        with self.assertRaises(Failed) as cm:
+            self.run_test()
+        self.assertIn("after the faulted session", str(cm.exception))
+
+    def test_a_missing_cross_check_fails_before_any_session(self):
+        self.cross_checks = False
+        with self.assertRaises(Failed) as cm:
+            self.run_test()
+        self.assertIn("was accepted", str(cm.exception))
+        self.assertEqual(self.grbl.commands.count("M8"), 0)
+
+
 class FanGateTests(unittest.TestCase):
     """cooling.fan-gate-trips against a scripted engine: the fake reads the
     floors at every M8 (the engine reloads at run start), holds every fan

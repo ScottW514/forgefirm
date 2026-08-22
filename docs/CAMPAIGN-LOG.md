@@ -3363,7 +3363,10 @@ session could re-prove the fan (a hunt clears it). Decision (operator,
 the same day): the fault ends with its session, since every session
 judges every fan afresh after the grace before anything can fire;
 `cooling.fan-gate-trips` now checks the verdict is `OK` with no hold once
-the tripped session is over. The fire alarm keeps its idle hold.
+the tripped session is over. The fire alarm keeps its idle hold. Built
+and flashed the same day (dev image `20260822145201`, forgectrl d51dbdb):
+`cooling.fan-gate-trips` PASS in 60 s, the engine reading `OK`, no hold,
+fire allowed in the smoke-clear phase right after the tripped session.
 
 ## Superseded status notes
 

@@ -261,6 +261,8 @@ A clean check from the fault state logs a recovery.
 | `SUSPECT` | Hold requested, cut airflow held; auto-resumes on a clean re-check. |
 | `FAULT` | Fire gated and the hold stands — for the operator to resolve. |
 | `OVERTEMP` | Hold with forced cooling airflow; auto-resumes below the resume gate (§5). |
+| `CRITICAL` | The coolant at or over the critical line in a run session: fire blocked, hold, no resume this job (§5). |
+| `AIRFLOW` | A fan under its floor: fire blocked, hold, no resume this job (§3a). |
 | `FIRE` | Motion stopped, latch locked, hold until the next run session (§7). |
 
 Practical note: **expect a legitimate suspicion on the first checks after
@@ -277,6 +279,16 @@ The engine uses the factory's coolant windows:
   request and cooling airflow forced on.
 - **Resume gate 31 °C** — below this, recovery is signaled and the controller
   resumes automatically.
+- **Critical line 38 °C** (`cool_temp_critical_c`, §8) — a second tier above
+  the ceiling, and a different kind: at or over it during a run session the
+  verdict goes `CRITICAL`, fire is blocked, the job holds, and there is no
+  resume for the rest of that session, because a loop that ran through the
+  pause tier and kept climbing is not a condition to cut through. The fault
+  ends with the session; the ceiling's pause keeps holding while the loop is
+  hot, and the next session judges the line afresh. A cloud job's header
+  carries no critical line for the coolant, so this one is always the local
+  setting; the settings API keeps it above the ceiling, and at its top
+  (70 °C) it is the gate turned off (§8a).
 
 The **upstream** sensor gates, because it reads the coolant actually entering
 the tube.
@@ -368,6 +380,7 @@ start of every run, so a change takes effect on your next job.
 | `cool_confirm_max_s` | 480 s | 60 to 3600 s | | How long a suspicion may stay unresolved before it escalates to a fault. |
 | `cool_temp_max` | 33 °C | 5 to 60 °C | 25 to 38 °C | Run ceiling: above it, hold. `60` turns the gate off (§8a). |
 | `cool_temp_resume` | 31 °C | 5 to 59 °C | 20 to 36 °C | Resume gate: below it, continue. Always kept below the ceiling. |
+| `cool_temp_critical_c` | 38 °C | 6 to 70 °C | 36 to 45 °C | Critical line: a fault with no resume in the job (§5). Always kept above the ceiling; `70` turns the gate off. |
 | `cool_cooldown_s` | 15 s | 0 to 1800 s | | Smoke-clear phase at run duty after a job. |
 | `cool_cooldown_max_s` | 300 s | 0 to 1800 s | | Cap on the thermal cooldown phase. |
 | `cool_tach_exhaust_min_rpm` | 6400 rpm | 0 to 20000 | 5800 to 7000 | Exhaust fan floor at run duty (§3a). `0` turns the gate off. |
@@ -440,6 +453,7 @@ Stated plainly so nobody counts on them:
 | Suspicion unresolved past the budget | Escalates to `FAULT`. |
 | Three cleared suspicions in one job | Aggregated "check your coolant" warning. |
 | Upstream coolant above 33 °C | `OVERTEMP`: hold + forced cooling; auto-resume under 31 °C. |
+| Upstream coolant at or over 38 °C during a job | `CRITICAL`: fire blocked, hold, no resume this job; the ceiling's hold stands until the loop is under 31 °C. |
 | A fan under its floor inside the spin-up grace | Nothing yet: the gate reads `grace`. |
 | A fan under its floor for three seconds after the grace | `AIRFLOW`: fire blocked, hold, no resume this job; fans held at run duty; the next job starts the gates fresh. |
 | Purge-air current absent at run duty | `AIRFLOW`, the same way. |

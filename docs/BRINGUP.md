@@ -579,7 +579,7 @@ under the domain model from the day's earlier dev images) and the export reads "
 YES" for that image's manifest. That authorizes a release; it is not one
 until `releases/v<version>/acceptance.json` is committed.
 
-- **Catalog: 44 tests** in `forgetest/forgetest/suite/`, every one a port of a
+- **Catalog: 45 tests** in `forgetest/forgetest/suite/`, every one a port of a
   proven bench drill or a bench-verified check — the always-required core
   (`image.health`, `kernel.latch-locked-idle`, `kernel.k1-k2`,
   `kernel.fire-line`), `forgectrl.*`, `logs.*`, `update.*`, `motion.*`
@@ -1369,9 +1369,15 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     ends with its run session (decided; a standing hold at idle canceled
     GRBL jogs and would have refused the cloud print that re-proves the
     fan), since every session judges every fan afresh after the grace;
-    `cooling.fan-gate-trips` checks it, bench run owed on the next image.
-    The coolant critical tier and the watch-only board temperatures
-    follow.
+    `cooling.fan-gate-trips` checks it, PASS on dev image `20260822145201`.
+    **The coolant critical tier is in:** `cool_temp_critical_c` (default
+    38 C, 6 to 70, off at 70, kept above the ceiling by the settings
+    cross-check) is the fail tier above the ceiling's pause: at or over it
+    in a run session the verdict is `CRITICAL` (fire blocked, hold, no
+    resume this job), the fault ends with the session, no header touches
+    it; `cooling.critical-tier` in the catalog (45), bench run owed on the
+    next image, plus the heater-driven warm-loop drill to the critical
+    line. The watch-only board temperatures follow.
 
     Nothing here can put energy where it was not commanded: the hardware chain
     is the emission boundary and no header field touches it, and forgectrl runs

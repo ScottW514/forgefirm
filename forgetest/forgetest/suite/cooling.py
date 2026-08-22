@@ -239,14 +239,17 @@ def _run_session(ctx, g, fc, until, what, wait=None):
         _session_ended(ctx, fc, what)
 
 
-def _after_session(ctx, fc, wait=5):
-    """The engine's state a few ticks after a session ended."""
+def _after_session(ctx, fc, wait=5, until=None):
+    """The engine's state a few ticks after a session ended: the first
+    sample out of phase run that satisfies `until` (default: verdict OK),
+    or the last sample taken."""
+    until = until or (lambda c: c.get("verdict") == "OK")
     c = {}
     t0 = time.time()
     while time.time() - t0 < wait:
         ctx.sleep(1)
         c = _cool(fc)
-        if c.get("phase") != "run" and c.get("verdict") == "OK":
+        if c.get("phase") != "run" and until(c):
             break
     return c
 
@@ -351,6 +354,125 @@ def gate_off(ctx):
     ctx.check(all(after.get(k, "") == orig[k] for k in GATE_KEYS),
               "settings not restored: %s", {k: after.get(k) for k in GATE_KEYS})
     ctx.check(fc.wait_idle(60, abort=ctx.aborted), "machine did not return to idle")
+
+
+CRIT_KEYS = ("cool_temp_max", "cool_temp_resume", "cool_temp_critical_c")
+
+
+@test("cooling.critical-tier", title="The coolant critical line is a fault above the ceiling's pause",
+      subsystem="cooling", kind="auto", mode="grbl", est_min=3,
+      covers=_COOL_COVERS + [("forgectrl", "src/main.c")], requires=["cooling.gate-off"],
+      steps=["Machine idle, coolant at room temperature (above 8 C). The test writes the coolant "
+             "ceiling, the resume gate and the critical line and restores them; three short M8/M9 "
+             "cycles spin the fans."],
+      description="Two tiers on the upstream coolant sensor: the ceiling pauses (OVERTEMP, resume "
+                  "below the resume gate), the critical line above it is a fault. With the ceiling "
+                  "and the critical line both under the coolant's temperature a run session must "
+                  "read CRITICAL rather than OVERTEMP (fire blocked, hold, no resume), the fault "
+                  "must end with the session, and the settings API must refuse a critical line at "
+                  "or below the ceiling; with the critical line at its top the gate is off by "
+                  "value (gates_off names it) and the ceiling alone pauses; restored, the next "
+                  "session runs OK with nothing off.")
+def critical_tier(ctx):
+    fc = ctx.forgectrl
+    ev = ctx.evidence
+    before = fc.settings()
+    orig = {k: before.get(k, "") for k in CRIT_KEYS}
+    ev["orig"] = orig
+    ctx.log("original: %s", orig)
+    up = (fc.status().get("coolant") or {}).get("up_c")
+    ctx.check(up is not None and up > 8.0, "coolant too cold for the trip leg (up_c %s)", up)
+    c0 = _cool(fc)
+    ctx.check(c0.get("verdict") == "OK" and c0.get("gates_off") == [],
+              "engine is not at OK with every gate on before the test: %s", c0)
+    gates = before.get("gates") or {}
+    ceil = gates.get("cool_temp_max") or {}
+    crit = gates.get("cool_temp_critical_c") or {}
+    ctx.check(crit.get("gate") == "coolant_critical" and crit.get("off") == "high",
+              "settings reply does not describe the critical line as the coolant_critical gate, off at "
+              "its top: %s", crit)
+    bottom, top = ceil.get("lo"), crit.get("hi")
+    ctx.check(isinstance(bottom, (int, float)) and isinstance(top, (int, float)),
+              "no ranges in the reply: %s %s", ceil, crit)
+    ctx.check(isinstance(crit.get("lo"), (int, float)) and crit.get("lo") > bottom,
+              "the critical line's floor %s is not above the ceiling's %s", crit.get("lo"), bottom)
+
+    # The cross-check: a critical line at or below the ceiling is refused
+    # before anything is written.
+    st, body = fc.post("/settings", params={"cool_temp_max": "33", "cool_temp_critical_c": "33"})
+    ev["cross_check"] = {"status": st, "body": body}
+    if st == 200:
+        fc.post("/settings", params=orig)       # undo before failing
+    ctx.check(st == 400, "a critical line equal to the ceiling was accepted: %s %s", st, body)
+    after = fc.settings()
+    ctx.check(all(after.get(k, "") == orig[k] for k in CRIT_KEYS),
+              "the refused POST changed a setting: %s", {k: after.get(k) for k in CRIT_KEYS})
+
+    restored = False
+    with ctx.grbl() as grbl:
+        st = grbl.status_report()
+        ctx.check(st["state"].startswith("Idle"), "controller is %s", st["state"])
+        try:
+            # Leg 1: ceiling and critical line both under the coolant's
+            # temperature. The fail tier wins: CRITICAL, not OVERTEMP.
+            low = {"cool_temp_max": str(bottom + 1), "cool_temp_resume": str(bottom),
+                   "cool_temp_critical_c": str(bottom + 2)}
+            _set_gates(ctx, fc, low)
+            c = _run_session(ctx, grbl, fc, lambda c: c.get("verdict") == "CRITICAL", "critical leg")
+            ev["critical"] = c
+            ctx.check(c.get("verdict") == "CRITICAL",
+                      "critical line %s C with coolant at %.1f C did not fault (verdict %s): %s",
+                      bottom + 2, up, c.get("verdict"), c)
+            ctx.check(c.get("fire_ok") is False and c.get("hold") is True,
+                      "CRITICAL without fire blocked and a hold: %s", c)
+            ctx.check(c.get("resume_ok") is not True, "a coolant fault offered a resume: %s", c)
+            ctx.check("CRITICAL" in (c.get("reason") or "") and "coolant" in (c.get("reason") or ""),
+                      "the reason does not name the tier and the coolant: %r", c.get("reason"))
+            ctx.check(c.get("gates_off") == [], "a tripped gate is not an off gate: %s", c.get("gates_off"))
+            # The fault ends with the session; the ceiling, still under the
+            # coolant, keeps its pause (OVERTEMP), never CRITICAL.
+            c = _after_session(ctx, fc, until=lambda c: c.get("verdict") != "CRITICAL")
+            ev["critical_after"] = c
+            ctx.check(c.get("verdict") == "OVERTEMP",
+                      "after the faulted session the engine reads %s, expected the ceiling's OVERTEMP: %s",
+                      c.get("verdict"), c)
+
+            # Leg 2: the critical line at its top is the gate off; the
+            # ceiling alone pauses, and gates_off says so.
+            _set_gates(ctx, fc, {"cool_temp_critical_c": str(top)})
+            c = _run_session(ctx, grbl, fc,
+                             lambda c: c.get("verdict") == "OVERTEMP" and "coolant_critical" in (c.get("gates_off") or []),
+                             "critical off leg")
+            ev["critical_off"] = c
+            ctx.check(c.get("verdict") == "OVERTEMP",
+                      "with the critical line off the ceiling did not pause (verdict %s): %s", c.get("verdict"), c)
+            ctx.check("coolant_critical" in (c.get("gates_off") or []),
+                      "gates_off %s lacks coolant_critical", c.get("gates_off"))
+            ctx.check(_tail_has(fc, "gate coolant_critical OFF: cool_temp_critical_c = %g" % top),
+                      "the run-start log line for the off gate is missing from the forgectrl log")
+
+            # Restore, and prove it: OK, nothing off.
+            _set_gates(ctx, fc, orig)
+            restored = True
+            c = _run_session(ctx, grbl, fc, lambda c: c.get("verdict") == "OK" and not c.get("gates_off"),
+                             "restored")
+            ev["restored"] = c
+            ctx.check(c.get("verdict") == "OK" and c.get("gates_off") == [],
+                      "engine did not return to OK with every gate on after the restore: %s", c)
+        finally:
+            if not restored:
+                st, body = fc.post("/settings", params=orig)
+                ctx.log("restore on failure: POST /settings %s -> %s", orig, st)
+                try:
+                    c = _run_session(ctx, grbl, fc,
+                                     lambda c: c.get("verdict") == "OK" and not c.get("gates_off"),
+                                     "restore on failure")
+                    ctx.log("restore on failure: engine %s gates_off %s", c.get("verdict"), c.get("gates_off"))
+                except Exception as e:      # the original failure is the one to report
+                    ctx.log("restore on failure: run session did not complete (%s)", e)
+    after = fc.settings()
+    ctx.check(all(after.get(k, "") == orig[k] for k in CRIT_KEYS),
+              "settings not restored: %s", {k: after.get(k) for k in CRIT_KEYS})
 
 
 FAN_KEYS = ("cool_tach_exhaust_min_rpm", "cool_purge_min_current", "cool_fan_grace_s")
