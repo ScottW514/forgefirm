@@ -1,7 +1,8 @@
 """cloud.* - the controller mode switch and the optional Glowforge web-service
 mode (gfcloud daemon, gfhome homing runner). The mode-switch test makes the
-grbl -> cloud -> grbl round trip; the job-behavior tests run in cloud mode
-and leave the machine there (see enter_cloud)."""
+grbl -> cloud -> grbl round trip with the connect-time hunt run lid-open and
+the web-service homing ($H) on the way back; the job-behavior tests run in
+cloud mode and leave the machine there (see enter_cloud)."""
 import json
 import os
 import time
@@ -95,20 +96,110 @@ def wait_mode(ctx, fc, want_mode, want_controller="running", timeout=90):
     return last
 
 
-@test("cloud.mode-switch", title="Controller mode switch grbl -> cloud -> grbl", subsystem="cloud",
-      kind="auto", mode="grbl", est_min=5,
-      covers=_CLOUD_COVERS + [("forgectrl", "src/cool.*"), ("forgectrl", "src/airflow.*")],
-      requires=["forgectrl.auth", "motion.pacing"],
-      steps=["Bed clear: the cloud client homes the head to the corner on connect (the factory "
-             "hunt) and the test jogs it back to where it started afterward. Cloud credentials "
-             "configured; the machine on the network."],
-      description="POST /mode switches to the cloud controller: gfcloud comes up under "
-                  "supervision, authenticates and establishes its service session (its own log "
-                  "lines are the evidence; the connect-time firmware probe is recorded when "
-                  "configured); its connect-time hunt, which runs with the extraction fans off, "
+GFHOME_LOG = "/data/log/forgefirm/gfhome/gfhome.log"
+HOMING_TIMEOUT_S = 600
+
+
+def homing_mode_is_gfcloud():
+    """Precheck: the web-service homing needs homing_mode = gfcloud."""
+    try:
+        hm = (hw.Forgectrl().settings() or {}).get("homing_mode")
+    except hw.HwError as e:
+        return "forgectrl unreachable: %s" % e
+    if hm != "gfcloud":
+        return "homing_mode is %r; the web-service homing needs gfcloud" % (hm,)
+    return None
+
+
+def judge_hunt_with_lid_open(ctx, ev, offset):
+    """The connect-time hunt from `offset` on: its terminal line is
+    :completed, nothing before it was refused for the lid, and the lens
+    homed (the Z cycle is the part of a hunt the lid would have gated).
+    Returns the hunt's terminal line."""
+    hunt_line = wait_action_finished(ctx, offset, "hunt", HUNT_TIMEOUT_S)
+    ev["hunt_line"] = message(hunt_line)
+    ctx.check(hunt_line, "the service sent no hunt (or it never finished) within %d s of the session",
+              HUNT_TIMEOUT_S)
+    lines = log_lines_since(GFCLOUD_LOG, offset)
+    hunt_i = action_finish_index(lines, "hunt")
+    refused = [ln for ln in lines[:hunt_i] if "unsafe to move" in ln]
+    ev["refusals_before_hunt_end"] = len(refused)
+    ctx.check(not refused, "the hunt was refused for the lid (%d 'unsafe to move')", len(refused))
+    ctx.check(COMPLETED in hunt_line, "the hunt did not complete: %s", ev["hunt_line"])
+    ev["lens_homed"] = any("starting z homing cycle" in ln for ln in lines[:hunt_i])
+    ctx.check(ev["lens_homed"], "the hunt did not home the lens (no Z homing cycle before its end)")
+    ctx.log("hunt with the lid open: %s (lens homed)", ev["hunt_line"])
+    return hunt_line
+
+
+def gfhome_homing(ctx, ev, g):
+    """$H in grbl mode with homing_mode = gfcloud: gfhome runs the
+    web-service homing session with its own head-accelerometer motion
+    witness. Homed within the session timeout, and gfhome's own
+    completion line (with its count of motion windows) is the proof the
+    head traveled under the service's corrections."""
+    st = g.status_report()["state"]
+    ctx.check(st.startswith("Idle") or st.startswith("Alarm"), "controller is %s", st)
+    if st.startswith("Alarm"):
+        g.command("$X")
+    home_offset = log_size(GFHOME_LOG)
+    t0 = time.time()
+    g.send_raw(b"$H\n")
+    homed = False
+    state = gs = None
+    while time.time() - t0 < HOMING_TIMEOUT_S:
+        ctx.checkpoint()
+        s = ctx.forgectrl.status()
+        state = s.get("state")
+        try:
+            gs = g.status_report()["state"]
+        except hw.HwError:
+            gs = "?"
+        if s.get("homed") and gs.startswith("Idle"):
+            homed = True
+            break
+        if gs.startswith("Alarm"):
+            break
+        time.sleep(2)
+    ev["homing_s"] = round(time.time() - t0, 1)
+    ev["homed"] = homed
+    ctx.log("homing: homed=%s after %.1f s (kernel %s, grbl %s)", homed, ev["homing_s"], state, gs)
+    ctx.check(homed, "homing did not complete (grbl %s)", gs)
+    done = [ln.strip()[:160] for ln in log_lines_since(GFHOME_LOG, home_offset) if "homing complete" in ln]
+    ev["gfhome_complete"] = done[-1] if done else None
+    ctx.log("gfhome: %s", ev["gfhome_complete"])
+    ctx.check(done, "gfhome logged no 'homing complete' line (its accelerometer witness never saw the "
+                    "head move, or the session ended another way)")
+    # homed: the counters are re-anchored at the corner, where the head stays
+    ctx.counters_rezeroed()
+    ctx.check(ctx.forgectrl.wait_idle(15, abort=ctx.aborted), "machine not idle after homing")
+
+
+@test("cloud.mode-switch", title="Controller mode switch grbl -> cloud -> grbl, the connect-time hunt "
+                                 "with the lid open, and the web-service homing",
+      subsystem="cloud", kind="operator", mode="grbl", est_min=10,
+      covers=_CLOUD_COVERS + [("forgectrl", "src/cool.*"), ("forgectrl", "src/airflow.*"),
+                              ("grblhal-glowforge", "src/**")],
+      requires=["forgectrl.auth", "motion.pacing"], actions=["lid"],
+      precheck=homing_mode_is_gfcloud,
+      steps=["Bed clear; cloud credentials configured and homing_mode = gfcloud; the machine on "
+             "the network.",
+             "Open the lid when told and leave it open through the cloud client's connect and its "
+             "hunt; close it when told. Nothing else: the switch back and the $H homing run on "
+             "their own, and the head ends parked at the home corner."],
+      description="One round trip with the two service-driven motions on it. POST /mode switches "
+                  "to the cloud controller: gfcloud comes up under supervision, authenticates and "
+                  "establishes its service session (its own log lines are the evidence; the "
+                  "connect-time firmware probe is recorded when configured). Its connect-time hunt "
+                  "runs with the lid OPEN, as the factory's does - it completes, nothing before its "
+                  "end is refused for the lid, the lens homes - and with the extraction fans off it "
                   "is measured by the airflow gates but not judged (no AIRFLOW, the exhaust row "
-                  "reads unjudged); the camera service survives the switch; switching back brings "
-                  "grblHAL up with the Grbl port open and Idle, and the head returns to its start.")
+                  "reads unjudged); the camera service survives the switch. The lid closed, the "
+                  "service's re-hunt is waited out; switching back brings grblHAL up with the Grbl "
+                  "port open and Idle, and the head returns to its start. Then $H with "
+                  "homing_mode = gfcloud runs gfhome, the web-service homing session with the "
+                  "head-accelerometer motion witness: the controller returns to Idle with "
+                  "homed:true and gfhome reports the homing complete with the motion it saw.")
 def mode_switch(ctx):
     fc = ctx.forgectrl
     ev = ctx.evidence
@@ -124,9 +215,10 @@ def mode_switch(ctx):
         probe_before = os.stat(GF_LATEST).st_mtime
     except OSError:
         pass
-    log_offset = log_size(GFCLOUD_LOG)
     lamp0 = hw.sysfs_read("pic/lid_led")
 
+    ctx.act("lid", "open", text="Leave it open: the cloud client connects and hunts with the lid open.")
+    log_offset = log_size(GFCLOUD_LOG)
     st, body = fc.post("/mode", data={"controller": "cloud"})
     ctx.log("POST /mode controller=cloud -> %s %s", st, body)
     ctx.check(st == 200, "mode switch to cloud refused: %s %s", st, body)
@@ -136,15 +228,8 @@ def mode_switch(ctx):
     ctx.check(m and m.get("mode") == "cloud" and m.get("controller") == "running",
               "cloud controller did not come up: %s", m)
     # the client's own session lines are the evidence of a live cloud session
-    t0 = time.time()
-    session = []
+    session = wait_session(ctx, log_offset)
     probe = None
-    while time.time() - t0 < 120:
-        ctx.checkpoint()
-        session = session_lines(GFCLOUD_LOG, log_offset)
-        if session_established(session):
-            break
-        time.sleep(2)
     ev["session"] = session
     for ln in session:
         ctx.log("  gfcloud: %s", ln.split(" ", 1)[-1] if " " in ln else ln)
@@ -157,6 +242,9 @@ def mode_switch(ctx):
         pass
     ev["gf_probe"] = probe
     ctx.log("cloud session established: %s; firmware probe: %s", session_established(session), probe)
+    ctx.check(session_established(session),
+              "the cloud client never established its service session (no credentials, no "
+              "network, or the service refused) - cloud mode not proven")
     st, cam1 = fc.get("/cam/status")
     ev["cam_during_cloud"] = cam1
     ctx.check(st == 200 and isinstance(cam1, dict), "camera status lost during cloud mode (%s)", st)
@@ -180,6 +268,14 @@ def mode_switch(ctx):
     ctx.check(exh and all(g.get("reading", 0) < g.get("floor", 0) for g in exh),
               "the exhaust was not off during the hunt (readings %s), so the unjudged state "
               "proves nothing", sorted({g.get("reading") for g in exh}))
+    # ...and it ran with the lid open, as the factory's does
+    judge_hunt_with_lid_open(ctx, ev, log_offset)
+    ctx.act("lid", "close", text="The service now re-finds the head: several moves with lid images "
+            "between them, which the test waits out.")
+    settle_cloud(ctx, log_offset)
+    lines = log_lines_since(GFCLOUD_LOG, log_offset)
+    ev["motions_after_lid_close"] = sum(1 for ln in lines if "motion [" in ln and COMPLETED in ln)
+    ctx.log("%d service motion(s) completed after the lid closed", ev["motions_after_lid_close"])
 
     st, body = fc.post("/mode", data={"controller": "grbl"})
     ctx.log("POST /mode controller=grbl -> %s %s", st, body)
@@ -197,9 +293,6 @@ def mode_switch(ctx):
         ev["grbl_state"] = st
         ctx.log("grbl state after: %s", st)
         ctx.check(st.startswith("Idle") or st.startswith("Alarm"), "grbl reports %s", st)
-    ctx.check(session_established(session),
-              "the cloud client never established its service session (no credentials, no "
-              "network, or the service refused) - cloud mode not proven")
     st, cam2 = fc.get("/cam/status")
     ev["cam_after"] = cam2
     ctx.check(st == 200, "camera status lost after the switch back")
@@ -214,57 +307,13 @@ def mode_switch(ctx):
         hw.sysfs_write("pic/lid_led", lamp0)
         ctx.log("lid lamp: cloud mode left %s, restored %s", lamp1, lamp0)
 
-
-@test("cloud.gfhome-homing", title="Glowforge web-service homing ($H with homing_mode=gfcloud)",
-      subsystem="cloud", kind="operator", mode="grbl", est_min=5,
-      covers=_CLOUD_COVERS + [("grblhal-glowforge", "src/**")], requires=[],
-      steps=["homing_mode = gfcloud and cloud credentials configured; bed clear, lid closed.",
-             "Watch the gantry: the service drives it to the corner with camera corrections.",
-             "The machine ends homed, the head parked at the home corner (the position "
-             "counters are re-anchored there)."],
-      description="In grbl mode, $H runs gfhome: the web-service homing session with the "
-                  "head-accelerometer motion witness. The controller returns to Idle with "
-                  "homed:true within the session timeout, and the operator confirms the head "
-                  "reached the home corner.")
-def gfhome_homing(ctx):
-    fc = ctx.forgectrl
-    ev = ctx.evidence
-    settings = fc.settings()
-    hm = settings.get("homing_mode")
-    ev["homing_mode"] = hm
-    ctx.check(hm == "gfcloud", "homing_mode is %r, this test needs gfcloud", hm)
-    ctx.instruct("Bed clear, lid closed, head anywhere. Watch the gantry during homing.")
+    # -- the web-service homing from grbl mode --------------------------------
+    ev["homing_mode"] = (fc.settings() or {}).get("homing_mode")
+    ctx.check(ev["homing_mode"] == "gfcloud", "homing_mode is %r; $H needs gfcloud", ev["homing_mode"])
     with ctx.grbl() as g:
-        st = g.status_report()["state"]
-        ctx.check(st.startswith("Idle") or st.startswith("Alarm"), "controller is %s", st)
-        if st.startswith("Alarm"):
-            g.command("$X")
-        t0 = time.time()
-        g.send_raw(b"$H\n")
-        homed = False
-        state = None
-        while time.time() - t0 < 600:
-            ctx.checkpoint()
-            s = fc.status()
-            state = s.get("state")
-            try:
-                gs = g.status_report()["state"]
-            except hw.HwError:
-                gs = "?"
-            if s.get("homed") and gs.startswith("Idle"):
-                homed = True
-                break
-            if gs.startswith("Alarm"):
-                break
-            time.sleep(2)
-        ev["homing_s"] = round(time.time() - t0, 1)
-        ev["homed"] = homed
-        ctx.log("homing: homed=%s after %.1f s (kernel %s, grbl %s)", homed, ev["homing_s"], state, gs)
-    ctx.check(homed, "homing did not complete (grbl %s)", gs)
-    ctx.confirm("Did the head travel to the home corner under camera corrections and stop there?")
-    # homed: the counters are re-anchored at the corner, where the head stays
-    ctx.counters_rezeroed()
-    ctx.check(fc.wait_idle(15, abort=ctx.aborted), "machine not idle after homing")
+        gfhome_homing(ctx, ev, g)
+    ctx.log("PASS: grbl -> cloud (session, hunt with the lid open, lens homed, airflow unjudged) -> "
+            "grbl (port open, %s), then $H homed in %.1f s", ev["grbl_state"], ev["homing_s"])
 
 
 # ---- lid / button behavior of a cloud job (the factory's) ------------------
@@ -337,6 +386,12 @@ def wait_log(ctx, offset, needles, timeout, poll=0.5):
             break
         time.sleep(poll)
     return found
+
+
+def log_has(offset, needle):
+    """True when the gfcloud log carries needle since offset (one read;
+    the condition an `act` waits on)."""
+    return any(needle in ln for ln in log_lines_since(GFCLOUD_LOG, offset))
 
 
 def action_finish_index(lines, action):
@@ -569,8 +624,12 @@ COMPLETED = 'finished with event ":completed"'
 PAUSE_LINES = ("button pressed mid-run; pausing", "paused at")
 RESUME_LINES = ("button pressed while paused", "resuming (laser lead")
 RESUME_REFUSED = "resume refused"
+# A button press during a print is seen through the run loop's own line;
+# the judgment of what it did (check_pause_resume) follows the wait.
+PRESS_TIMEOUT_S = 90
 CLOUD_STEP = ("Cloud credentials configured; the machine in cloud mode (the test switches once from "
               "GRBL mode and stays in cloud mode; switch back on the panel when done).")
+LID_STEP = "Lid and interlock steps are standing instructions: the test watches the switches."
 
 
 def judge_abort_tail(ctx, ev, offset, tag, fin):
@@ -598,9 +657,10 @@ def judge_abort_tail(ctx, ev, offset, tag, fin):
                                          "an open lid",
       subsystem="cloud", kind="live", est_min=11,
       covers=_CLOUD_COVERS + [("forgectrl", "src/super.c")],
-      requires=["laser.emission-witness"],
-      steps=[CLOUD_STEP, "The app open in a browser; scrap on the bed and a small engrave/score job "
-                         "ready - the test runs TWO prints.",
+      requires=["laser.emission-witness"], actions=["button", "lid", "interlock"],
+      steps=[CLOUD_STEP, LID_STEP,
+             "The app open in a browser; scrap on the bed and a small engrave/score job "
+             "ready - the test runs TWO prints.",
              "Be able to open the remote-interlock loop for the second print: unplug the Pro's "
              "interlock plug, or pull the jumper at J8 on a Basic/Plus. Restore it at the end.",
              "Print 1: press the button to start, open the lid a few seconds in. Print 2: press the "
@@ -622,8 +682,8 @@ def lid_interlock_abort(ctx):
     ctx.instruct(APP_PRINT_CUE)
     got = wait_print_running(ctx, offset, 300)
     ctx.check(got, "print 1 never reached its run within 300 s (not started, or the button not pressed)")
-    ctx.instruct("The head is moving. Open the lid NOW, then click Done. Leave it open until the head "
-                 "has returned to the corner.")
+    ctx.act("lid", "open", text="The head is moving: leave the lid open until the head has returned "
+            "to the corner.", timeout=60)
     needles = ["lid opened", "lid opened mid-run; stopping motion", "start return home",
                "return home complete"]
     got = wait_log(ctx, offset, needles, 90)
@@ -652,9 +712,7 @@ def lid_interlock_abort(ctx):
     ctx.check(got["start return home"] and got["return home complete"],
               "the park did not run to completion with the lid open")
     judge_abort_tail(ctx, ev, offset, "lid", fin)
-    ctx.confirm("Did the head stop as soon as the lid opened and go straight home with the lid "
-                "still open, and does the app show the print as cancelled?")
-    ctx.instruct("Close the lid, then click Done.")
+    ctx.act("lid", "close")
     settle_cloud(ctx, offset)
 
     # -- print 2: the interlock, with the lid opened during the park ---------
@@ -662,8 +720,7 @@ def lid_interlock_abort(ctx):
     ctx.instruct(APP_PRINT_CUE)
     got = wait_print_running(ctx, offset, 300)
     ctx.check(got, "print 2 never reached its run within 300 s (not started, or the button not pressed)")
-    ctx.instruct("The head is moving. Open the INTERLOCK loop now (unplug it / pull the jumper), then "
-                 "click Done.")
+    ctx.act("interlock", "open", text="The head is moving.", timeout=60)
     sw = (ctx.forgectrl.status().get("switches") or {})
     ev["interlock_ok_after_pull"] = sw.get("interlock_ok")
     ctx.check(sw.get("interlock_ok") is False,
@@ -672,8 +729,8 @@ def lid_interlock_abort(ctx):
     got = wait_log(ctx, offset, [stop_line, "start return home"], 90)
     ctx.check(got[stop_line], "the interlock open did not stop the run")
     ctx.check(got["start return home"], "the abort did not start the return home")
-    ctx.instruct("The head is on its way back. Open the LID now as well, then click Done - leave both "
-                 "open until the head has stopped.")
+    ctx.act("lid", "open", text="The head is on its way back: leave both open until it has stopped.",
+            timeout=60)
     done = wait_log(ctx, offset, ["return home complete"], 90)
     fin = wait_action_finished(ctx, offset, "print", 60)
     ev["interlock_log"] = {stop_line: message(got[stop_line]),
@@ -689,9 +746,8 @@ def lid_interlock_abort(ctx):
     ctx.check(sw.get("lid") is False,
               "the lid was not open at the end of the park - the park's immunity was not exercised")
     judge_abort_tail(ctx, ev, offset, "interlock", fin)
-    ctx.confirm("Did the head stop when the interlock opened and go back to the corner without the "
-                "open lid interrupting it, and does the app show the print as cancelled?")
-    ctx.instruct("Close the lid and restore the interlock loop (plug/jumper back in), then click Done.")
+    ctx.act("lid", "close")
+    ctx.act("interlock", "close")
     sw = (ctx.forgectrl.status().get("switches") or {})
     ev["restored"] = {"lid": sw.get("lid"), "interlock_ok": sw.get("interlock_ok")}
     ctx.check(sw.get("interlock_ok"), "the interlock loop is still open - restore it before continuing")
@@ -703,9 +759,10 @@ def lid_interlock_abort(ctx):
 
 @test("cloud.lid-during-button-wait", title="Lid open at the cloud button prompt cancels the print",
       subsystem="cloud", kind="operator", est_min=6,
-      covers=_CLOUD_COVERS, requires=[],
-      steps=[CLOUD_STEP, "The app open; any small job ready (nothing will fire).",
-             "Print from the app; when the button lights white, do NOT press it - open the lid."],
+      covers=_CLOUD_COVERS, requires=[], actions=["lid"],
+      steps=[CLOUD_STEP, LID_STEP, "The app open; any small job ready (nothing will fire).",
+             "Print from the app; when the button lights white, do NOT press it - open the lid, and "
+             "close it when told."],
       description="A cloud print waiting for the button is cancelled by the lid: the wait ends "
                   "with the lid named as the reason, the laser latch relocks, the armed window "
                   "closes, no run starts, and the job ends ':cancelled'.")
@@ -716,7 +773,7 @@ def lid_during_button_wait(ctx):
                  "Print in the app. When the button lights white, do NOT press it.")
     got = wait_log(ctx, offset, ["waiting for button"], 300)
     ctx.check(got["waiting for button"], "the print never reached the button wait")
-    ctx.instruct("The button is lit. Open the lid now (do not press the button), then click Done.")
+    ctx.act("lid", "open", text="The button is lit: do NOT press it.", timeout=120)
     relock = "button wait lid opened - relocking the laser"
     got = wait_log(ctx, offset, [relock], 60)
     fin = wait_action_finished(ctx, offset, "print", 60)
@@ -742,62 +799,22 @@ def lid_during_button_wait(ctx):
     ev["latch_locked"] = latch_locked()
     ctx.check(not ev["armed_after"], "armed window still open after the cancel")
     ctx.check(ev["latch_locked"], "kernel latch not locked after the cancel")
-    ctx.confirm("Did the button go dark when the lid opened, with no motion, and does the app show "
-                "the print as cancelled?")
-    ctx.instruct("Close the lid, then click Done.")
+    ev["button_dark"] = hw.button_lit()
+    ctx.check(ev["button_dark"] is False, "the button is still lit after the cancel (%s)", ev["button_dark"])
+    ctx.act("lid", "close")
     settle_cloud(ctx, offset)
-    ctx.log("PASS: lid open at the button prompt cancelled the print; latch locked, armed=false")
-
-
-@test("cloud.hunt-lid-open", title="A cloud hunt runs with the lid open",
-      subsystem="cloud", kind="operator", est_min=5,
-      covers=_CLOUD_COVERS + [("forgectrl", "src/super.c")], requires=[],
-      steps=[CLOUD_STEP, "Bed clear.",
-             "Open the lid when asked and leave it open through the connect-time hunt of the fresh "
-             "cloud client the test starts (in cloud mode the client is restarted; from GRBL mode "
-             "the switch is made)."],
-      description="The service's connect-time hunt (lens homing plus its XY hunt) is not gated by "
-                  "the lid: it runs and reports ':completed' with the lid open, as the factory's does. "
-                  "The service's moves after the lid closes again are waited out.")
-def hunt_lid_open(ctx):
-    ev = ctx.evidence
-    ctx.instruct("Open the lid and leave it open, then click Done.")
-    sw = (ctx.forgectrl.status().get("switches") or {})
-    ev["lid_before"] = sw.get("lid")
-    ctx.check(not sw.get("lid"), "the lid reads closed (%s)", sw)
-    offset = fresh_cloud_connect(ctx)
-    # The hunt's own terminal line ("hunt [id]: finished with event ..."):
-    # it must be :completed, and no lid refusal may precede it. Service
-    # motions AFTER the hunt are rightly refused with the lid open and
-    # are outside this window.
-    hunt_line = wait_action_finished(ctx, offset, "hunt", HUNT_TIMEOUT_S)
-    ev["hunt_line"] = message(hunt_line)
-    ctx.check(hunt_line, "the service sent no hunt (or it never finished) within %d s of the session",
-              HUNT_TIMEOUT_S)
-    lines = log_lines_since(GFCLOUD_LOG, offset)
-    hunt_i = action_finish_index(lines, "hunt")
-    refused = [ln for ln in lines[:hunt_i] if "unsafe to move" in ln]
-    ev["refusals_before_hunt_end"] = len(refused)
-    ctx.check(not refused, "the hunt was refused for the lid (%d 'unsafe to move')", len(refused))
-    ctx.check(COMPLETED in hunt_line, "the hunt did not complete: %s", ev["hunt_line"])
-    ctx.log("hunt with the lid open: %s", ev["hunt_line"])
-    ctx.confirm("Did the lens home (Z motion) with the lid open, with no error in the app?")
-    ctx.instruct("Close the lid, then click Done. (The service now re-finds the head: several "
-                 "moves with lid images between them - the test waits them out.)")
-    settle_cloud(ctx, offset)
-    lines = log_lines_since(GFCLOUD_LOG, offset)
-    ev["motions_after_lid_close"] = sum(1 for ln in lines if "motion [" in ln and COMPLETED in ln)
-    ctx.log("PASS: the connect-time hunt ran and completed with the lid open; %d service motion(s) "
-            "completed after the lid closed", ev["motions_after_lid_close"])
+    ctx.log("PASS: lid open at the button prompt cancelled the print; latch locked, armed=false, "
+            "button dark")
 
 
 @test("cloud.pause-resume", title="Button pauses and resumes a cloud print (factory backtrack + lead)",
       subsystem="cloud", kind="live", est_min=8,
       covers=_CLOUD_COVERS + [("forgectrl", "src/main.c")],
-      requires=["laser.emission-witness"],
+      requires=["laser.emission-witness"], actions=["button"],
       steps=[CLOUD_STEP, "The app open; scrap on the bed and a small engrave/score job (about 60 s) ready.",
              "Print from the app and press the button when it lights; a few seconds into the run "
-             "press it again (pause), wait ~3 s, press again (resume); let the job finish."],
+             "the test asks for a press (pause) and, once the head has stopped, another (resume); "
+             "let the job finish and confirm it in the app."],
       description="Pressing the button during a cloud print pauses it the factory way - controlled "
                   "stop, backtrack with the laser off, print:paused - and the next press resumes "
                   "with the laser-off lead, print:resumed; the job then completes and parks. The "
@@ -813,9 +830,13 @@ def pause_resume(ctx):
     ctx.instruct(APP_PRINT_CUE)
     got = wait_print_running(ctx, offset, 300)
     ctx.check(got, "the print never reached its run within 300 s (not started, or the button not pressed)")
-    ctx.instruct("The head is moving. Press the button once NOW (pause), watch the head stop and back up "
-                 "a few millimeters, wait about 3 seconds, press it again (resume), then click Done.")
-    got = wait_log(ctx, offset, list(PAUSE_LINES + RESUME_LINES), 90)
+    ctx.act("button", "press", text="The head is moving: the press pauses the print.",
+            until=lambda: log_has(offset, PAUSE_LINES[0]), timeout=PRESS_TIMEOUT_S, fail=False)
+    ctx.act("button", "press", text="The print is paused (the head backed up a few millimeters): "
+            "the press resumes it.",
+            until=lambda: log_has(offset, RESUME_LINES[0]) or log_has(offset, RESUME_REFUSED),
+            timeout=PRESS_TIMEOUT_S, fail=False)
+    got = wait_log(ctx, offset, list(PAUSE_LINES + RESUME_LINES), 10)
     ev["log"] = {k: bool(v) for k, v in got.items()}
     check_pause_resume(ctx, got, offset)
     st, cs = ctx.forgectrl.get("/cool/status")
@@ -832,8 +853,6 @@ def pause_resume(ctx):
                 if "relocking the laser" in ln or ("print [" in ln and CANCELLED in ln)]
     ev["relock_or_cancel_lines"] = len(relocked)
     ctx.check(not relocked, "the pause relocked or cancelled the job (%s)", relocked[:2])
-    ctx.confirm("Did the head stop and back up a few millimeters (laser off) on the first press, "
-                "resume on the second, and did the job finish and the app show it complete?")
 
     # The job's lifecycle, from the same print: a warm-up before the first
     # fire and a rest after the park are equipment protection the service
@@ -871,8 +890,8 @@ def pause_resume(ctx):
     ctx.log("progress reported against %s bytes", declared)
     ctx.check(declared is not None, "the print reported no progress at all")
     ctx.check(declared and declared > 0, "the print reported progress against %s bytes", declared)
-    ctx.confirm("Did the app show the print's progress advancing while it cut, rather than "
-                "standing still or jumping straight to nearly finished?")
+    ctx.confirm("In the app: did the print's progress advance while it cut (not standing still, "
+                "not jumping straight to nearly finished), and does the app show it complete?")
 
     # The job's envelope, from the same print: the client derives the
     # limits the header carries (a cut job carries the coolant window and
@@ -902,13 +921,14 @@ def pause_resume(ctx):
 @test("cloud.oversize-stream", title="A print longer than the ring is fed while it plays",
       subsystem="cloud", kind="live", est_min=12,
       covers=_CLOUD_COVERS,
-      requires=["cloud.lid-interlock-abort", "cloud.pause-resume"],
+      requires=["cloud.lid-interlock-abort", "cloud.pause-resume"], actions=["button"],
       steps=[CLOUD_STEP,
              "Scrap on the bed and a LONG job ready in the app - one whose run time is longer "
              "than the ring holds (over an hour at the usual print tick). A full-bed raster "
              "engrave is the easy way to get one.",
-             "Print from the app and press the button when it lights. Let it cut for about two "
-             "minutes, pause and resume it with the button, then cancel the print from the app."],
+             "Print from the app and press the button when it lights. The test lets it cut for "
+             "about two minutes, then asks for a press (pause) and another (resume), then for the "
+             "cancel from the app."],
       description="The service sends one pulse file for a print however long it is, and a long one "
                   "is several times the ring: the machine holds the job in memory, fills the ring, "
                   "starts, and tops the ring up as it drains. This checks the signature of that - "
@@ -939,7 +959,11 @@ def oversize_stream(ctx):
     # keeps growing while it plays.
     first = read_program_total()
     ctx.log("program total at the start of the run: %s bytes", first)
-    ctx.instruct("Let it cut for about two minutes, then click Done (do not cancel yet).")
+    ctx.notice("Cutting: the test watches the ring being topped up for two minutes. Do nothing yet.")
+    try:
+        ctx.sleep(120)
+    finally:
+        ctx.clear_notice()
     grown = read_program_total()
     ev["total_first"], ev["total_later"] = first, grown
     ctx.log("program total two minutes in: %s bytes (+%s)", grown, (grown or 0) - (first or 0))
@@ -967,9 +991,13 @@ def oversize_stream(ctx):
     # streamed print retraces and leads back on exactly like a preloaded one.
     ev["max_backtrack"] = hw.sysfs_int("cnc/max_backtrack", 0)
     ctx.log("max_backtrack while the feed runs: %s steps", ev["max_backtrack"])
-    ctx.instruct("Press the button once (pause), watch the head stop and back up a few "
-                 "millimeters, wait about 3 seconds, press it again (resume), then click Done.")
-    got = wait_log(ctx, offset, list(PAUSE_LINES + RESUME_LINES), 90)
+    ctx.act("button", "press", text="The press pauses the live-fed print.",
+            until=lambda: log_has(offset, PAUSE_LINES[0]), timeout=PRESS_TIMEOUT_S, fail=False)
+    ctx.act("button", "press", text="The print is paused (the head backed up a few millimeters): "
+            "the press resumes it.",
+            until=lambda: log_has(offset, RESUME_LINES[0]) or log_has(offset, RESUME_REFUSED),
+            timeout=PRESS_TIMEOUT_S, fail=False)
+    got = wait_log(ctx, offset, list(PAUSE_LINES + RESUME_LINES), 10)
     ev["pause_log"] = {k: bool(v) for k, v in got.items()}
     check_pause_resume(ctx, got, offset, what="the live-fed run")
     backtracked = [ln for ln in log_lines_since(GFCLOUD_LOG, offset)
@@ -978,11 +1006,12 @@ def oversize_stream(ctx):
     ctx.check(not backtracked, "the live-fed pause could not back up (%s)", backtracked[:1])
     ctx.check(hw.sysfs_int("cnc/underruns", 0) == before,
               "the pause or the resume starved the ring")
-    ctx.confirm("Did the head back up a few millimeters with the laser off on the first press, "
-                "and pick the cut back up on the second?")
 
-    ctx.instruct("Now cancel the print from the app.")
-    fin = wait_action_finished(ctx, offset, "print", 300)
+    ctx.notice("Now cancel the print from the app. The test watches for the cancel.")
+    try:
+        fin = wait_action_finished(ctx, offset, "print", 300)
+    finally:
+        ctx.clear_notice()
     ev["print_finished"] = message(fin)
     ctx.check(fin, "the cancelled print did not finish within 300 s")
     ctx.check(CANCELLED in fin, "the cancelled print did not report cancelled: %s", message(fin))
@@ -998,11 +1027,13 @@ def oversize_stream(ctx):
                                         "by the app",
       subsystem="cloud", kind="live", est_min=12,
       covers=_CLOUD_COVERS, requires=["cloud.pause-resume", "cloud.lid-interlock-abort"],
-      steps=[CLOUD_STEP, "The app open in a browser; scrap on the bed and a small engrave/score job "
-                         "ready - the test runs TWO prints.",
-             "Print 1: press the button to start, press it again a few seconds in (pause), then open "
-             "the lid.",
-             "Print 2: press the button to start, then cancel the print from the app while it runs."],
+      actions=["button", "lid"],
+      steps=[CLOUD_STEP, LID_STEP,
+             "The app open in a browser; scrap on the bed and a small engrave/score job "
+             "ready - the test runs TWO prints.",
+             "Print 1: press the button to start; when asked, press it again (pause), then open "
+             "the lid and leave it open until the head is back; close it when told.",
+             "Print 2: press the button to start, then cancel the print from the app when asked."],
       description="The two ways a print ends other than finishing, each from the state the factory ends "
                   "it in: a job paused on the button is cancelled by the lid - there is no resume past a "
                   "lid open - and a running job is cancelled from the app. Both take the same tail: the "
@@ -1016,14 +1047,14 @@ def pause_cancel_paths(ctx):
     ctx.instruct(APP_PRINT_CUE)
     got = wait_print_running(ctx, offset, 300)
     ctx.check(got, "print 1 never reached its run within 300 s (not started, or the button not pressed)")
-    ctx.instruct("The head is moving. Press the button once NOW (pause), watch it stop and back up a "
-                 "few millimeters, then click Done.")
-    got = wait_log(ctx, offset, list(PAUSE_LINES), 90)
+    ctx.act("button", "press", text="The head is moving: the press pauses the print.",
+            until=lambda: log_has(offset, PAUSE_LINES[0]), timeout=PRESS_TIMEOUT_S, fail=False)
+    got = wait_log(ctx, offset, list(PAUSE_LINES), 10)
     ev["paused"] = {k: bool(v) for k, v in got.items()}
     ctx.check(got["button pressed mid-run; pausing"], "the press did not pause print 1")
     ctx.check(got["paused at"], "the pause did not settle (no 'paused at')")
-    ctx.instruct("The print is paused. Open the lid NOW, then click Done - leave it open until the head "
-                 "has returned to the corner.")
+    ctx.act("lid", "open", text="The print is paused: leave the lid open until the head has returned "
+            "to the corner.", timeout=60)
     lid_stop = "lid opened mid-run; stopping motion"
     got = wait_log(ctx, offset, [lid_stop, "start return home", "return home complete"], 120)
     fin1 = wait_action_finished(ctx, offset, "print", 60)
@@ -1046,7 +1077,7 @@ def pause_cancel_paths(ctx):
     ctx.check(not ev["armed_after_print1"], "armed window still open after the paused print was cancelled")
     ctx.check(ev["latch_locked_after_print1"],
               "kernel latch not locked after the paused print was cancelled")
-    ctx.instruct("Close the lid, then click Done.")
+    ctx.act("lid", "close")
     settle_cloud(ctx, offset)
 
     # -- print 2: cancelled from the app ------------------------------------
@@ -1054,9 +1085,12 @@ def pause_cancel_paths(ctx):
     ctx.instruct(APP_PRINT_CUE)
     got = wait_print_running(ctx, offset, 300)
     ctx.check(got, "print 2 never reached its run within 300 s (not started, or the button not pressed)")
-    ctx.instruct("The head is moving. Cancel the print from the app now, then click Done.")
+    ctx.notice("The head is moving: cancel the print from the app now. The test watches for it.")
     svc_stop = "action cancelled mid-run; stopping motion"
-    got = wait_log(ctx, offset, [svc_stop, "start return home", "return home complete"], 120)
+    try:
+        got = wait_log(ctx, offset, [svc_stop, "start return home", "return home complete"], 120)
+    finally:
+        ctx.clear_notice()
     fin2 = wait_action_finished(ctx, offset, "print", 60)
     ev["service_cancel"] = {k: message(v) for k, v in got.items()}
     ev["service_cancel"]["print finished"] = message(fin2)
@@ -1076,7 +1110,8 @@ def pause_cancel_paths(ctx):
     ev["latch_locked_after_print2"] = latch_locked()
     ctx.check(not ev["armed_after_print2"], "armed window still open after the app cancel")
     ctx.check(ev["latch_locked_after_print2"], "kernel latch not locked after the app cancel")
-    ctx.confirm("Did both prints end back at the corner, dark, and does the app show both as cancelled?")
+    ev["button_dark"] = hw.button_lit()
+    ctx.check(ev["button_dark"] is False, "the button is still lit after the cancel (%s)", ev["button_dark"])
     settle_cloud(ctx, offset)
     ctx.log("PASS: a paused print cancelled by the lid and a running print cancelled from the app both "
             "stopped, parked, relocked and reported ':cancelled'")

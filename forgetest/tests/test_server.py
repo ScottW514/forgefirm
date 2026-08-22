@@ -376,8 +376,22 @@ class ServerTests(unittest.TestCase):
         marker = os.environ["FORGETEST_MARKER"]
         with open(marker, "w") as f:
             f.write("x fake.slow\n")
-        r = Runner(self.log, self.man, self.reg, self.bench)
-        self.assertTrue(any("recovered" in m for m in r.messages))
+        import logging
+        from forgetest.runner import journal
+        seen = []
+
+        class Catch(logging.Handler):
+            def emit(self, rec):
+                seen.append(rec.getMessage())
+        h = Catch()
+        journal.addHandler(h)
+        try:
+            r = Runner(self.log, self.man, self.reg, self.bench)
+        finally:
+            journal.removeHandler(h)
+        # the recovery is a journal line, not a page message
+        self.assertTrue(any("recovered" in m for m in seen), seen)
+        self.assertNotIn("messages", r.state()[0])
         self.assertFalse(os.path.exists(marker))
 
     def test_10_state_is_conditional(self):

@@ -18,7 +18,7 @@ from . import catalog as _catalog
 from . import manifest as _manifest
 from . import server as _server
 from .log import Log, data_dir
-from .runner import Runner
+from .runner import Runner, configure_journal
 
 
 def main(argv=None):
@@ -36,6 +36,7 @@ def main(argv=None):
         return 2
     registry = _catalog.load_suite()
     os.makedirs(data_dir(), exist_ok=True)
+    configure_journal()
     log = Log()
     bench = _bench.Bench()
     runner = Runner(log, manifest, registry, bench)
@@ -52,8 +53,6 @@ def main(argv=None):
     print("forgetest %s: %d tests, image %s (%s), listening on %s:%d"
           % (VERSION, len(registry), manifest.version, (manifest.content_sha or "")[:12],
              args.host, args.port), file=sys.stderr, flush=True)
-    for m in runner.messages:
-        print("forgetest: %s" % m, file=sys.stderr, flush=True)
     th = threading.Thread(target=srv.serve_forever, name="forgetest-http", daemon=True)
     th.start()
     try:

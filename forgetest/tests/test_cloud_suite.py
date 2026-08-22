@@ -1,8 +1,9 @@
 """The cloud.* job-behavior tests against a fake forgectrl and a replayed
 gfcloud log: the real test functions run under the real runner Context,
-the operator prompts answered by a script that also drives the replay
-(open the lid -> the machine's lid reads open; close it -> the service's
-re-hunt lines land). The log lines are the machine's own: bench excerpts
+the operator prompts answered - and the standing notices of the machine
+actions acted on - by a script that also drives the replay (open the
+lid -> the machine's lid reads open; close it -> the service's re-hunt
+lines land). The log lines are the machine's own: bench excerpts
 (the lid-abort, button-wait, and lid-open-hunt runs) and, for the pause,
 the run loop's lines as its host test emits them on the print skeleton
 of the lid-abort excerpt.
@@ -62,13 +63,16 @@ def cut(lines, marker, count=1):
 
 
 class Script:
-    """Answers every prompt with its first option; a hook per prompt
-    substring drives the fake machine and the log replay."""
+    """Answers every prompt with its first option; a hook per prompt or
+    notice substring drives the fake machine and the log replay (a
+    machine action is a notice the test watches the machine for, so the
+    hook is what makes the machine show it)."""
 
     def __init__(self, run, hooks=None):
         self.run = run
         self.hooks = hooks or {}
         self.asked = []
+        self.noticed = []
         self.th = threading.Thread(target=self._loop, daemon=True)
         self.stop = False
 
@@ -76,16 +80,25 @@ class Script:
         self.th.start()
         return self
 
+    def _fire(self, text):
+        for key, fn in self.hooks.items():
+            if key in text:
+                fn()
+
     def _loop(self):
         seen = None
+        seen_n = None
         while not self.stop:
+            n = self.run.notice
+            if n and n["id"] != seen_n:
+                seen_n = n["id"]
+                self.noticed.append(n["text"])
+                self._fire(n["text"])
             p = self.run.prompt
             if p and p["id"] != seen:
                 seen = p["id"]
                 self.asked.append(p["question"])
-                for key, fn in self.hooks.items():
-                    if key in p["question"]:
-                        fn()
+                self._fire(p["question"])
                 self.run.answer(p["id"], p["options"][0])
             time.sleep(0.02)
 
@@ -100,13 +113,23 @@ class CloudSuiteTests(unittest.TestCase):
         self._attr("cnc/interlock_circuit", "45")          # latch locked (bit 3)
         self._pos(0, 0, 3)
         os.environ["GF_SYSFS_ROOT"] = self.sysfs
+        # the button LEDs, dark (the tests check a cancel leaves them so)
+        for n in ("button_led_1", "button_led_2", "button_led_3"):
+            os.makedirs(os.path.join(self.tmp, "leds", n), exist_ok=True)
+            with open(os.path.join(self.tmp, "leds", n, "brightness"), "w") as f:
+                f.write("0")
+        os.environ["GF_LEDS_ROOT"] = os.path.join(self.tmp, "leds") + os.sep
         self.fc = helpers.FakeForgectrl().start()
+        self.grbl = None
         self.fclog = os.path.join(self.tmp, "forgectrl.log")
         open(self.fclog, "wb").close()
+        self.homelog = os.path.join(self.tmp, "gfhome.log")
+        open(self.homelog, "wb").close()
         self.saved = (cloud.GFCLOUD_LOG, cloud.FORGECTRL_LOG, cloud.QUIET_S, cloud.QUIET_TIMEOUT_S,
-                      cloud.HUNT_TIMEOUT_S)
+                      cloud.HUNT_TIMEOUT_S, cloud.GFHOME_LOG)
         cloud.GFCLOUD_LOG = self.log
         cloud.FORGECTRL_LOG = self.fclog
+        cloud.GFHOME_LOG = self.homelog
         self.engine_line = EFFECTIVE_LINE      # what the engine logs at the print; None = nothing
         self.client_limits = True              # the client names its header limits
         cloud.QUIET_S = 0.4
@@ -118,9 +141,12 @@ class CloudSuiteTests(unittest.TestCase):
         if self.script:
             self.script.stop = True
         self.fc.stop()
+        if self.grbl:
+            self.grbl.stop()
         (cloud.GFCLOUD_LOG, cloud.FORGECTRL_LOG, cloud.QUIET_S, cloud.QUIET_TIMEOUT_S,
-         cloud.HUNT_TIMEOUT_S) = self.saved
+         cloud.HUNT_TIMEOUT_S, cloud.GFHOME_LOG) = self.saved
         os.environ.pop("GF_SYSFS_ROOT", None)
+        os.environ.pop("GF_LEDS_ROOT", None)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     # -- fakes -----------------------------------------------------------
@@ -222,80 +248,107 @@ class CloudSuiteTests(unittest.TestCase):
         self.assertFails(cloud.enter_cloud, "still running service moves")
 
     # -- the hunt with the lid open ------------------------------------------
-    def test_hunt_lid_open_restarts_the_client_in_cloud_mode(self):
-        self.in_cloud(pid=1927)
+    # -- the mode switch: hunt with the lid open, then $H -----------------------
+    HUNT_RUN_SAMPLE = {"phase": "run", "verdict": "ok", "armed": False,
+                       "fan_gates": {"exhaust": {"state": "unjudged", "reading": 0, "floor": 500}}}
+
+    def mode_switch_setup(self, hunt_lines=None, home_complete=True):
+        """The fakes a mode-switch run needs: grbl to answer $H, the lid
+        lamp attr, homing_mode = gfcloud, the service lines landing on
+        the switch to cloud (the hunt reads as a run to the cooling
+        engine while it lasts), the re-hunt on the lid close, and gfhome
+        finishing the homing after $H."""
+        self.grbl = helpers.FakeGrbl().start()
+        os.makedirs(self.sysfs + "pic", exist_ok=True)
+        self._attr("pic/lid_led", "236")
+        self.fc.state["settings"]["homing_mode"] = "gfcloud"
         lines = fixture("huntlid")
         pre, post = cut(lines, "gfuiservice:__init__ INITIALIZED")
         hunt_part, close_part = cut(post, "_switch_event lid closed")
-        self.append(pre)
+        if hunt_lines is not None:
+            hunt_part = hunt_lines(hunt_part)
+        fc = self.fc
 
         def on_post(path, form):
-            if path == "/controller/stop":
-                self.fc.state["mode"] = dict(self.fc.state["mode"], controller="standby", pid=0)
-            elif path == "/controller/start":
-                self.fc.state["mode"] = dict(self.fc.state["mode"], controller="running", pid=2278)
-                self.append(hunt_part, delay=0.2)
+            if path == "/mode" and form.get("controller") == "cloud":
+                fc.state["cool"] = dict(self.HUNT_RUN_SAMPLE)
+
+                def land():
+                    self.append(pre, delay=0.0)
+                    time.sleep(0.3)
+                    self.append(hunt_part, delay=0.0)
+                    time.sleep(4.0)          # the hunt outlasts the session wait on the bench
+                    fc.state["cool"] = {"phase": "idle", "armed": False, "hold": False}
+                threading.Thread(target=land, daemon=True).start()
+            elif path == "/mode" and form.get("controller") == "grbl":
+                self.grbl.state = "Idle"
             return None
         self.fc.on_post = on_post
 
         def lid_closed():
             self.lid(True)
             self.append(close_part, delay=0.2)
-        run = self.run_test(cloud.hunt_lid_open,
-                            hooks={"Open the lid": lambda: self.lid(False), "Close the lid": lid_closed},
-                            test_id="cloud.hunt-lid-open")
-        self.assertEqual([p for p, _ in self.fc.posts], ["/controller/stop", "/controller/start"])
+
+        def homing():
+            self.grbl.state = "Home"
+            time.sleep(0.4)
+            self.grbl.state = "Idle"
+            self.fc.state["status"]["homed"] = True
+            if home_complete:
+                with open(self.homelog, "ab") as f:
+                    f.write(b"2026-08-17T09:46:00.000000+00:00 gfhome[2300] INFO homing complete "
+                            b"(service quiet 8s, 3 motion windows)\n")
+        self.home_hook = homing
+        return {"Open the lid.": lambda: self.lid(False), "Close the lid.": lid_closed}
+
+    def wait_home_command(self):
+        while "$H" not in self.grbl.sent:
+            time.sleep(0.02)
+        self.home_hook()
+
+    def test_mode_switch_round_trip_with_the_hunt_lid_open_and_the_homing(self):
+        hooks = self.mode_switch_setup()
+        threading.Thread(target=self.wait_home_command, daemon=True).start()
+        run = self.run_test(cloud.mode_switch, hooks=hooks, test_id="cloud.mode-switch")
         ev = run.evidence
+        posts = [(p, f.get("controller")) for p, f in self.fc.posts if p == "/mode"]
+        self.assertEqual(posts, [("/mode", "cloud"), ("/mode", "grbl")])
+        self.assertEqual(self.fc.state["mode"]["mode"], "grbl")
         self.assertIn(":completed", ev["hunt_line"])
         self.assertEqual(ev["refusals_before_hunt_end"], 0)
+        self.assertTrue(ev["lens_homed"])
         self.assertEqual(ev["motions_after_lid_close"], 3)
-        self.assertEqual(self.fc.state["mode"]["mode"], "cloud")     # still cloud
-        self.assertTrue(any("PASS:" in l for l in run.lines))
-        # the prompts, in order: open, confirm lens, close
-        self.assertEqual(len(self.script.asked), 3)
+        self.assertTrue(all(c.get("verdict") != "AIRFLOW" for c in ev["hunt_gates"]))
+        self.assertTrue(ev["homed"])
+        self.assertIn("3 motion windows", ev["gfhome_complete"])
+        self.assertIn("$H", self.grbl.sent)
+        # the lid was a machine action, not a prompt: two notices, no questions
+        self.assertEqual([r["state"] for r in ev["actions"]], ["open", "close"])
+        self.assertEqual(self.script.asked, [])
+        self.assertTrue(any("PASS:" in l for l in run.lines), run.lines[-5:])
 
-    def test_hunt_lid_open_from_grbl_switches_and_stays(self):
-        lines = fixture("huntlid")
-        pre, post = cut(lines, "gfuiservice:__init__ INITIALIZED")
-        hunt_part, close_part = cut(post, "_switch_event lid closed")
-        self.append(pre)
+    def test_mode_switch_fails_when_the_hunt_is_refused_for_the_lid(self):
+        def refused(hunt_part):
+            i = next(i for i, l in enumerate(hunt_part) if "z_axis:home starting z homing cycle" in l)
+            return hunt_part[:i] + ["2026-08-17T09:45:10.595000+00:00 gfcloud[2278] INFO machine:_safe_to_move "
+                                    "lid opened, unsafe to move"] + hunt_part[i:]
+        hooks = self.mode_switch_setup(hunt_lines=refused)
+        self.assertFails(cloud.mode_switch, "refused for the lid", hooks=hooks)
 
-        def on_post(path, form):
-            if path == "/mode":
-                self.append(hunt_part, delay=0.2)
-            return None
-        self.fc.on_post = on_post
-        run = self.run_test(cloud.hunt_lid_open,
-                            hooks={"Open the lid": lambda: self.lid(False),
-                                   "Close the lid": lambda: (self.lid(True), self.append(close_part, delay=0.2))})
-        self.assertEqual([p for p, _ in self.fc.posts], ["/mode"])
-        self.assertEqual(self.fc.state["mode"]["mode"], "cloud")
-        self.assertEqual(run.baseline_captured["mode"], "cloud")
-        self.assertIn(":completed", run.evidence["hunt_line"])
+    def test_mode_switch_fails_when_the_hunt_skipped_the_lens(self):
+        hooks = self.mode_switch_setup(hunt_lines=lambda part: [l for l in part if "z homing cycle" not in l])
+        self.assertFails(cloud.mode_switch, "did not home the lens", hooks=hooks)
 
-    def test_hunt_lid_open_needs_the_lid_open(self):
-        self.in_cloud()
-        self.append(fixture("huntlid"))
-        self.assertFails(cloud.hunt_lid_open, "lid reads closed")
+    def test_mode_switch_fails_when_gfhome_never_saw_the_head_move(self):
+        hooks = self.mode_switch_setup(home_complete=False)
+        threading.Thread(target=self.wait_home_command, daemon=True).start()
+        self.assertFails(cloud.mode_switch, "no 'homing complete' line", hooks=hooks)
 
-    def test_hunt_refused_for_the_lid_fails(self):
-        self.in_cloud(pid=1927)
-        lines = fixture("huntlid")
-        pre, post = cut(lines, "gfuiservice:__init__ INITIALIZED")
-        # a refusal ahead of the hunt's end (the lid gating the hunt would look like this)
-        i = next(i for i, l in enumerate(post) if "z_axis:home starting z homing cycle" in l)
-        post = post[:i] + ["2026-08-17T09:45:10.595000+00:00 gfcloud[2278] INFO machine:_safe_to_move lid opened, unsafe to move"] + post[i:]
-        self.append(pre)
-
-        def on_post(path, form):
-            if path == "/controller/stop":
-                self.fc.state["mode"] = dict(self.fc.state["mode"], controller="standby", pid=0)
-            elif path == "/controller/start":
-                self.fc.state["mode"] = dict(self.fc.state["mode"], controller="running", pid=2278)
-                self.append(post, delay=0.1)
-            return None
-        self.fc.on_post = on_post
-        self.assertFails(cloud.hunt_lid_open, "refused for the lid", hooks={"Open the lid": lambda: self.lid(False)})
+    def test_mode_switch_precheck_needs_gfcloud_homing(self):
+        self.fc.state["settings"]["homing_mode"] = "switches"
+        self.assertIn("needs gfcloud", cloud.homing_mode_is_gfcloud())
+        self.fc.state["settings"]["homing_mode"] = "gfcloud"
+        self.assertIsNone(cloud.homing_mode_is_gfcloud())
 
     # -- pause / resume ---------------------------------------------------------
     def replay_print(self, name, at_run, at_end, tail_delay=0.3):
@@ -327,7 +380,7 @@ class CloudSuiteTests(unittest.TestCase):
         self.append(["2026-08-17T09:41:00.000000+00:00 gfcloud[1522] INFO authentication:authenticate_machine SUCCESS",
                      "2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready",
                      "2026-08-17T09:41:00.900000+00:00 gfcloud[1522] INFO websocket:ws_connect ESTABLISHED"])
-        hooks = self.replay_print("pause", "Press the button once NOW", "current state: MachineState.IDLE")
+        hooks = self.replay_print("pause", "the press pauses the print", "current state: MachineState.IDLE")
         self.fc.state["cool"]["armed"] = True
         run = self.run_test(cloud.pause_resume, hooks=hooks, test_id="cloud.pause-resume")
         ev = run.evidence
@@ -351,7 +404,7 @@ class CloudSuiteTests(unittest.TestCase):
         self.client_limits = False
         self.in_cloud(pid=1522)
         self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
-        hooks = self.replay_print("pause", "Press the button once NOW", "current state: MachineState.IDLE")
+        hooks = self.replay_print("pause", "the press pauses the print", "current state: MachineState.IDLE")
         self.fc.state["cool"]["armed"] = True
         self.assertFails(cloud.pause_resume, "named no job limits", hooks=hooks)
 
@@ -359,7 +412,7 @@ class CloudSuiteTests(unittest.TestCase):
         self.engine_line = EFFECTIVE_LINE.replace("header 33.0", "header none 0.0")
         self.in_cloud(pid=1522)
         self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
-        hooks = self.replay_print("pause", "Press the button once NOW", "current state: MachineState.IDLE")
+        hooks = self.replay_print("pause", "the press pauses the print", "current state: MachineState.IDLE")
         self.fc.state["cool"]["armed"] = True
         self.assertFails(cloud.pause_resume, "never resolved an effective ceiling", hooks=hooks)
 
@@ -372,7 +425,7 @@ class CloudSuiteTests(unittest.TestCase):
         pre, rest = cut(lines, "current state: MachineState.RUNNING")
         pre, rest = pre + [rest[0]], rest[1:]
         hooks = {"Click Done here": lambda: self.append(pre, delay=0.1),
-                 "Press the button once NOW": lambda: self.append(rest, delay=0.05)}
+                 "the press pauses the print": lambda: self.append(rest, delay=0.05)}
         self.assertFails(cloud.pause_resume, "did not complete after the resume", hooks=hooks)
 
     def test_pause_resume_fails_without_the_retraced_restart(self):
@@ -385,7 +438,7 @@ class CloudSuiteTests(unittest.TestCase):
         pre, rest = pre + [rest[0]], rest[1:]
         with self.fast_wait_log():
             hooks = {"Click Done here": lambda: self.append(pre, delay=0.1),
-                     "Press the button once NOW": lambda: self.append(rest, delay=0.05)}
+                     "the press pauses the print": lambda: self.append(rest, delay=0.05)}
             self.assertFails(cloud.pause_resume, "no retraced restart logged", hooks=hooks)
 
     def test_pause_resume_fails_when_the_kernel_refuses_the_resume(self):
@@ -398,7 +451,7 @@ class CloudSuiteTests(unittest.TestCase):
         pre, rest = pre + [rest[0]], rest[1:]
         with self.fast_wait_log():
             hooks = {"Click Done here": lambda: self.append(pre, delay=0.1),
-                     "Press the button once NOW": lambda: self.append(rest, delay=0.05)}
+                     "the press pauses the print": lambda: self.append(rest, delay=0.05)}
             self.assertFails(cloud.pause_resume, "the resume was refused", hooks=hooks)
 
     @contextlib.contextmanager
@@ -410,10 +463,13 @@ class CloudSuiteTests(unittest.TestCase):
         def fast(ctx, offset, needles, timeout, poll=0.5):
             return saved(ctx, offset, needles, min(timeout, 1.5), poll=0.1)
         cloud.wait_log = fast
+        press = cloud.PRESS_TIMEOUT_S
+        cloud.PRESS_TIMEOUT_S = 1.5
         try:
             yield
         finally:
             cloud.wait_log = saved
+            cloud.PRESS_TIMEOUT_S = press
 
     def test_pause_resume_fails_without_the_pause_line(self):
         self.in_cloud(pid=1522)
@@ -423,7 +479,7 @@ class CloudSuiteTests(unittest.TestCase):
         pre, rest = pre + [rest[0]], rest[1:]
         with self.fast_wait_log():
             hooks = {"Click Done here": lambda: self.append(pre, delay=0.1),
-                     "Press the button once NOW": lambda: self.append(rest, delay=0.05)}
+                     "the press pauses the print": lambda: self.append(rest, delay=0.05)}
             self.assertFails(cloud.pause_resume, "did not pause the run", hooks=hooks)
 
     # -- the lid/interlock abort and the button-wait tests, on their excerpts ------
@@ -455,12 +511,12 @@ class CloudSuiteTests(unittest.TestCase):
             self.lid(True)
             self.fc.state["status"]["switches"]["interlock_ok"] = True
         return {"Click Done here": next_print,
-                "Open the lid NOW": lambda: (self.lid(False), self.append(lid_tail, delay=0.05)),
-                "Close the lid, then click Done": lambda: self.lid(True),
-                "Open the INTERLOCK loop now": pull_interlock,
-                "Open the LID now as well": lambda: (self.lid(False),
-                                                     self.append(ilk_park, delay=0.05)),
-                "Close the lid and restore the interlock": restore}
+                "leave the lid open until the head has returned": lambda: (self.lid(False),
+                                                                           self.append(lid_tail, delay=0.05)),
+                "Close the lid.": lambda: self.lid(True),
+                "Open the remote-interlock loop": pull_interlock,
+                "on its way back": lambda: (self.lid(False), self.append(ilk_park, delay=0.05)),
+                "Restore the remote-interlock loop": restore}
 
     def test_lid_interlock_abort_on_the_bench_excerpt(self):
         self.in_cloud(pid=1522)
@@ -527,7 +583,8 @@ class CloudSuiteTests(unittest.TestCase):
         pre, rest = cut(lines, "waiting for button")
         pre, rest = pre + [rest[0]], rest[1:]
         hooks = {"Click Done here": lambda: self.append(pre, delay=0.1),
-                 "Open the lid now": lambda: self.append(rest, delay=0.05)}
+                 "do NOT press it": lambda: (self.lid(False), self.append(rest, delay=0.05)),
+                 "Close the lid.": lambda: self.lid(True)}
         run = self.run_test(cloud.lid_during_button_wait, hooks=hooks, test_id="cloud.lid-during-button-wait")
         ev = run.evidence
         self.assertEqual(ev["runs_started_after_wait"], 0)
@@ -563,11 +620,11 @@ class CloudSuiteTests(unittest.TestCase):
             self.append(pre, delay=0.1)
         run = self.run_test(cloud.pause_cancel_paths,
                             hooks={"Click Done here": next_print,
-                                   "Press the button once NOW": lambda: self.append(paused, delay=0.05),
-                                   "Open the lid NOW": lambda: (self.lid(False),
-                                                                self.append(lid_tail, delay=0.05)),
-                                   "Close the lid, then click Done": lambda: self.lid(True),
-                                   "Cancel the print from the app now": lambda: self.append(app_tail,
+                                   "the press pauses the print": lambda: self.append(paused, delay=0.05),
+                                   "The print is paused: leave the lid open": lambda: (
+                                       self.lid(False), self.append(lid_tail, delay=0.05)),
+                                   "Close the lid.": lambda: self.lid(True),
+                                   "cancel the print from the app now": lambda: self.append(app_tail,
                                                                                             delay=0.05)},
                             test_id="cloud.pause-cancel-paths")
         ev = run.evidence
@@ -593,8 +650,9 @@ class CloudSuiteTests(unittest.TestCase):
         self.assertFails(
             cloud.pause_cancel_paths, "print 1 did not end ':cancelled'",
             hooks={"Click Done here": lambda: self.append(pre, delay=0.1),
-                   "Press the button once NOW": lambda: self.append(paused, delay=0.05),
-                   "Open the lid NOW": lambda: (self.lid(False), self.append(lid_tail, delay=0.05))})
+                   "the press pauses the print": lambda: self.append(paused, delay=0.05),
+                   "The print is paused: leave the lid open": lambda: (
+                       self.lid(False), self.append(lid_tail, delay=0.05))})
 
     def test_print_finish_is_the_prints_not_another_actions(self):
         # a motion that completes before the print must not satisfy the print's finish

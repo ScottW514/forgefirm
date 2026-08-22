@@ -17,11 +17,28 @@ prerequisite order and stops on the first result that is not a PASS,
 because a FAIL closes the campaign and going on would quietly open a
 second one.
 
+The operator's part of a test is asked for in one of three ways. A
+`ready` prompt pre-announces a timed step and waits for the click that
+starts it. A `notice` is a standing instruction with no button: the test
+shows it and watches the machine for the result. An `act` is a machine
+action by name (lid, interlock, button) - a notice for the operator
+today, and the seam a bench actuator plugs into - that returns when the
+machine shows the action done. A `confirm` stays what it was: a yes/no
+the evidence cannot answer.
+
 Safety, in code rather than convention: a live test starts only with the
 operator's acknowledgment in the request; the runner never touches the
 laser latch; a takeover always ends with forgectrl started again, and a
 marker file makes a crash mid-takeover recoverable at the next start.
+
+Runner-level events (a queue opening or stopping, a takeover recovered,
+the leftovers a baseline pass found) go to the journal: the daemon's
+stderr (daemon.log under the data directory), syslog when there is one,
+and the log of the run in progress. The page shows the run, never the
+journal.
 """
+import logging
+import logging.handlers
 import os
 import random
 import subprocess
@@ -57,6 +74,44 @@ class Failed(Exception):
     pass
 
 
+journal = logging.getLogger("forgetest")
+journal.setLevel(logging.INFO)
+
+
+def configure_journal(syslog_path="/dev/log"):
+    """The daemon's journal: stderr (the init script keeps it in
+    daemon.log) and, where the socket exists, syslog under the
+    `forgetest` name (the unified log tree files it under system/)."""
+    if journal.handlers:
+        return journal
+    h = logging.StreamHandler()
+    h.setFormatter(logging.Formatter("%(asctime)s forgetest: %(message)s", "%Y-%m-%dT%H:%M:%S"))
+    journal.addHandler(h)
+    if os.path.exists(syslog_path):
+        try:
+            sh = logging.handlers.SysLogHandler(address=syslog_path)
+            sh.setFormatter(logging.Formatter("forgetest[%(process)d]: %(message)s"))
+            sh.ident = ""
+            journal.addHandler(sh)
+        except OSError:
+            pass
+    return journal
+
+
+# The wording of each machine action, for the operator who performs it
+# while the bench has no actuator. The text names the action and nothing
+# else; a test adds its own context.
+ACTION_TEXT = {
+    ("lid", "open"): "Open the lid.",
+    ("lid", "close"): "Close the lid.",
+    ("interlock", "open"): "Open the remote-interlock loop: unplug the Pro's interlock plug, or "
+                           "pull the jumper at J8 on a Basic/Plus.",
+    ("interlock", "close"): "Restore the remote-interlock loop (plug or jumper back in).",
+    ("button", "press"): "Press the button once.",
+}
+ACT_TIMEOUT_S = 180
+
+
 class Run:
     def __init__(self, kind, id, title):
         self.kind = kind          # 'test' | 'bench'
@@ -67,6 +122,7 @@ class Run:
         self.lines = []
         self.dropped = 0
         self.prompt = None        # {"id","question","options"}
+        self.notice = None        # {"id","text"}: a standing instruction, no button
         self.answers = []
         self.evidence = {}
         self.baseline_captured = None   # preserved state the post pass hands back
@@ -90,10 +146,11 @@ class Run:
         with self._lock:
             lines = self.lines[-tail:]
             prompt = dict(self.prompt) if self.prompt else None
+            notice = dict(self.notice) if self.notice else None
         return {
             "kind": self.kind, "id": self.id, "title": self.title,
             "started": self.started_ts, "elapsed_s": int(time.time() - self.started),
-            "log": lines, "dropped": self.dropped, "prompt": prompt,
+            "log": lines, "dropped": self.dropped, "prompt": prompt, "notice": notice,
             "finished": self.finished, "aborting": self.aborted.is_set(),
         }
 
@@ -113,6 +170,14 @@ class Run:
             self._answer = None
         self.answers.append({"ts": now_ts(), "question": question, "answer": ans})
         return ans
+
+    def set_notice(self, text):
+        with self._lock:
+            if text is None:
+                self.notice = None
+            else:
+                self._prompt_seq += 1
+                self.notice = {"id": "n%d" % self._prompt_seq, "text": text}
 
     def answer(self, prompt_id, value):
         with self._cv:
@@ -189,6 +254,88 @@ class Context:
         ans = self.prompt(text, ("Done", "Cannot"))
         if ans != "Done":
             raise Failed("operator could not: %s" % text)
+
+    def ready(self, text):
+        """Pre-announce a timed step: what happens when the operator
+        clicks Ready and what they do during it. Returns on the click;
+        the test then starts the thing and watches the machine."""
+        ans = self.prompt(text, ("Ready", "Cannot"))
+        if ans != "Ready":
+            raise Failed("operator could not: %s" % text)
+
+    def notice(self, text):
+        """A standing instruction with no button: the page shows it
+        until clear_notice(), while the test watches the machine for the
+        result. Logged like a prompt."""
+        self.log("NOTICE: %s", text)
+        self.run.set_notice(text)
+
+    def clear_notice(self):
+        self.run.set_notice(None)
+
+    def wait_for(self, cond, timeout, poll=0.25):
+        """Poll `cond()` until true; the seconds it took, or None on
+        timeout. Abort-aware. An error in cond counts as not yet."""
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            self.checkpoint()
+            try:
+                if cond():
+                    return time.time() - t0
+            except Exception:  # noqa: BLE001 - a transient read error is "not yet"
+                pass
+            time.sleep(poll)
+        return None
+
+    def switch(self, name):
+        """One of forgectrl's switch readings (lid, interlock_ok, ...)."""
+        return (self.forgectrl.status().get("switches") or {}).get(name)
+
+    def act(self, channel, state, until=None, timeout=ACT_TIMEOUT_S, text="", fail=True):
+        """A machine action by name: ("lid", "open"|"close"),
+        ("interlock", "open"|"close"), ("button", "press"). The bench's
+        actuator performs it when one covers the channel (the runner's
+        `fixture`; none exists yet); otherwise the operator does, told by
+        a standing notice, and the test watches the machine for the
+        result - the switch reaching the state, or `until()` true
+        (required for the button, whose press is proven by what it does).
+        `text` adds the test's own context after the action's wording.
+        Returns the seconds the action took; with fail=False a timeout
+        returns None instead of failing the test."""
+        key = (channel, state)
+        if key not in ACTION_TEXT:
+            raise ValueError("unknown action %r" % (key,))
+        if until is None:
+            if channel == "button":
+                raise ValueError("a button press needs `until`: what the press is expected to do")
+            want_open = state == "open"
+            if channel == "lid":
+                until = lambda: self.switch("lid") is (not want_open)  # noqa: E731
+            else:
+                until = lambda: self.switch("interlock_ok") is (not want_open)  # noqa: E731
+        wording = ACTION_TEXT[key] + ((" " + text) if text else "")
+        fixture = getattr(self.runner, "fixture", None) if self.runner is not None else None
+        rec = {"channel": channel, "state": state, "by": "operator", "ts": now_ts()}
+        self.evidence.setdefault("actions", []).append(rec)
+        if fixture is not None and fixture.covers(channel):
+            self.log("ACT %s %s (fixture)", channel, state)
+            rec["by"] = "fixture"
+            fixture.act(channel, state)
+        else:
+            self.notice(wording)
+        try:
+            dt = self.wait_for(until, timeout)
+        finally:
+            if rec["by"] == "operator":
+                self.clear_notice()
+        rec["took_s"] = round(dt, 2) if dt is not None else None
+        if dt is None:
+            self.log("ACT %s %s: not seen within %d s", channel, state, timeout)
+            if fail:
+                raise Failed("%s %s was not seen on the machine within %d s" % (channel, state, timeout))
+            return None
+        self.log("ACT %s %s: done after %.1f s", channel, state, dt)
+        return dt
 
     # -- hardware ------------------------------------------------------
     @property
@@ -326,7 +473,7 @@ class Runner:
         self.current = None
         self.last = None
         self.batch = None
-        self.messages = []
+        self.fixture = None       # the bench actuator, when one is configured (none yet)
         self.boot_ref = None
         self.recover()
         threading.Thread(target=self._take_boot_reference, daemon=True,
@@ -339,10 +486,11 @@ class Runner:
             self._note("baseline: boot reference failed: %s: %s" % (type(e).__name__, e))
 
     def _note(self, msg):
-        """A runner-level line: kept in messages for the page (bounded)."""
-        with self._lock:
-            self.messages.append(msg)
-            del self.messages[:-50]
+        """A runner-level line: to the journal, and to the run in progress."""
+        journal.info(msg)
+        r = self.current
+        if r is not None and not r.finished:
+            r.log(msg)
 
     # -- startup recovery ------------------------------------------------
     def recover(self):
@@ -353,7 +501,7 @@ class Runner:
                     who = f.read().strip()
             except OSError:
                 who = "?"
-            self.messages.append("recovered a takeover left by '%s': starting forgectrl" % who)
+            self._note("recovered a takeover left by '%s': starting forgectrl" % who)
             hw.initd("forgectrl", "start")
             try:
                 os.remove(m)
@@ -376,7 +524,6 @@ class Runner:
         st["manifest"] = {"sha": self.manifest.content_sha, "identity": self.manifest.identity_sha(),
                           "image": self.manifest.image_name, "version": self.manifest.version}
         st["log_corrupt"] = self.log.corrupt
-        st["messages"] = list(self.messages)
         r = self.current
         st["running"] = r.snapshot() if r and not r.finished else None
         last = r if (r and r.finished) else self.last
@@ -450,6 +597,9 @@ class Runner:
                 return False, "prerequisites not satisfied: %s" % ", ".join(missing), None
             if t.kind == "live" and not ack_live:
                 return False, "live test: acknowledge eye protection, fire watch, and exhaust first", None
+            reason = t.cannot_start()
+            if reason:
+                return False, "cannot start: %s" % reason, None
             campaign = self._open_campaign_if_needed(state)
             run = Run("test", t.id, t.title)
             self.last = self.current
@@ -585,8 +735,8 @@ class Runner:
         left = bl.enforce("pre", captured=None)
         if left:
             who = self.last.id if self.last is not None else "an earlier run"
-            self.messages.append("leftovers before %s (left by %s): %s"
-                                 % (run.id, who, "; ".join(str(x) for x in left)))
+            journal.info("leftovers before %s (left by %s): %s"
+                         % (run.id, who, "; ".join(str(x) for x in left)))
         run.evidence["baseline"] = {"pre": [x.as_dict() for x in left]}
         if mode:
             found = bl.mode
@@ -605,7 +755,7 @@ class Runner:
         left = bl.enforce("post", captured=run.baseline_captured or captured)
         run.evidence.setdefault("baseline", {})["post"] = [x.as_dict() for x in left]
         if left:
-            self.messages.append("leftovers after %s: %s" % (run.id, "; ".join(str(x) for x in left)))
+            journal.info("leftovers after %s: %s" % (run.id, "; ".join(str(x) for x in left)))
         return left
 
     def _exec_test(self, t, run, campaign):

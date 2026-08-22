@@ -9,9 +9,15 @@ physical arm button - nothing here defeats that gate, and forgetest
 never touches the laser latch. One emission per test; on abort or error
 the job is soft-reset (`^X`: controlled stop, latch relocked). The
 witnesses are forgectrl's `/status` (`laser.emission_samples` = the
-kernel's LASER_ON sample count, `hv_current_raw`, `lid_ir`) and
-`/cool/status` (`armed`), sampled at ~8 Hz through the arm -> fire ->
-disarm lifecycle.
+kernel's LASER_ON sample count, `hv_current_raw`, `lid_ir`),
+`/cool/status` (`armed`), the head's beam detector
+(`head/beam_detect_analog`, the tube's own emission seen from the head:
+a few hundred counts over its idle level while the beam is on, and
+`beam_detect_digital` asserted), and the button LEDs (lit while the arm
+waits or the window is open, dark after the disarm) - all sampled at
+~8 Hz through the arm -> fire -> disarm lifecycle. The one thing the
+operator still judges by eye is the mark the emission witness leaves,
+once per campaign: the calibration of the sensor witnesses.
 """
 import time
 
@@ -19,7 +25,7 @@ from ..catalog import test
 from .. import hw
 from ..runner import Failed
 from .motion import (kernel_xy_mm, kernel_start, check_kernel_returned, wait_state,
-                     wait_state_text, wait_left_state, wait_idle, drain_text)
+                     wait_state_text, wait_left_state, wait_idle, drain_text, Watch)
 
 _LASER_COVERS = [("grblhal-glowforge", "src/**"), ("kernel-module-glowforge", "**"),
                  ("forgectrl", "src/super.c"), ("forgectrl", "src/cool.c"),
@@ -35,9 +41,13 @@ PWM_PERIOD = 127
 PWMSAR_FLOOR_MIN = 12
 
 ARM_CUE = ("LIVE FIRE. Eye protection on, exhaust running, fire watch and extinguisher in reach, "
-           "scrap under the head with room to move (%s), lid closed. When the job starts the "
-           "white button lights and the stream blocks until you press the physical arm button; "
-           "the machine fires only after your press. Ready?")
+           "scrap under the head with room to move (%s), lid closed. On Ready the job starts: "
+           "the white button lights and the stream waits for your press of the physical arm "
+           "button; the machine fires only after that press.")
+
+# The beam detector's emission signature: this much over its pre-fire
+# level while the beam is on (bench: ~1834 idle, 2600-2890 at S300/S400).
+BEAM_DELTA_MIN = 300
 
 
 def sample(ctx):
@@ -62,7 +72,41 @@ def sample(ctx):
         "armed": cs.get("armed"),
         "fire_watch": cs.get("fire_watch"),
         "verdict": cs.get("verdict"),
+        "beam": hw.sysfs_int("head/beam_detect_analog"),
+        "beam_d": hw.sysfs_int("head/beam_detect_digital"),
+        "button_lit": hw.button_lit(),
     }
+
+
+def beam_witness(ctx, ev, samples, base, tag=""):
+    """The head's beam detector over a sample trail: its peak against the
+    pre-fire level, and whether the digital flag asserted. Recorded, and
+    judged where the trail carried emission."""
+    beams = [s["beam"] for s in samples if s.get("beam") is not None]
+    base_beam = base.get("beam") if base else None
+    peak = max(beams) if beams else None
+    digital = any(s.get("beam_d") for s in samples)
+    key = ("beam" + ("_" + tag if tag else ""))
+    ev[key] = {"idle": base_beam, "peak": peak, "delta": (peak - base_beam) if (peak is not None and
+                                                                                   base_beam is not None) else None,
+               "digital_seen": digital, "samples": len(beams)}
+    ctx.log("beam detector%s: idle %s, peak %s, digital asserted %s", (" [%s]" % tag) if tag else "",
+            base_beam, peak, digital)
+    return ev[key]
+
+
+def judge_beam(ctx, b, what="the burn"):
+    ctx.check(b["samples"] > 0, "the beam detector was not readable during %s", what)
+    ctx.check(b["delta"] is not None and b["delta"] >= BEAM_DELTA_MIN,
+              "the head's beam detector did not see %s (idle %s, peak %s; the tube did not lase, "
+              "or the detector is not reading)", what, b["idle"], b["peak"])
+
+
+def check_button_dark(ctx, ev, key="button_dark"):
+    lit = hw.button_lit()
+    ev[key] = lit
+    ctx.check(lit is not None, "the button LEDs are not readable")
+    ctx.check(lit is False, "the button is still lit")
 
 
 def prepare(ctx, g):
@@ -101,15 +145,18 @@ def arm_and_fire(ctx, g, room="40 mm +X and +Y", job=None, timeout=240):
     prologue every live test shares. Returns the first sample with emission,
     or soft-resets and fails: no emission means the arm was refused or the
     button was never pressed."""
-    ctx.instruct(ARM_CUE % room)
+    ctx.ready(ARM_CUE % room)
     stream(g, job or MARK_JOB)
+    ctx.notice("The button lights white: press it to arm. The machine fires after your press.")
     t0 = time.time()
     while time.time() - t0 < timeout:
         ctx.checkpoint()
         smp = sample(ctx)
         if smp and smp["emission"] and smp["emission"] > 0:
+            ctx.clear_notice()
             return smp
         time.sleep(0.15)
+    ctx.clear_notice()
     g.realtime(0x18)
     raise Failed("no emission seen within %d s (arm refused, or no button press)" % timeout)
 
@@ -277,13 +324,17 @@ def power_floor(ctx):
       subsystem="laser", kind="live", mode="grbl", always=True, est_min=5,
       covers=_LASER_COVERS,
       requires=["kernel.latch-locked-idle", "kernel.k1-k2", "motion.jog-roundtrip"],
+      actions=["button"],
       steps=["Scrap under the head with 20 mm of free +X and +Y travel; lid closed; exhaust on.",
-             "Press the physical button when it lights white (the arm)."],
+             "Press the physical button when it lights white (the arm).",
+             "At the end, confirm the square the laser marked: the one judgment by eye in the "
+             "campaign, the calibration of the sensor witnesses."],
       description="A 20 mm square outline at S400/F600 in dynamic laser mode: emission_samples "
                   "(the kernel's LASER_ON sample count) goes nonzero during the fire window and "
-                  "returns to 0 at Idle, HV current rises during the burn, the armed window is "
-                  "observed, and the M2 program end disarms promptly at Idle (job-based, not "
-                  "the 60 s idle grace). The operator confirms the mark.")
+                  "returns to 0 at Idle, HV current rises during the burn, the head's beam "
+                  "detector sees the beam, the armed window is observed, the M2 program end "
+                  "disarms promptly at Idle (job-based, not the 60 s idle grace) and the button "
+                  "goes dark. The operator confirms the mark.")
 def emission_witness(ctx):
     ev = ctx.evidence
     with ctx.grbl() as g, LiveJob(ctx, g):
@@ -294,11 +345,16 @@ def emission_witness(ctx):
         ctx.log("pre-fire: emission=%s hv=%s armed=%s verdict=%s", base["emission"], base["hv"],
                 base["armed"], base["verdict"])
         ctx.check(not base["emission"], "emission_samples nonzero before the job (%s)", base["emission"])
-        ctx.instruct(ARM_CUE % "20 mm +X and +Y")
+        ctx.ready(ARM_CUE % "20 mm +X and +Y")
         job = ["G91", "G21", "M4", "S400",
                "G1 X20 F600", "G1 Y20 F600", "G1 X-20 F600", "G1 Y-20 F600",
                "M5", "G90", "M2"]
-        samples = run_and_sample(ctx, g, job)
+        ctx.notice("The button lights white: press it to arm. The machine fires after your press.")
+        try:
+            samples = run_and_sample(ctx, g, job)
+        finally:
+            ctx.clear_notice()
+        beam = beam_witness(ctx, ev, samples, base)
         emis = [s["emission"] for s in samples if s["emission"] is not None]
         peak = max(emis) if emis else 0
         end = emis[-1] if emis else None
@@ -327,36 +383,34 @@ def emission_witness(ctx):
     ctx.check(dt is not None and dt < 10.0,
               "the M2 job did not disarm promptly at Idle (%s s; the idle grace is ~60 s)",
               ev["disarm_after_idle_s"])
-    ctx.confirm("Did the laser mark a 20 mm square outline on the scrap, and is the machine now "
-                "idle with the button dark?")
-    ctx.log("PASS: emission peak %s -> 0, HV %s..%s, disarmed %.1f s after Idle, mark confirmed",
-            peak, ev["hv_min"], ev["hv_max"], dt)
+    judge_beam(ctx, beam)
+    check_button_dark(ctx, ev)
+    ctx.confirm("Did the laser mark a 20 mm square outline on the scrap?")
+    ctx.log("PASS: emission peak %s -> 0, HV %s..%s, beam +%s, disarmed %.1f s after Idle, button "
+            "dark, mark confirmed", peak, ev["hv_min"], ev["hv_max"], beam["delta"], dt)
 
 
 @test("laser.disarm-in-hold", title="Disarm grace counts down in Hold", subsystem="laser",
       kind="live", mode="grbl", est_min=4,
       covers=_LASER_COVERS,
-      requires=["laser.emission-witness"],
+      requires=["laser.emission-witness"], actions=["button"],
       steps=["Scrap under the head with 40 mm of free +X travel; lid closed; exhaust on.",
-             "Press the physical button when it lights white."],
+             "Press the physical button when it lights white. Nothing else: the test holds the "
+             "job itself and waits about a minute for the disarm."],
       description="Arm and start a +X move at S400/F300, feed-hold it after ~2 s of motion, and "
                   "hold: the disarm grace must count down while held and close the armed window "
-                  "(armed -> false) without the job resuming.")
+                  "(armed -> false) without the job resuming, and the button goes dark with it.")
 def disarm_in_hold(ctx):
     ev = ctx.evidence
     with ctx.grbl() as g, LiveJob(ctx, g):
         prepare(ctx, g)
-        ctx.instruct(ARM_CUE % "40 mm +X")
+        ctx.ready(ARM_CUE % "40 mm +X")
         stream(g, ["G91", "G21", "M4", "S400", "G1 X40 F300"])
         ctx.log("armed; waiting for motion to start (arm + your button press)...")
-        t0 = time.time()
-        st = None
-        while time.time() - t0 < 180:
-            ctx.checkpoint()
-            st = g.status_report()["state"]
-            if st.startswith("Run"):
-                break
-            time.sleep(0.1)
+        w = Watch(g)
+        ctx.act("button", "press", text="The button is lit white: the press arms the job and the "
+                "move starts.", until=w.in_state("Run"), timeout=180, fail=False)
+        st = w.last["state"] if w.last else None
         ctx.check(st and st.startswith("Run"), "motion never started (state=%s) - arm refused or no press", st)
         ctx.log("moving under laser: %s; feed-hold in 2 s", st)
         ctx.sleep(2)
@@ -394,19 +448,17 @@ def disarm_in_hold(ctx):
             g.command("$X")
     ctx.check(disarmed_at is not None, "still armed after 120 s in Hold")
     ctx.check(left_hold is None, "the job left Hold (%s) before the disarm", left_hold)
-    ctx.log("PASS: disarmed in Hold after %.1f s", disarmed_at)
-    ctx.confirm("Did the head stop after ~2 s of the +X move and stay stopped, with the button "
-                "going dark on its own about a minute later?")
+    check_button_dark(ctx, ev)
+    ctx.log("PASS: disarmed in Hold after %.1f s, button dark", disarmed_at)
 
 
 @test("laser.armed-kill", title="Armed kill mid-fire: the expected stop, then a SIGKILL",
       subsystem="laser", kind="live", mode="grbl", est_min=6,
       covers=_LASER_COVERS + [("forgectrl", "src/main.c")],
-      requires=["laser.emission-witness", "motion.deadman"],
+      requires=["laser.emission-witness", "motion.deadman"], actions=["button"],
       steps=["Scrap under the head with 40 mm of free +X and +Y travel; lid closed; exhaust on.",
-             "Press the physical button when it lights white - twice over the test, once per burn.",
-             "After the first burn the controller is left stopped until you judge the stop; the "
-             "test then restarts it and runs the second burn."],
+             "Press the physical button when it lights white - twice over the test, once per burn. "
+             "Each burn is cut short by the test; the sample trails judge the stops."],
       description="Both ways an armed job is killed, on one setup. Expected: mid-burn "
                   "POST /controller/stop - the supervisor writes cnc/stop and relocks before the "
                   "SIGTERM, so emission drops within 2.5 s and stays 0, the kernel is not running, "
@@ -437,9 +489,8 @@ def armed_kill(ctx):
               "emission did not drop within 2.5 s of the stop (first 0 at %s)", zero_at)
     ctx.check(tail_zero, "emission returned after the stop")
     ctx.check(not_running, "the kernel was still running after the stop")
-    ctx.instruct("The controller is STOPPED (supervision held). Judge the stop on the scrap - a "
-                 "short cut, then an abrupt end - and confirm the machine is quiet; then Done to "
-                 "restart the controller (no motion, no laser).")
+    ev["beam_at_fire_stop"] = smp.get("beam")
+    ctx.log("the controller is stopped (supervision held); restarting it (no motion, no laser)")
     st, body = fc.post("/controller/start")
     ctx.log("POST /controller/start -> %s %s", st, body)
     ctx.check(st == 200, "POST /controller/start -> %s", st)
@@ -490,10 +541,10 @@ def armed_kill(ctx):
     ctx.log("/mode after the kill: %s", m1)
     ctx.check(m1 and m1.get("controller") == "running" and m1.get("pid") != pid,
               "supervisor did not respawn the controller: %s", m1)
-    ctx.confirm("Did both burns end abruptly where they were killed (a short line, no run-on), "
-                "with the machine quiet and the button dark now?")
+    ev["beam_at_fire_kill"] = smp.get("beam")
+    check_button_dark(ctx, ev)
     ctx.log("PASS: expected stop 0 at +%s s and SIGKILL 0 at +%s s, latch locked, controller "
-            "respawned", ev["expected"]["zero_at_s"], zero_at)
+            "respawned, button dark", ev["expected"]["zero_at_s"], zero_at)
 
 
 @test("laser.arm-wait-lid", title="Lid open during the arm wait cancels the job",
@@ -501,9 +552,10 @@ def armed_kill(ctx):
       covers=_LASER_COVERS + [("grblhal-glowforge", "src/glowforge_laser.c"),
                               ("grblhal-glowforge", "src/glowforge_switches.c"),
                               ("grblhal-glowforge", "src/glowforge_switch_map.h")],
-      requires=["kernel.latch-locked-idle", "motion.jog-roundtrip"],
+      requires=["kernel.latch-locked-idle", "motion.jog-roundtrip"], actions=["lid"],
       steps=["Lid closed; nothing under the head needs to be in place - the machine will not fire.",
-             "When the white button lights, do NOT press it: open the lid instead."],
+             "When the white button lights, do NOT press it: open the lid instead, then close it "
+             "when told."],
       description="Start a laser job so the controller unlocks the latch and lights the button, "
                   "then open the lid while it waits. The wait must abort with the lid named as the "
                   "reason, cancelled with a soft reset (no alarm - nothing to unlock), the armed "
@@ -528,7 +580,7 @@ def arm_wait_lid(ctx):
         s = sample(ctx)
         ev["armed_during_wait"] = s["armed"] if s else None
         ctx.log("arm prompt seen; armed=%s; asking the operator to open the lid", ev["armed_during_wait"])
-        ctx.instruct("The button is lit white. Do NOT press it. Open the lid now, then click Done.")
+        ctx.act("lid", "open", text="The button is lit white: do NOT press it.", timeout=60)
         t1 = time.time()
         while time.time() - t1 < 15:
             ctx.checkpoint()
@@ -558,7 +610,8 @@ def arm_wait_lid(ctx):
         ctx.check(s and not s["armed"], "the armed window stayed open after the lid-open cancel")
         ctx.check(locked, "kernel latch not locked after the lid-open cancel (interlock_circuit=%s)", ilk)
         ctx.check(not ev["emission"], "emission_samples nonzero (%s) - nothing may have fired", ev["emission"])
-        ctx.instruct("Close the lid, then click Done.")
+        check_button_dark(ctx, ev)
+        ctx.act("lid", "close")
         ctx.sleep(1)
         st = g.status_report()["state"]
         ev["state_after"] = st
@@ -572,10 +625,11 @@ def arm_wait_lid(ctx):
       covers=_LASER_COVERS + [("grblhal-glowforge", "src/glowforge_switches.c"),
                               ("grblhal-glowforge", "src/glowforge_switch_map.h")],
       requires=["laser.emission-witness", "motion.lid-cancel-home", "motion.button-hold-resume"],
+      actions=["button", "lid"],
       steps=["Scrap under the head with 40 mm of free +X and +Y travel; lid closed; exhaust on.",
-             "Press the physical button when it lights white (arm). Once the cut is under way press "
-             "it again (pause), wait about 3 seconds, press it once more (resume), and then open the "
-             "lid and leave it open until the head has come back.",
+             "Press the physical button when it lights white (arm). Once the cut is under way the "
+             "test asks for a press (pause), then another (resume), then for the lid: open it and "
+             "leave it open until the head has come back, then close it.",
              "Keep the pause short: the armed window's idle grace closes it after about a minute in "
              "a hold, and a job that disarms cannot resume its emission."],
       description="The machine's own controls during one armed burn, in the order the factory uses "
@@ -595,15 +649,21 @@ def pause_resume_lid_cancel(ctx):
         start = g.status_report()["MPos"]
         ev["start"] = start
         ev["kernel_start"] = k0
+        base_beam = sample(ctx)
+        beams = []                                  # (analog, digital) through the cut
         smp = arm_and_fire(ctx, g, job=MARK_JOB_M3)
         ev["emission_running"] = smp["emission"]
+        beams.append((smp.get("beam"), smp.get("beam_d")))
         ctx.log("emission live (%s) - asking the operator to pause", smp["emission"])
 
         # -- the button pauses ------------------------------------------------
-        g.drain()                                   # the message window opens at the prompt
-        ctx.instruct("The laser is cutting. Press the button ONCE now (pause), then click Done - "
-                     "do not wait long before the next step.")
-        st, text = wait_state_text(ctx, g, "Hold", 8)
+        g.drain()                                   # the message window opens here
+        w = Watch(g)
+        ctx.act("button", "press", text="The laser is cutting: the press pauses it.",
+                until=w.in_state("Hold"), timeout=20, fail=False)
+        st, text = w.last, w.text
+        if st is not None and not st["state"].startswith("Hold"):
+            st = None
         ctx.check(st is not None, "the press did not hold the job (state %s)", g.status_report()["state"])
         ev["hold_state"] = st["state"]
         ev["pause_message"] = "job paused" in text
@@ -631,8 +691,12 @@ def pause_resume_lid_cancel(ctx):
 
         # -- the button resumes -----------------------------------------------
         g.drain()
-        ctx.instruct("Press the button once more now (resume), then click Done.")
-        st, text = wait_left_state(ctx, g, "Hold", 10)
+        w = Watch(g)
+        ctx.act("button", "press", text="The cut is paused: the press resumes it.",
+                until=w.left_state("Hold"), timeout=40, fail=False)
+        st, text = w.last, w.text
+        if st is not None and st["state"].startswith("Hold"):
+            st = None
         ev["resumed_state"] = st["state"] if st else g.status_report()["state"]
         ev["resume_message"] = "job resumed" in text
         ctx.check(st is not None, "the second press did not resume the job (still held: %s)",
@@ -647,6 +711,7 @@ def pause_resume_lid_cancel(ctx):
             s = sample(ctx)
             if s:
                 trail.append((round(time.time() - t2, 2), s["emission"]))
+                beams.append((s.get("beam"), s.get("beam_d")))
                 if s["emission"] and s["emission"] > 0:
                     back = True
                     break
@@ -658,7 +723,8 @@ def pause_resume_lid_cancel(ctx):
 
         # -- the lid cancels --------------------------------------------------
         g.drain()
-        ctx.instruct("The cut is running again. Open the lid NOW and leave it open, then click Done.")
+        ctx.act("lid", "open", text="The cut is running again: leave the lid open until the head "
+                "has come back.", timeout=30)
         t_lid = time.time()
         lid_trail = []
         text = ""
@@ -708,11 +774,10 @@ def pause_resume_lid_cancel(ctx):
         ctx.check(ev["latch_locked"], "kernel latch not locked after the cancel")
         ctx.check(ev["button_latch"] == 1, "hardware button latch not SET after the lid open (%s)",
                   ev["button_latch"])
-        ctx.confirm("Did the burn stop on the first press, start again on the second, then stop the "
-                    "instant the lid opened - and did the head go straight back to where the job "
-                    "started, with the lid still open and dark? (A small mark where the cut "
-                    "restarted is expected - GRBL mode does not backtrack.)")
-        ctx.instruct("Close the lid, then click Done.")
+        beam_witness(ctx, ev, [{"beam": b, "beam_d": d} for b, d in beams], base_beam)
+        judge_beam(ctx, ev["beam"], "the cut")
+        check_button_dark(ctx, ev)
+        ctx.act("lid", "close")
         ctx.sleep(1)
     ctx.log("PASS: button paused the burn (emission 0, armed kept, latch unlocked) and resumed it; "
             "the lid then cancelled it - emission 0 at +%s s, reset without alarm, returned (drift "

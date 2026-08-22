@@ -87,6 +87,13 @@ input[type=text],input[type=number],select{background:#fff;border:1px solid #c9c
 .hint{color:var(--dim);font-size:12.5px;line-height:1.55;margin:8px 0 0}
 pre#log{background:#1d1e26;color:#d7dae0;font-family:ui-monospace,Consolas,monospace;font-size:11.5px;padding:10px;border-radius:4px;height:380px;overflow:auto;margin:8px 0;white-space:pre-wrap;word-break:break-all}
 #prompt{background:#fdf3e3;border:1px solid #eccb90;border-radius:6px;padding:10px 12px;margin:8px 0}
+#notice{background:#e8f1fb;border:1px solid #9dbde6;border-radius:6px;padding:10px 12px;margin:8px 0;font-weight:600}
+#steps{background:#f7f8fa;border-radius:6px;padding:8px 12px;margin:8px 0;font-size:12.5px;line-height:1.5}
+#steps .sh{font-weight:600;margin-bottom:4px}
+#steps .sub{color:var(--dim);margin:6px 0 2px}
+#steps ol{margin:2px 0 4px 20px}
+#steps .auto{color:var(--dim);font-style:italic}
+.tsel{cursor:pointer}.tsel:hover{text-decoration:underline}
 #prompt .q{font-weight:600;margin-bottom:8px}
 .details{display:none;background:#f7f8fa;padding:8px 10px;border-radius:4px;font-size:12.5px;line-height:1.55;margin-top:6px}
 .details.on{display:block}
@@ -120,7 +127,7 @@ pre#log{background:#1d1e26;color:#d7dae0;font-family:ui-monospace,Consolas,monos
   <div class='card'><h2>Campaign</h2>
    <div class='banner'><div class='auth' id='auth'>?</div>
     <div class='kv' id='banner'></div></div>
-   <div id='invnote'></div><div id='msgs'></div>
+   <div id='invnote'></div>
    <div class='card queue'><h2>Run what is left</h2>
     <div class='actions'>
      <button class='pri' id='q-unattended' onclick='startBatch("unattended")'>Unattended</button>
@@ -139,6 +146,7 @@ pre#log{background:#1d1e26;color:#d7dae0;font-family:ui-monospace,Consolas,monos
     <a id='dljson' href='/export/acceptance.json' style='display:none'><button>acceptance.json</button></a>
     <a id='dlmd' href='/export/acceptance.md' style='display:none'><button>acceptance.md</button></a>
     <a href='/log'><button>Raw log</button></a>
+    <a href='/journal'><button>Runner journal</button></a>
     <button onclick='toggleInv()'>Invalidate all&hellip;</button>
     <button onclick='doReset()'>Reset campaign</button>
    </div>
@@ -165,6 +173,8 @@ pre#log{background:#1d1e26;color:#d7dae0;font-family:ui-monospace,Consolas,monos
 <div id='right'>
  <div class='card'><h2 id='runtitle'>Run</h2>
   <div id='runhead' class='kv'>idle</div>
+  <div id='steps' style='display:none'></div>
+  <div id='notice' style='display:none'></div>
   <div id='prompt' style='display:none'><div class='q' id='promptq'></div><div class='actions' id='promptb'></div></div>
   <pre id='log'></pre>
   <div class='actions'><button class='danger' id='abortbtn' onclick='doAbort()' disabled>Abort</button><span class='hint' id='runfoot'></span></div>
@@ -244,8 +254,7 @@ function render(){if(!state||!catalog)return;
  if(state.log_corrupt)b+='<br><span style="color:var(--red)">'+state.log_corrupt+' corrupt log line(s) skipped</span>';
  setHtml($('banner'),b);
  var inv=state.invalidate;setHtml($('invnote'),inv?"<div class='note'>Full campaign required since "+esc(fmtTs(inv.ts))+": "+esc(inv.reason)+"</div>":'');
- var ms='';(state.messages||[]).forEach(function(x){ms+="<div class='note'>"+esc(x)+"</div>"});setHtml($('msgs'),ms);
- renderQueue();renderGroups();renderRun();if(bench)renderBench()}
+ renderQueue();renderGroups();renderRun();renderSteps();if(bench)renderBench()}
 /* The two queues: what each would run now, and how the running one is
    getting on. Built from the state, so a reload picks the queue back up
    exactly where it is - the queue lives in the runner, not in this tab. */
@@ -292,9 +301,10 @@ function buildGroups(){var groups={},order=[];
    var det="<div class='details"+(openDetails[t.id]?' on':'')+"' id='det-"+d+"'>"+
      (t.description?("<div class='dsc'>"+esc(t.description)+"</div>"):'')+
      (t.steps&&t.steps.length?"<b>Operator steps:</b><ol>"+t.steps.map(function(x){return '<li>'+esc(x)+'</li>'}).join('')+"</ol>":'')+
+     (t.actions&&t.actions.length?"<b>Machine actions:</b> "+esc(t.actions.join(', '))+"<br>":'')+
      "<b>Requires:</b> "+esc((t.requires||[]).join(', ')||'-')+"<br><b>Covers:</b> "+esc((t.covers||[]).map(function(c){return c[0]+':'+c[1]}).join(', ')||'-')+
      "<br><span id='detdyn-"+d+"'></span></div>";
-   h+="<tr><td><div>"+esc(t.title)+"</div><div class='tid'>"+d+" <a href='#' onclick='toggleDet(\""+d+"\");return false'>details</a></div>"+
+   h+="<tr><td><div class='tsel' title='show what this test asks of you' onclick='selectTest(\""+d+"\")'>"+esc(t.title)+"</div><div class='tid'>"+d+" <a href='#' onclick='toggleDet(\""+d+"\");return false'>details</a></div>"+
      "</td><td>"+badges+"</td>"+
      "<td><div id='st-"+d+"'></div><div id='unmet-"+d+"'></div><div id='note-"+d+"'></div></td>"+
      "<td id='last-"+d+"'></td>"+
@@ -327,7 +337,7 @@ function updateGroups(){if(!rowEls||!state)return;var busy=isBusy();
 function toggleDet(id){openDetails[id]=!openDetails[id];var e=$('det-'+id);if(e)e.className='details'+(openDetails[id]?' on':'')}
 function renderRun(){var r=state.running||state.last_run;var key=r?(r.kind+':'+r.id+':'+r.started):null;
  if(key!==lastRunKey)abortSent=false;
- if(!r){setText($('runhead'),'idle');setText($('log'),'');$('prompt').style.display='none';
+ if(!r){setText($('runhead'),'idle');setText($('log'),'');$('prompt').style.display='none';$('notice').style.display='none';
   curPrompt=null;promptKey=null;setDis($('abortbtn'),true);setText($('runtitle'),'Run');lastRunKey=null;return}
  setText($('runtitle'),(r.kind==='bench'?'Bench: ':'Test: ')+r.title);
  var hd=esc(r.id)+' &middot; started '+esc(fmtTs(r.started))+' &middot; '+r.elapsed_s+' s';
@@ -338,6 +348,8 @@ function renderRun(){var r=state.running||state.last_run;var key=r?(r.kind+':'+r
  if(lg.__t!==txt){var atBottom=lg.scrollTop+lg.clientHeight>=lg.scrollHeight-20;
   lg.__t=txt;lg.textContent=txt;if(atBottom||key!==lastRunKey)lg.scrollTop=lg.scrollHeight}
  lastRunKey=key;
+ var nt=(r.notice&&!r.finished)?r.notice.text:'';
+ setText($('notice'),nt);$('notice').style.display=nt?'':'none';
  /* The prompt buttons are rebuilt only when the prompt itself changes -
     they are the ones the operator stares at before pressing. */
  if(r.prompt&&!r.finished){var pk=r.prompt.id+'|'+r.prompt.question+'|'+r.prompt.options.length+':'+r.prompt.options.join(',');
@@ -349,6 +361,28 @@ function renderRun(){var r=state.running||state.last_run;var key=r?(r.kind+':'+r
  setDis($('abortbtn'),!!r.finished||abortSent||!!r.aborting);
  if(r.finished&&tab==='bench'&&r.kind==='bench'&&benchNeedsRefresh){benchNeedsRefresh=false;loadBench()}}
 function findTest(id){for(var i=0;i<catalog.length;i++)if(catalog[i].id===id)return catalog[i];return null}
+/* What the operator will be asked to do, shown before it is asked: the
+   running test's steps for the whole run, the queue's attended tests
+   before the first one starts, or the test the operator clicked on. The
+   prompts and notices that follow are these steps, taken in turn. */
+var selected=null;
+function selectTest(id){selected=(selected===id)?null:id;renderSteps()}
+function stepsOf(t,head){var h='';
+ var acts=(t.actions||[]);
+ if(head)h+="<div class='sub'>"+head+"</div>";
+ if(t.kind==='live')h+="<div>This test fires the laser: eye protection, fire watch, exhaust, scrap under the head.</div>";
+ if(acts.length)h+="<div>Machine actions: <b>"+esc(acts.join(', '))+"</b> (a standing instruction tells you when; the test watches the machine for it)</div>";
+ if(t.steps&&t.steps.length)h+="<ol>"+t.steps.map(function(x){return '<li>'+esc(x)+'</li>'}).join('')+"</ol>";
+ return h}
+function renderSteps(){var e=$('steps');if(!e||!catalog)return;var h='',r=state.running;
+ if(r&&r.kind==='test'){var t=findTest(r.id);
+  if(t&&((t.steps&&t.steps.length)||(t.actions&&t.actions.length)||t.kind==='live'))h="<div class='sh'>What you will do</div>"+stepsOf(t,null)}
+ else if(batchActive()&&state.batch.pending&&state.batch.pending.length){var parts=[];
+  state.batch.pending.forEach(function(id){var t=findTest(id);if(t&&t.kind!=='auto')parts.push(stepsOf(t,esc(id)))});
+  if(parts.length)h="<div class='sh'>Coming up in this queue</div>"+parts.join('')}
+ else if(selected&&!r){var t=findTest(selected);
+  if(t)h="<div class='sh'>Before you start "+esc(t.id)+"</div>"+(t.kind==='auto'?"<div class='auto'>Nothing: this test needs nobody at the machine.</div>":stepsOf(t,null))}
+ setHtml(e,h);e.style.display=h?'':'none'}
 function startTest(id){if(isBusy())return;var t=findTest(id);var body={test:id};
  if(ignoreReq)body.ignore_requires=true;
  if(t&&t.kind==='live'){if(!confirmLive())return;body.ack_live=true}

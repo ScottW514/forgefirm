@@ -17,6 +17,7 @@ Routes
   GET  /bench               bench tool listing
   GET  /result?test&ts      one full result record (log, evidence)
   GET  /log                 the raw JSONL
+  GET  /journal             the daemon's journal (daemon.log tail)
   GET  /export/acceptance.json | .md   the last export
   POST /start {test, ack_live, ignore_requires}   start an acceptance test
   POST /batch {group, ack_live, ignore_requires}  run everything a queue
@@ -42,6 +43,24 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from . import artifact as _artifact
 from . import page as _page
 from .log import data_dir
+
+JOURNAL_TAIL_BYTES = 256 << 10
+
+
+def journal_tail(path=None, max_bytes=JOURNAL_TAIL_BYTES):
+    """The last max_bytes of the daemon's journal (daemon.log, written by
+    the init script from the daemon's stderr), or a note that there is
+    none yet."""
+    path = path or os.path.join(data_dir(), "daemon.log")
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            if size > max_bytes:
+                f.seek(size - max_bytes)
+                f.readline()
+            return f.read()
+    except OSError:
+        return b"(no journal yet: %s)\n" % path.encode()
 
 TOKEN_HEX = 32
 _LITERAL_RX = re.compile(r"^[0-9.]+$")
@@ -229,6 +248,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, rec)
             elif path == "/log":
                 self._send(200, r.log.raw(), "text/plain")
+            elif path == "/journal":
+                self._send(200, journal_tail(), "text/plain")
             elif path in ("/export/acceptance.json", "/export/acceptance.md"):
                 fn = os.path.join(self.app.export_dir, os.path.basename(path))
                 if not os.path.exists(fn):

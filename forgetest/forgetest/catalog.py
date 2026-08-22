@@ -5,7 +5,12 @@ what the release gate needs to know without running anything: the id,
 the subsystem, the kind (auto / operator / live), how it takes the
 hardware (api / takeover), the controller mode it needs (if any), what
 source it covers, what it requires, and whether it belongs to the
-always-required core. The function body runs
+always-required core. Two more fields describe the operator's part
+without affecting the gate: `actions`, the machine actions the test asks
+for by name (the page lists them before a start; a bench actuator can
+perform them), and `precheck`, a condition the machine must meet for the
+test to start at all (a reason string refuses the start, the way an
+unmet prerequisite does, and records no result). The function body runs
 under the runner with a Context (log, prompts, evidence, hardware
 helpers) and reports by returning normally (PASS) or raising
 runner.Failed (FAIL).
@@ -20,6 +25,11 @@ from . import manifest as _manifest
 KINDS = ("auto", "operator", "live")
 HARDWARE = ("api", "takeover")
 MODES = ("grbl", "cloud")
+# The machine actions a test may ask of the operator (Context.act):
+# the lid, the remote-interlock loop, and the big button. Everything a
+# test needs done to the machine is one of these, so a bench actuator
+# that covers a channel can stand in for the hands on it.
+ACTIONS = ("lid", "interlock", "button")
 _ID_RX = re.compile(r"^[a-z][a-z0-9-]*\.[a-z][a-z0-9-]*$")
 
 REGISTRY = {}
@@ -27,7 +37,8 @@ REGISTRY = {}
 
 class Test:
     def __init__(self, id, title, subsystem, kind, hardware, covers, requires,
-                 always, est_min, steps, description, fn, mode=None):
+                 always, est_min, steps, description, fn, mode=None, actions=(),
+                 precheck=None):
         self.id = id
         self.title = title
         self.subsystem = subsystem
@@ -39,6 +50,8 @@ class Test:
         self.always = bool(always)
         self.est_min = est_min
         self.steps = tuple(steps)
+        self.actions = tuple(actions)
+        self.precheck = precheck
         self.description = description or (fn.__doc__ or "").strip()
         self.fn = fn
         self._source_sha = None
@@ -82,8 +95,20 @@ class Test:
     def describe(self):
         d = self.definition()
         d.update({"title": self.title, "est_min": self.est_min, "mode": self.mode,
-                  "steps": list(self.steps), "description": self.description})
+                  "steps": list(self.steps), "actions": list(self.actions),
+                  "precheck": bool(self.precheck), "description": self.description})
         return d
+
+    def cannot_start(self):
+        """The reason the test cannot start on the machine as it is, or
+        None. Evaluated right before a start; never a result."""
+        if self.precheck is None:
+            return None
+        try:
+            reason = self.precheck()
+        except Exception as e:  # noqa: BLE001 - a broken precheck refuses, it never crashes the runner
+            return "precheck errored: %s: %s" % (type(e).__name__, e)
+        return reason or None
 
 
 def source_file_sha(path):
@@ -93,13 +118,19 @@ def source_file_sha(path):
 
 
 def test(id, *, title, subsystem, kind="auto", hardware="api", mode=None, covers=(),
-         requires=(), always=False, est_min=1, steps=(), description=""):
+         requires=(), always=False, est_min=1, steps=(), description="", actions=(),
+         precheck=None):
     """`mode` names the controller mode the test needs live when it starts
     ("grbl" or "cloud"); the runner switches the machine there before the
     test and leaves it there, so a queue crosses modes only where a test
     asks it to. None means the test runs in whatever mode it finds (or
     manages the mode itself, as the cloud tests do through enter_cloud,
-    which also waits for the service session)."""
+    which also waits for the service session).
+
+    `actions` names the machine actions (ACTIONS) the test performs
+    through Context.act; an `auto` test declares none. `precheck` is a
+    callable returning a reason string when the machine cannot run the
+    test as it is (None when it can)."""
     if not _ID_RX.match(id):
         raise ValueError("test id %r must look like subsystem.name" % id)
     if kind not in KINDS:
@@ -111,12 +142,20 @@ def test(id, *, title, subsystem, kind="auto", hardware="api", mode=None, covers
     for c, g in covers:
         if c in _manifest.DEV_ONLY_COMPONENTS:
             raise ValueError("test %s: may not cover dev-only component %r" % (id, c))
+    for a in actions:
+        if a not in ACTIONS:
+            raise ValueError("test %s: action %r" % (id, a))
+    if actions and kind == "auto":
+        raise ValueError("test %s: an auto test asks for no machine actions" % id)
+    if precheck is not None and not callable(precheck):
+        raise ValueError("test %s: precheck must be callable" % id)
 
     def deco(fn):
         if id in REGISTRY:
             raise ValueError("duplicate test id %r" % id)
         REGISTRY[id] = Test(id, title, subsystem, kind, hardware, covers, requires,
-                            always, est_min, steps, description, fn, mode=mode)
+                            always, est_min, steps, description, fn, mode=mode,
+                            actions=actions, precheck=precheck)
         return fn
     return deco
 

@@ -199,19 +199,21 @@ def pacing(ctx):
 
 
 @test("motion.jog-roundtrip", title="Motion quality: bounded jogs, max rate, diagonal, hold/resume",
-      subsystem="motion", kind="operator", mode="grbl", est_min=3,
+      subsystem="motion", kind="auto", mode="grbl", est_min=3,
       covers=_MOTION_COVERS, requires=["kernel.latch-locked-idle"],
-      steps=["Park the head with at least 60 mm of free +X and 40 mm of free +Y travel; bed clear.",
-             "Watch the gantry: it must move on every jog and end where it started."],
+      steps=["Setup: the head parked with at least 60 mm of free +X and 40 mm of free +Y travel; "
+             "bed clear, lid closed."],
       description="Sanity jogs (X, Y 40 mm out/back at F2400), max-rate X out/back (60 mm at "
                   "F12000), a diagonal out/back, then a G1 with a feed-hold/resume in the middle. "
                   "No jog refused, every move returns to Idle, position drift within 0.05 mm, and "
-                  "the operator saw the gantry move.")
+                  "the head accelerometer - the supervisor's own motion witness - saw the head move "
+                  "on every jog it could sample; the counters alone are not proof of motion.")
 def jog_roundtrip(ctx):
     ev = ctx.evidence
-    ctx.instruct("Head parked with >= 60 mm free +X and >= 40 mm free +Y, bed clear, lid closed. "
-                 "Watch the gantry during this test.")
-    with ctx.grbl() as g:
+    accel = hw.AccelSampler()
+    ctx.check(accel.available, "no head accelerometer found (i2c %s): the motion witness is missing",
+              hw.HEAD_ACCEL_I2C)
+    with ctx.grbl() as g, accel:
         st0 = clean_slate(ctx, g)
         start = st0.get("MPos")
         ctx.check(start, "no MPos in the status report")
@@ -223,14 +225,28 @@ def jog_roundtrip(ctx):
                 ("X max-rate 60mm", "$J=G91X60F12000", "$J=G91X-60F12000"),
                 ("diag 40mm", "$J=G91X40Y40F8000", "$J=G91X-40Y-40F8000")):
             for jog in (out, back):
+                t0 = time.time()
                 r = g.command(jog)
                 ctx.check(not any(x.startswith("error") for x in r), "%s: jog refused: %s", name, r)
                 peak, states, _ = wait_idle(ctx, g)
+                p2px, p2py, n = accel.p2p(t0)
                 leg = "out" if jog == out else "back"
-                ctx.log("%s %s: peak %.0f mm/min, states %s", name, leg, peak, states)
-                moves.append({"name": name, "leg": leg, "peak": peak, "states": states})
+                ctx.log("%s %s: peak %.0f mm/min, states %s; accel p2p x=%d y=%d over %d samples",
+                        name, leg, peak, states, p2px, p2py, n)
+                moves.append({"name": name, "leg": leg, "peak": peak, "states": states,
+                              "accel_p2p": [p2px, p2py], "accel_samples": n})
                 ctx.check("TIMEOUT" not in states, "%s %s did not return to Idle", name, leg)
         ev["moves"] = moves
+        # The witness: every leg the sampler caught with enough samples
+        # must have moved the head; the short max-rate legs may land too
+        # few samples to judge on their own and are judged with the rest.
+        judged = [m for m in moves if m["accel_samples"] >= 3]
+        ctx.check(len(judged) >= 4, "the accelerometer sampled too few legs to judge motion (%d of %d; "
+                  "%d read errors)", len(judged), len(moves), accel.errors)
+        still = [m for m in judged if max(m["accel_p2p"]) < hw.ACCEL_P2P_MOVING]
+        ev["accel_still_legs"] = [m["name"] + " " + m["leg"] for m in still]
+        ctx.check(not still, "the head did not move on %s (accel p2p below %d): the counters ran "
+                  "without the gantry", ", ".join(ev["accel_still_legs"]), hw.ACCEL_P2P_MOVING)
         maxrate = max(m["peak"] for m in moves if m["name"].startswith("X max-rate"))
         ev["max_rate_peak"] = maxrate
         ctx.check(maxrate >= 6000, "max-rate jog peaked at only %.0f mm/min", maxrate)
@@ -258,10 +274,8 @@ def jog_roundtrip(ctx):
     machine_idle(ctx)
     ctx.check("Hold" in held["state"], "feed hold did not park (state %s)", held["state"])
     ctx.check(drift <= 0.05, "position drift %.3f mm", drift)
-    ctx.confirm("Did the gantry move on every jog (X, Y, the fast X, the diagonal, the held move) "
-                "and end where it started?")
-    ctx.log("PASS: %d jogs, peak %.0f mm/min, hold parked, drift %.3f mm, operator confirmed",
-            len(moves), maxrate, drift)
+    ctx.log("PASS: %d jogs, peak %.0f mm/min, hold parked, drift %.3f mm, the head seen moving on "
+            "%d of %d legs", len(moves), maxrate, drift, len(judged), len(moves))
 
 
 # ---------------------------------------------------------------- liveness
@@ -652,6 +666,28 @@ def check_kernel_returned(ctx, ev, k0, tol_mm=0.1, tag=""):
               "the return move was counted by grbl but not played by the machine", kdrift)
 
 
+class Watch:
+    """Conditions over the controller's state for Context.act / wait_for
+    that also keep everything the controller said while they were polled
+    (the `[MSG:]` lines a pause or a cancel reports)."""
+
+    def __init__(self, g):
+        self.g = g
+        self.text = ""
+        self.last = None
+
+    def poll(self):
+        self.text += self.g.drain()
+        self.last = self.g.status_report()
+        return self.last
+
+    def in_state(self, prefix):
+        return lambda: self.poll()["state"].startswith(prefix)
+
+    def left_state(self, prefix):
+        return lambda: not self.poll()["state"].startswith(prefix)
+
+
 def drain_text(g, seconds):
     """Everything the controller said in the next `seconds`."""
     end = time.time() + seconds
@@ -700,9 +736,10 @@ def expect_cancel_and_return(ctx, g, ev, start, k0, why, tag):
 
 @test("motion.button-hold-resume", title="The button pauses and resumes a job",
       subsystem="motion", kind="operator", mode="grbl", est_min=2,
-      covers=_LID_COVERS, requires=["motion.pacing"],
+      covers=_LID_COVERS, requires=["motion.pacing"], actions=["button"],
       steps=["Bed clear; the head needs 40 mm of free +X travel. No laser is involved.",
-             "Press the button once when told (pause), and once more when told (resume)."],
+             "On Ready the head starts an 8 s move: press the button once while it moves (the "
+             "job holds), then once more when told (it resumes and finishes)."],
       description="A travel job is running; one press of the big button feed-holds it (the sender "
                   "sees Hold), the next press resumes it (Run) and the move completes with its "
                   "position intact - the factory's pause/resume on the machine.")
@@ -711,28 +748,35 @@ def button_hold_resume(ctx):
     with ctx.grbl() as g:
         clean_slate(ctx, g)
         start = g.status_report()["MPos"]
+        ctx.ready("On Ready the head starts an 8 s move along +X. Press the button ONCE while it "
+                  "moves; the job holds and the test sees it.")
         g.command("M5")
         g.command("G91")
         g.command("G1X40F300", timeout=0.5)               # an 8 s move
         ctx.sleep(0.5)
         ctx.check(g.status_report()["state"].startswith("Run"), "the move did not start")
-        g.drain()                                     # the message window opens at the prompt
-        ctx.instruct("The head is moving. Press the button once now, then click Done.")
-        st, text = wait_state_text(ctx, g, "Hold", 8)
-        ctx.check(st is not None, "the press did not hold the job (state %s)", g.status_report()["state"])
+        g.drain()                                     # the message window opens here
+        w = Watch(g)
+        ctx.act("button", "press", until=w.in_state("Hold"), timeout=12, fail=False)
+        st, text = w.last, w.text
+        ctx.check(st is not None and st["state"].startswith("Hold"),
+                  "the press did not hold the job (state %s)", st["state"] if st else "?")
         ev["held_state"] = st["state"]
         ev["held_at_mm"] = round(st["MPos"][0] - start[0], 3)
         ev["pause_message"] = "job paused" in text
         ctx.log("held: %s at %.3f mm of 40; message seen: %s", st["state"], ev["held_at_mm"],
                 ev["pause_message"])
-        g.drain()
-        ctx.instruct("The head is stopped. Press the button once more now, then click Done.")
         # The press is proven by the job LEAVING the hold. Catching it in Run
         # is a race: a pause late in the move leaves a fraction of a second of
         # travel, which can be over before the next poll - the machine did
         # exactly the right thing and the test would still have called it a
         # failure.
-        st, text = wait_left_state(ctx, g, "Hold", 10)
+        w = Watch(g)
+        ctx.act("button", "press", text="The head is stopped: the press resumes the move.",
+                until=w.left_state("Hold"), timeout=60, fail=False)
+        st, text = w.last, w.text
+        if st is not None and st["state"].startswith("Hold"):
+            st = None
         ev["state_after_resume"] = st["state"] if st else None
         ev["resume_message"] = "job resumed" in text
         ctx.check(st is not None, "the second press did not resume the job (still held: %s)",
@@ -759,9 +803,12 @@ def button_hold_resume(ctx):
                                      "to the job start",
       subsystem="motion", kind="operator", mode="grbl", est_min=5,
       covers=_LID_COVERS, requires=["motion.pacing", "motion.cancel-abort"],
+      actions=["lid", "button"],
       steps=["Bed clear; the head needs 40 mm of free +X travel. No laser is involved.",
-             "Open the lid when told, and leave it open until the head has come back (twice: once "
-             "with the job running, once with it paused on the button)."],
+             "Twice, on Ready the head starts an 8 s move. First: open the lid while it moves and "
+             "leave it open until the head has come back, then close it. Second: press the button "
+             "once while it moves (pause), then open the lid, leave it open until the head is back, "
+             "and close it."],
       description="A travel job is running when the lid opens: the job parks (planned deceleration), "
                   "the reason is reported, the controller resets (position kept, no alarm - the "
                   "sender's job is over), and the head returns on its own to where the job started "
@@ -779,17 +826,19 @@ def lid_cancel_home(ctx):
         start = g.status_report()["MPos"]
         ev["kernel_start"] = k0
         ev["start"] = start
+        ctx.ready("On Ready the head starts an 8 s move along +X. Open the lid while it moves and "
+                  "leave it open until the head has come back on its own.")
         g.command("M5")
         g.command("G91")
         g.command("G1X40F300", timeout=0.5)               # an 8 s move
         ctx.sleep(0.5)
         ctx.check(g.status_report()["state"].startswith("Run"), "the move did not start")
-        g.drain()                                     # the message window opens at the prompt
-        ctx.instruct("The head is moving. Open the lid NOW and leave it open, then click Done.")
+        g.drain()                                     # the message window opens here
+        ctx.act("lid", "open", text="Leave it open until the head has come back.", timeout=12)
         drift = expect_cancel_and_return(ctx, g, ev, start, k0, "lid opened", "running")
         sw = (ctx.forgectrl.status().get("switches") or {})
         ev["lid_at_return"] = sw.get("lid")
-        ctx.instruct("Close the lid, then click Done.")
+        ctx.act("lid", "close")
         ctx.sleep(1)
         # a jog afterward proves the controller is usable without $X
         r = g.command("$J=G91X5F1200")
@@ -808,23 +857,30 @@ def lid_cancel_home(ctx):
         k1 = kernel_start(ctx)
         start2 = g.status_report()["MPos"]
         ev["hold_start"] = start2
+        ctx.ready("On Ready the head starts the 8 s move again. Press the button ONCE while it "
+                  "moves (the job pauses); then open the lid and leave it open until the head has "
+                  "come back.")
         g.command("G91")                                  # the reset restored G90
         g.command("G1X40F300", timeout=0.5)
         ctx.sleep(0.5)
         ctx.check(g.status_report()["state"].startswith("Run"), "the second move did not start")
         g.drain()
-        ctx.instruct("The head is moving again. Press the button once now (pause), then click Done.")
-        st, held = wait_state_text(ctx, g, "Hold", 8)
-        ctx.check(st is not None, "the press did not hold the job (state %s)", g.status_report()["state"])
+        w = Watch(g)
+        ctx.act("button", "press", text="The job pauses.", until=w.in_state("Hold"), timeout=12,
+                fail=False)
+        st, held = w.last, w.text
+        ctx.check(st is not None and st["state"].startswith("Hold"),
+                  "the press did not hold the job (state %s)", st["state"] if st else "?")
         ev["hold_state"] = st["state"]
         ev["hold_pause_message"] = "job paused" in held
         ctx.log("paused: %s; message seen: %s", st["state"], ev["hold_pause_message"])
         g.drain()
-        ctx.instruct("The job is paused. Open the lid NOW and leave it open, then click Done.")
+        ctx.act("lid", "open", text="The job is paused: leave the lid open until the head has come "
+                "back.", timeout=60)
         hold_drift = expect_cancel_and_return(ctx, g, ev, start2, k1, "lid opened", "hold")
         ctx.check(not g.status_report()["state"].startswith("Hold"),
                   "the controller is still holding after the lid cancelled the paused job")
-        ctx.instruct("Close the lid, then click Done.")
+        ctx.act("lid", "close")
         ctx.sleep(1)
         r = g.command("$J=G91X5F1200")
         ctx.check(not any(x.startswith("error") for x in r), "jog refused after the paused cancel: %s", r)
@@ -840,11 +896,12 @@ def lid_cancel_home(ctx):
 @test("motion.interlock-cancel-home", title="The interlock loop cancels a job like the lid and returns to "
                                            "the job start",
       subsystem="motion", kind="operator", mode="grbl", est_min=4,
-      covers=_LID_COVERS, requires=["motion.lid-cancel-home"],
+      covers=_LID_COVERS, requires=["motion.lid-cancel-home"], actions=["interlock"],
       steps=["Bed clear; the head needs 60 mm of free +X travel. No laser is involved.",
              "Be able to open the remote-interlock loop: unplug the Pro's interlock plug, or pull the "
-             "jumper at J8 on a Basic/Plus. Restore it at the end.",
-             "Open the interlock when told and leave it open until the head has come back."],
+             "jumper at J8 on a Basic/Plus.",
+             "On Ready the head starts a 12 s move: open the interlock while it moves and leave it "
+             "open until the head has come back, then restore it."],
       description="The remote-interlock loop is the lid's equal in the cancel policy: opening it mid-job "
                   "cancels the job with 'interlock open' named as the reason - the lid's own message would "
                   "be wrong here - and sends the head back to the job start with the loop still open. "
@@ -864,14 +921,15 @@ def interlock_cancel_home(ctx):
         start = g.status_report()["MPos"]
         ev["start"] = start
         ev["kernel_start"] = k0
+        ctx.ready("On Ready the head starts a 12 s move along +X. Open the interlock loop while it "
+                  "moves and leave it open until the head has come back on its own.")
         g.command("M5")
         g.command("G91")
         g.command("G1X60F300", timeout=0.5)               # a 12 s move
         ctx.sleep(0.5)
         ctx.check(g.status_report()["state"].startswith("Run"), "the move did not start")
         g.drain()
-        ctx.instruct("The head is moving. Open the INTERLOCK loop now (unplug it / pull the jumper) and "
-                     "leave it open, then click Done.")
+        ctx.act("interlock", "open", text="Leave it open until the head has come back.", timeout=16)
         sw = (ctx.forgectrl.status().get("switches") or {})
         ev["interlock_ok_after_pull"] = sw.get("interlock_ok")
         ctx.check(sw.get("interlock_ok") is False,
@@ -883,7 +941,7 @@ def interlock_cancel_home(ctx):
         ctx.check(sw.get("interlock_ok") is False,
                   "the interlock was closed again before the park finished - the park ran with the loop "
                   "restored, not open")
-        ctx.instruct("Restore the interlock loop (plug/jumper back in), then click Done.")
+        ctx.act("interlock", "close")
         ctx.sleep(1)
         sw = (ctx.forgectrl.status().get("switches") or {})
         ev["restored"] = {"lid": sw.get("lid"), "interlock_ok": sw.get("interlock_ok")}
@@ -902,8 +960,10 @@ def interlock_cancel_home(ctx):
 @test("motion.lid-policy-hold", title="lid_policy=hold parks the job in Door and a cycle start resumes it",
       subsystem="motion", kind="operator", mode="grbl", est_min=4,
       covers=_LID_COVERS + [("forgectrl", "src/settings.*")], requires=["motion.lid-cancel-home"],
+      actions=["lid"],
       steps=["Bed clear; the head needs 40 mm of free +X travel. No laser is involved.",
-             "Open the lid when told, then close it when told; the job finishes after that."],
+             "On Ready the head starts an 8 s move: open the lid while it moves (the job parks in "
+             "Door), then close it when told; the job finishes after that."],
       description="The other lid policy, kept for senders that expect stock grblHAL: with "
                   "lid_policy=hold a lid open parks the job in the door state and holds it there - "
                   "no cancel, no return home - and once the lid is closed a cycle start finishes the "
@@ -920,13 +980,15 @@ def lid_policy_hold(ctx):
         with ctx.grbl() as g:
             clean_slate(ctx, g)
             start = g.status_report()["MPos"]
+            ctx.ready("On Ready the head starts an 8 s move along +X. Open the lid while it moves; "
+                      "the job parks in the door state and waits.")
             g.command("M5")
             g.command("G91")
             g.command("G1X40F300", timeout=0.5)           # an 8 s move
             ctx.sleep(0.5)
             ctx.check(g.status_report()["state"].startswith("Run"), "the move did not start")
             g.drain()
-            ctx.instruct("The head is moving. Open the lid NOW and leave it open, then click Done.")
+            ctx.act("lid", "open", timeout=12)
             st, text = wait_state_text(ctx, g, "Door", 8)
             ev["door_state"] = st["state"] if st else g.status_report()["state"]
             ctx.check(st is not None, "the lid did not park the job in Door (state %s)", ev["door_state"])
@@ -937,7 +999,7 @@ def lid_policy_hold(ctx):
             held = g.status_report()["MPos"]
             ev["parked_at"] = held
             ctx.log("parked in %s at %s", ev["door_state"], held)
-            ctx.instruct("Close the lid, then click Done.")
+            ctx.act("lid", "close")
             ctx.sleep(1)
             ev["state_after_close"] = g.status_report()["state"]
             ctx.log("after the lid closed: %s (a cycle start is needed)", ev["state_after_close"])

@@ -1,5 +1,7 @@
 """camera.* - the lid camera pipeline through forgectrl."""
 from ..catalog import test
+from .. import hw
+from ..baseline import LID_LAMP_ATTR
 
 _CAM_COVERS = [("forgectrl", "src/cam.*"), ("forgectrl", "src/camhealth.*"),
                ("forgectrl", "src/debayer.*"), ("forgectrl", "src/vpu_jpeg.*"),
@@ -45,12 +47,14 @@ def _jpeg_size(data):
 
 
 @test("camera.snapshot", title="Lid camera snapshot and stream", subsystem="camera",
-      kind="operator", est_min=2,
+      kind="auto", est_min=2,
       covers=_CAM_COVERS, requires=["forgectrl.panel-serves"],
-      steps=["Lid closed. You will be asked to look at the control panel's Status tab."],
+      steps=["Setup: lid closed."],
       description="/cam/snapshot returns a JPEG of a plausible size (a black frame compresses "
-                  "far smaller), the MJPEG stream starts and stops, and the operator confirms "
-                  "the panel shows the bed.")
+                  "far smaller), a second snapshot with the lid lamp switched off differs from it "
+                  "and is smaller (the capture is live, not a frame the pipeline is re-serving, "
+                  "and the lamp lights what the camera sees), and the MJPEG stream starts and "
+                  "stops.")
 def snapshot(ctx):
     fc = ctx.forgectrl
     ev = ctx.evidence
@@ -65,6 +69,26 @@ def snapshot(ctx):
     ctx.check(data[:2] == b"\xff\xd8" and data[-2:] == b"\xff\xd9", "snapshot is not a complete JPEG")
     ev["snapshot_bytes"] = len(data)
     ctx.check(len(data) > 20000, "snapshot is only %d bytes - a dark or empty frame?", len(data))
+
+    # Live, and lit: the same frame with the lid lamp off must be a
+    # different and smaller picture. The lamp is put back where it was.
+    lamp0 = hw.sysfs_read(LID_LAMP_ATTR)
+    ev["lid_lamp"] = lamp0
+    ctx.check(lamp0 is not None, "the lid lamp (%s) is not readable", LID_LAMP_ATTR)
+    try:
+        hw.sysfs_write(LID_LAMP_ATTR, "0")
+        ctx.sleep(1.5)
+        st, dark = fc.get("/cam/snapshot", params={"cam": "lid", "res": "half"}, raw=True)
+    finally:
+        hw.sysfs_write(LID_LAMP_ATTR, lamp0)
+    ctx.check(st == 200 and dark and dark[:2] == b"\xff\xd8", "snapshot with the lamp off -> %s", st)
+    ev["snapshot_dark_bytes"] = len(dark)
+    ctx.log("lamp %s -> %d bytes; lamp off -> %d bytes", lamp0, len(data), len(dark))
+    ctx.check(dark != data, "the snapshot with the lamp off is byte-identical to the lit one: the "
+                            "capture is not live")
+    ctx.check(len(dark) < len(data), "the frame with the lamp off is not smaller than the lit one "
+                                     "(%d vs %d bytes): the lamp is not lighting what the camera "
+                                     "sees", len(dark), len(data))
 
     st, data = fc.get("/cam/snapshot", params={"cam": "lid", "res": "full"}, raw=True)
     ctx.log("GET /cam/snapshot?cam=lid&res=full -> %s (%d bytes)", st, len(data) if data else 0)
@@ -87,8 +111,7 @@ def snapshot(ctx):
     st, body = fc.get("/cam/status")
     ev["cam_status_after"] = body
     ctx.log("cam status after: %s", body)
-    ctx.confirm("Open the control panel (port 8080), Status tab: does the lid snapshot show the bed "
-                "(not black, not frozen, roughly the right orientation)?")
+    ctx.log("PASS: snapshot %d bytes, %d with the lamp off, stream %s", len(data), len(dark), ctype)
 
 
 @test("camera.sensor-profile", title="Camera geometry follows the fitted sensor", subsystem="camera",
@@ -182,8 +205,8 @@ def frame_health(ctx):
 
 @test("camera.lid-privacy", title="Cameras capture only with the lid closed", subsystem="camera",
       kind="operator", est_min=3,
-      covers=_PRIVACY_COVERS, requires=["forgectrl.panel-serves"],
-      steps=["You will be asked to open the lid, then close it again.",
+      covers=_PRIVACY_COVERS, requires=["forgectrl.panel-serves"], actions=["lid"],
+      steps=["Start with the lid closed; you will be told to open it, then close it again.",
              "Nothing moves and the laser is not involved."],
       description="The privacy gate: with the lid open neither camera captures. A running stream "
                   "stops within a frame or so of the lid opening, /cam/status reports capture as "
@@ -209,7 +232,7 @@ def lid_privacy(ctx):
         return st, data or b""
 
     # --- lid closed: the baseline the rest is measured against ----------
-    ctx.instruct("Close the lid, then click Done.")
+    ctx.act("lid", "close")
     body = status()
     ctx.check(body.get("capture_allowed") is True,
               "with the lid closed /cam/status should allow capture, got %r",
@@ -227,7 +250,7 @@ def lid_privacy(ctx):
     try:
         first = stream.read(4096)
         ctx.check(b"\xff\xd8" in first, "the stream did not start before the lid test")
-        ctx.instruct("The stream is running. Open the lid now, then click Done.")
+        ctx.act("lid", "open", text="The stream is running.")
         # The engine tears the pipeline down on the next frame and the
         # stream ends. Draining now returns whatever was buffered before
         # the lid opened and then EOF; what must not happen is frames
@@ -283,7 +306,7 @@ def lid_privacy(ctx):
         ctx.check(e.code == 409, "the stream should be refused with 409, got %s", e.code)
 
     # --- closing the lid restores it -----------------------------------
-    ctx.instruct("Close the lid again, then click Done.")
+    ctx.act("lid", "close")
     body = status()
     ctx.check(body.get("capture_allowed") is True,
               "closing the lid should allow capture again, got %r",

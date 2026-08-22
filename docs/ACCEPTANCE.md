@@ -45,7 +45,18 @@ Every test declares, in code (`forgetest/forgetest/suite/*.py`):
 - **always** - membership in the **always-required core**, which is run
   in every campaign and is never inherited: image health, the kernel
   latch/safety readbacks, and one live emission witness with the
-  armed-window disarm.
+  armed-window disarm;
+- **actions** - the machine actions the test asks for by name (`lid`,
+  `interlock`, `button`; see "The operator's part"). An `auto` test
+  declares none. The page lists them before a start; a bench actuator
+  that covers a channel can perform them;
+- **precheck** - a condition the machine must meet for the test to start
+  at all (`kernel.fire-line` needs HV not reporting good, the kernel's
+  rule for a zero-duty latch unlock; `cloud.mode-switch` needs
+  `homing_mode = gfcloud`). A start the precheck refuses is not a result:
+  the page says why, a queue skips the test with the reason and carries
+  on, and nothing is recorded. Neither field is part of the gate-visible
+  definition.
 
 `GET /catalog` on the tool lists the definitions; the page shows them under
 each test's *details*.
@@ -127,11 +138,13 @@ bench, or one whose `/data` has been wiped, starts from a full campaign.
    one switches from GRBL mode (once, its connect-time hunt waited out)
    and the following ones reuse the live session; nothing switches back
    after them. The tests that need GRBL mode (`motion.*`, `laser.*`,
-   `cooling.fans-quiet-after-motion`, `cloud.mode-switch`,
-   `cloud.gfhome-homing`) declare it, and the runner switches back the
-   moment one of them starts - so the mode changes only where the next
-   test asks for it, never between tests of the same mode.
-   `cloud.mode-switch` is the one round trip.
+   `cooling.fans-quiet-after-motion`, `cloud.mode-switch`) declare it,
+   and the runner switches back the moment one of them starts - so the
+   mode changes only where the next test asks for it, never between
+   tests of the same mode. `cloud.mode-switch` is the one round trip, and
+   it carries the two service-driven motions with it: the connect-time
+   hunt run with the lid open, and the web-service homing (`$H` with
+   `homing_mode = gfcloud`) after the switch back.
 4. Or hand the whole list to a queue. **Run what is left** offers two:
    **Unattended** takes every `auto` test the campaign does not already
    count as satisfied, and needs nobody in the room; **Operator and live**
@@ -152,7 +165,43 @@ bench, or one whose `/data` has been wiped, starts from a full campaign.
    `releases/v<version>/acceptance.json` and `.md`.
 
 The raw log (`/data/forgetest/results.jsonl`, `Raw log` in the footer) is
-the bench's own record; the artifact is the release's.
+the bench's own record; the artifact is the release's. The runner's own
+events - a queue opening, skipping or stopping, a takeover recovered at
+start-up, the leftovers a baseline pass found - go to the **journal**
+(`Runner journal` in the footer: the daemon's `daemon.log` under the
+data directory, also syslog under the `forgetest` name, and the log of
+the run in progress), never to the page's campaign card.
+
+### The operator's part
+
+The run card shows **what you will do** before anything is asked: the
+running test's `steps`, the attended tests still waiting in a queue, or
+the test whose title you clicked while the machine is idle. What follows
+during the run is those steps, taken in turn, in one of four forms:
+
+- a **Ready** prompt pre-announces a timed step: what happens on the
+  click and what you do during it ("On Ready the head starts an 8 s move;
+  press the button once while it moves"). Nothing moves until you click;
+- a **notice** is a standing instruction with no button. The test shows
+  it and watches the machine for the result - the lid switch reading
+  open, the interlock loop reading open, the controller entering Hold
+  after the press, the client's log line - and takes it down when it sees
+  it. There is nothing to answer and nothing to race;
+- a machine **action** (`ctx.act("lid", "open")`, `("interlock",
+  "close")`, `("button", "press", until=...)`) is a notice the runner
+  manages: the wording is the action's own, the test adds its context,
+  the machine's reading proves it done, and the result's
+  `evidence.actions` records each one with who performed it. This is the
+  seam a bench actuator plugs into: a runner `fixture` covering a channel
+  performs the action instead of the notice, and a test reads the same
+  either way;
+- a **confirm** is a yes/no the evidence cannot answer. One is left in
+  the catalog: the mark `laser.emission-witness` leaves on the scrap, the
+  once-per-campaign calibration of the sensor witnesses (the head's beam
+  detector, the HV current, the kernel's LASER_ON count), plus the app's
+  own display in `cloud.pause-resume`. The head accelerometer stands in
+  for "did the gantry move", the button LEDs for "is the button dark",
+  the lid lamp toggled between two snapshots for "is the camera live".
 
 ### Every run starts from, and leaves, the fresh-boot idle state
 

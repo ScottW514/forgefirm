@@ -13,6 +13,7 @@ import json
 import os
 import socket
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -150,6 +151,137 @@ def sysfs_int(attr, default=None):
 def sysfs_write(attr, value):
     with open(sysfs_root() + attr, "w") as f:
         f.write(str(value))
+
+
+# ------------------------------------------------------ head accelerometer
+
+# The head accelerometer (LIS2HH12 on i2c-3 at 0x1e): the supervisor's
+# motion-liveness witness, and the catalog's. Resolved by bus address,
+# never by iio index. The raw sysfs read is slow (~150 ms), which still
+# lands several samples in a one-second move; the verdict is peak-to-peak
+# on X or Y, against the thresholds forgectrl's probe established (a live
+# head reads 1800-2900 on its probe move, a wedged one <= 250).
+HEAD_ACCEL_I2C = "3-001e"
+ACCEL_P2P_MOVING = 800
+
+
+def head_accel_dir():
+    """The head accel's iio directory, or None. GF_IIO_ROOT overrides the
+    /sys/bus/iio/devices root (host tests)."""
+    root = os.environ.get("GF_IIO_ROOT") or "/sys/bus/iio/devices"
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return None
+    for n in names:
+        d = os.path.join(root, n)
+        try:
+            target = os.readlink(d)
+        except OSError:
+            target = ""
+        if HEAD_ACCEL_I2C in target or HEAD_ACCEL_I2C in n:
+            return d
+        # a plain directory (host fixture): its name carries the address
+        try:
+            with open(os.path.join(d, "name")) as f:
+                if HEAD_ACCEL_I2C in f.read():
+                    return d
+        except OSError:
+            pass
+    return None
+
+
+def head_accel_read(d):
+    """(x, y) raw counts, or None."""
+    out = []
+    for axis in ("x", "y"):
+        try:
+            with open(os.path.join(d, "in_accel_%s_raw" % axis)) as f:
+                out.append(int(f.read().strip()))
+        except (OSError, ValueError):
+            return None
+    return tuple(out)
+
+
+class AccelSampler:
+    """Samples the head accelerometer in a thread for as long as it is
+    running; `p2p(t0, t1)` is the peak-to-peak on X and Y over the samples
+    in that window and how many there were. Used as a context manager
+    around a motion the test wants the head to have made."""
+
+    def __init__(self, period=0.0):
+        self.dir = head_accel_dir()
+        self.period = period
+        self.samples = []            # (t, x, y)
+        self._stop = threading.Event()
+        self._th = None
+        self.errors = 0
+
+    @property
+    def available(self):
+        return self.dir is not None
+
+    def __enter__(self):
+        if self.dir is not None:
+            self._th = threading.Thread(target=self._loop, daemon=True, name="forgetest-accel")
+            self._th.start()
+        return self
+
+    def __exit__(self, *a):
+        self._stop.set()
+        if self._th is not None:
+            self._th.join(2.0)
+        return False
+
+    def _loop(self):
+        while not self._stop.is_set():
+            v = head_accel_read(self.dir)
+            if v is None:
+                self.errors += 1
+            else:
+                self.samples.append((time.time(), v[0], v[1]))
+            if self.period:
+                self._stop.wait(self.period)
+
+    def p2p(self, t0, t1=None):
+        """(p2p_x, p2p_y, n) over [t0, t1]; (0, 0, 0) with no samples."""
+        t1 = time.time() if t1 is None else t1
+        xs = [x for t, x, _y in self.samples if t0 <= t <= t1]
+        ys = [y for t, _x, y in self.samples if t0 <= t <= t1]
+        if not xs:
+            return 0, 0, 0
+        return max(xs) - min(xs), max(ys) - min(ys), len(xs)
+
+
+# ----------------------------------------------------------- button LEDs
+
+BUTTON_LEDS = ("button_led_1", "button_led_2", "button_led_3")
+
+
+def leds_root():
+    r = os.environ.get("GF_LEDS_ROOT") or "/sys/class/leds/"
+    return r if r.endswith("/") else r + "/"
+
+
+def button_leds():
+    """The three button LED brightnesses, or None where unreadable."""
+    out = []
+    for name in BUTTON_LEDS:
+        try:
+            with open(leds_root() + name + "/brightness") as f:
+                out.append(int(f.read().strip()))
+        except (OSError, ValueError):
+            out.append(None)
+    return out
+
+
+def button_lit():
+    """True when any button LED is on, False when all three read 0, None
+    when none is readable."""
+    vals = [v for v in button_leds() if v is not None]
+    if not vals:
+        return None
+    return any(v > 0 for v in vals)
 
 
 # --------------------------------------------------------------- init.d

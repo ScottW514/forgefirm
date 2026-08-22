@@ -130,17 +130,25 @@ class PulseDevice:
         return False
 
 
-def require_hv_not_good(ctx):
-    """K3 and fire B/U unlock the latch: refuse while HV reports good.
-    Called before the takeover; gives the operator one chance to drop it
-    (open the lid)."""
+def hv_not_good():
+    """Precheck for the drills that unlock the latch with a zero-duty
+    stream: they run only while the HV supply does NOT report good. At
+    idle the chain holds HV_ENABLE low, so this refuses a start only on a
+    machine that is not idle the way it should be; the cure is the lid
+    (the safety chain holds HV off with it open)."""
     pgood = rd("cnc/laser_pgood")
+    if pgood is None:
+        return "cnc/laser_pgood unreadable"
     if pgood != "0":
-        ctx.log("laser_pgood=%s: the HV supply reports good", pgood)
-        ctx.instruct("This drill unlocks the laser latch with a zero-duty stream and must run "
-                     "with the HV supply NOT good. Open the lid (the safety chain holds HV off), "
-                     "then Done.")
-        pgood = rd("cnc/laser_pgood")
+        return ("laser_pgood=%s: the HV supply reports good; this drill unlocks the latch with a "
+                "zero-duty stream and needs HV not good (open the lid, then start again)" % pgood)
+    return None
+
+
+def require_hv_not_good(ctx):
+    """The same rule at the start of the run (the precheck ran a moment
+    earlier; the machine must still agree)."""
+    pgood = rd("cnc/laser_pgood")
     ctx.evidence["laser_pgood"] = pgood
     ctx.check(pgood == "0", "laser_pgood=%s (HV supply reports good) - refusing the latch unlock", pgood)
 
@@ -508,12 +516,12 @@ def _fire_phase(ctx, mode):
 
 @test("kernel.fire-line", title="FIRE line: latch locked, unlocked-unarmed, true underrun, and a "
                                "mid-run unlock",
-      subsystem="kernel", kind="operator", hardware="takeover", always=True, est_min=4,
+      subsystem="kernel", kind="auto", hardware="takeover", always=True, est_min=4,
       covers=_KERNEL_COVERS,
-      requires=["kernel.k1-k2"],
-      steps=["Phases B, U and K3 unlock the latch with a zero-duty stream: if the HV supply "
-             "reports good the drill asks you to open the lid first (the safety chain holds HV "
-             "off)."],
+      requires=["kernel.k1-k2"], precheck=hv_not_good,
+      steps=["Phases B, U and K3 unlock the latch with a zero-duty stream, so the drill starts only "
+             "while the HV supply does not report good (true at idle; if it is refused, open the "
+             "lid - the safety chain holds HV off - and start it again)."],
       description="Four phases behind one takeover of the pulse device, all zero duty. A: latch "
                   "locked, 40 000 streamed FIRE bits, nothing on the FIRE/LASER_ON nets. B: latch "
                   "unlocked with the chain unarmed, the FIRE line is driven mid-window and "

@@ -48,7 +48,7 @@ hardware-validated.**
   modes (cancel-and-return on a lid or interlock open, button pause/resume),
   bench-validated 2026-08-17.
 - **Releases are gated by the acceptance tool** (`forgetest`, dev image only):
-  a 44-test catalog, domain-scoped inheritance, an always-required safety core,
+  a 43-test catalog, domain-scoped inheritance, an always-required safety core,
   and a release gate that reads the exported artifact. The full campaign on
   dev image `20260821181036` (the first built on the `<recipe>-pin.inc`
   layout) satisfied 42 of 42 and its export authorizes a release;
@@ -579,17 +579,29 @@ under the domain model from the day's earlier dev images) and the export reads "
 YES" for that image's manifest. That authorizes a release; it is not one
 until `releases/v<version>/acceptance.json` is committed.
 
-- **Catalog: 45 tests** in `forgetest/forgetest/suite/`, every one a port of a
-  proven bench drill or a bench-verified check — the always-required core
+- **Catalog: 43 tests** in `forgetest/forgetest/suite/`, every one a port of a
+  proven bench drill or a bench-verified check: the always-required core
   (`image.health`, `kernel.latch-locked-idle`, `kernel.k1-k2`,
   `kernel.fire-line`), `forgectrl.*`, `logs.*`, `update.*`, `motion.*`
   (pacing, jog round-trip, liveness probe, cancel/abort, dead-man, the lid,
   interlock and button parity tests), `cooling.*` (flow verification, fans
   quiet after motion, a gate setting tripping and off by value, a fan under
-  its floor), `camera.snapshot`,
+  its floor), `camera.*`,
   `laser.*` (emission witness, arm-wait lid, disarm-in-hold, armed kill,
-  pause/resume/lid-cancel) and `cloud.*`. Tests that share a setup are merged;
-  the `auto` tests stay separate for failure isolation.
+  pause/resume/lid-cancel) and `cloud.*` (the mode round trip with the
+  lid-open hunt and the web-service homing on it, and the job-behavior
+  tests). Tests that share a setup are merged; the `auto` tests stay
+  separate for failure isolation. 27 are `auto`, 8 `operator`, 8 `live`.
+- **The operator's part is asked for by name, not by popup**
+  (`docs/ACCEPTANCE.md` "The operator's part"): a Ready prompt before a
+  timed step, a standing notice the test takes down when the machine shows
+  the action done (`ctx.act("lid", "open")` and its kin, the seam a bench
+  actuator will plug into), and one confirm by eye left in the catalog (the
+  emission witness's mark). The head accelerometer, the beam detector, the
+  button LEDs, and a lid-lamp toggle between two snapshots replaced the
+  other eyeball confirmations; `kernel.fire-line` and `camera.snapshot` are
+  `auto`. Code-complete 2026-08-22 with host replays; **bench validation
+  pending** on the next dev image.
 - **Machine identity is content-defined.** Every component recipe contributes
   `forgefirm-manifest.bbclass` entries (the kernel and the module through
   `do_deploy`), `forgefirm-image-manifest.bbclass` assembles them plus the layer
@@ -1134,7 +1146,14 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     service. Still owed: exercising the ported bench tools from the page
     (they are registered and unit-tested, not yet driven from the page), and
     the first release, which commits `releases/v<version>/acceptance.json`.
-    Catalog gaps left from the tool's own plan: `cooling.confirm-escalate` and
+    Cutting the operator's part of a campaign: the forgetest-only step
+    (the operator channel, the merged mode-switch, the sensor witnesses,
+    the steps pane, the journal) is code-complete and host-replayed; it
+    needs a bench run of every re-ported attended test on the next dev
+    image. The steps after it, an offline cloud service for the
+    machine-behavior tests and a bench actuator for the lid, interlock and
+    button, are planned, not started. Catalog
+    gaps left from the tool's own plan: `cooling.confirm-escalate` and
     `cooling.fire-gate-blocks-arm` are not ported (both need the pump switched
     by hand mid-run, so they are bench-tab material first), and whether
     `laser.armed-kill` belongs in the always-required core rather than its

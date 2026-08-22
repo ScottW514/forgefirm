@@ -69,9 +69,11 @@ def _noop(ctx):
     pass
 
 
-def make_test(id, covers, always=False, requires=(), kind="auto", fn=None, subsystem=None, mode=None):
+def make_test(id, covers, always=False, requires=(), kind="auto", fn=None, subsystem=None, mode=None,
+              actions=(), precheck=None, steps=()):
     return catalog_mod.Test(id, "Title " + id, subsystem or id.split(".")[0], kind, "api",
-                            covers, requires, always, 1, (), "desc", fn or _noop, mode=mode)
+                            covers, requires, always, 1, steps, "desc", fn or _noop, mode=mode,
+                            actions=actions, precheck=precheck)
 
 
 def registry(*tests):
@@ -165,3 +167,90 @@ class FakeForgectrl:
         self._srv.server_close()
         os.environ.pop("FORGECTRL_URL", None)
         os.environ.pop("FORGECTRL_TOKEN_FILE", None)
+
+
+# ------------------------------------------------------------ fake grbl
+
+class FakeGrbl:
+    """A Grbl-over-TCP stand-in for the controller: answers '?' with a
+    status report built from its mutable `state`/`mpos`, 'ok' to every
+    command line, and records what it was sent. Point the suite at it
+    with GRBL_HOST/GRBL_PORT (see start/stop)."""
+
+    def __init__(self):
+        import socket as _socket
+        import threading as _threading
+        self.state = "Idle"
+        self.mpos = [0.0, 0.0, 0.0]
+        self.sent = []
+        self.extra = b""            # text pushed to the client on the next poll
+        self._sock = _socket.socket()
+        self._sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        self._sock.bind(("127.0.0.1", 0))
+        self._sock.listen(5)
+        self.port = self._sock.getsockname()[1]
+        self._stop = False
+        self._th = _threading.Thread(target=self._serve, daemon=True)
+
+    def _serve(self):
+        import socket as _socket
+        import threading as _threading
+        self._sock.settimeout(0.2)
+        while not self._stop:
+            try:
+                c, _ = self._sock.accept()
+            except (_socket.timeout, OSError):
+                continue
+            _threading.Thread(target=self._client, args=(c,), daemon=True).start()
+
+    def _client(self, c):
+        import socket as _socket
+        c.settimeout(0.1)
+        buf = b""
+        try:
+            c.sendall(b"\r\nGrblHAL 1.1f ['$' for help]\r\n")
+            while not self._stop:
+                try:
+                    d = c.recv(4096)
+                    if not d:
+                        break
+                    buf += d
+                except _socket.timeout:
+                    continue
+                except OSError:
+                    break
+                out = b""
+                if self.extra:
+                    out += self.extra
+                    self.extra = b""
+                while buf:
+                    if buf[0:1] == b"?":
+                        buf = buf[1:]
+                        out += ("<%s|MPos:%.3f,%.3f,%.3f|FS:0,0>\r\n" % (self.state, *self.mpos)).encode()
+                    elif buf[0] in (0x18, 0x85, 0x7E, 0x21):
+                        buf = buf[1:]
+                    elif b"\n" in buf:
+                        line, buf = buf.split(b"\n", 1)
+                        self.sent.append(line.strip().decode("utf-8", "replace"))
+                        out += b"ok\r\n"
+                    else:
+                        break
+                if out:
+                    c.sendall(out)
+        finally:
+            c.close()
+
+    def start(self):
+        self._th.start()
+        os.environ["GRBL_HOST"] = "127.0.0.1"
+        os.environ["GRBL_PORT"] = str(self.port)
+        return self
+
+    def stop(self):
+        self._stop = True
+        try:
+            self._sock.close()
+        except OSError:
+            pass
+        for k in ("GRBL_HOST", "GRBL_PORT"):
+            os.environ.pop(k, None)
