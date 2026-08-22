@@ -229,7 +229,8 @@ class GateOffTests(unittest.TestCase):
         cooling.SESSION_END_WAIT_S = 3
         self.fc.state["status"] = dict(self.fc.state["status"],
                                        coolant={"down_c": 22.4, "up_c": 22.3, "pump": True, "tec": False},
-                                       temps={"chassis_c": 29.0, "supply_raw": 589},
+                                       temps={"chassis_c": 29.0, "supply_raw": 589, "soc_c": 42.8,
+                                              "soc_throttle": 0},
                                        gates_off=[])
         self.fc.state["cool"] = {"phase": "idle", "verdict": "OK", "fire_ok": False, "hold": False,
                                  "gates_off": []}
@@ -284,7 +285,7 @@ class GateOffTests(unittest.TestCase):
                 if self.temps_line:
                     self.fc.state["logs_tail"]["text"] += (
                         "Aug 22 12:00:30 forgectrl: cool: temps this job: chassis 29.0..29.4 C, "
-                        "supply raw 587..592\n")
+                        "soc 42.8..47.1 C, supply raw 587..592\n")
                 time.sleep(0.2)
                 cool["phase"] = "idle"
             threading.Thread(target=end, daemon=True).start()

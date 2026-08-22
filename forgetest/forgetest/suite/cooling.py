@@ -271,8 +271,8 @@ def _tail_has(fc, needle):
                   "engine must skip the gate (verdict OK), report it in gates_off on /status "
                   "and /cool/status, say so in the settings reply, and log the run-start line; "
                   "restored, everything reads as before. Alongside: /status carries the watched "
-                  "board temperatures (chassis in degrees, supply as a raw count) and every run "
-                  "session ends with them ranged into one log line.")
+                  "board temperatures (chassis and SoC die in degrees, supply as a raw count, the "
+                  "CPU unthrottled) and every run session ends with them ranged into one log line.")
 def gate_off(ctx):
     fc = ctx.forgectrl
     ev = ctx.evidence
@@ -291,6 +291,10 @@ def gate_off(ctx):
               "/status temps.chassis_c is not a plausible chassis temperature: %s", temps)
     ctx.check(isinstance(temps.get("supply_raw"), int) and 0 <= temps["supply_raw"] <= 1023,
               "/status temps.supply_raw is not a 10-bit count: %s", temps)
+    ctx.check(isinstance(temps.get("soc_c"), (int, float)) and 10.0 <= temps["soc_c"] <= 100.0,
+              "/status temps.soc_c is not a plausible die temperature: %s", temps)
+    ctx.check(temps.get("soc_throttle") == 0,
+              "the CPU is throttled (or its cooling device is missing) at idle: %s", temps)
     c0 = _cool(fc)
     ctx.check(c0.get("verdict") == "OK", "engine is not at OK before the test: %s", c0)
     ctx.check(c0.get("gates_off") == [], "a gate is already off: %s", c0.get("gates_off"))
@@ -349,8 +353,9 @@ def gate_off(ctx):
             ctx.log("restored ceiling %s reports state %s", val, state)
             # Every run session ends with the board temperatures ranged
             # into one line.
-            ctx.check(_tail_has(fc, "temps this job: chassis "),
-                      "the run-end board-temperature line is missing from the forgectrl log")
+            ctx.check(_tail_has(fc, "temps this job: chassis ") and _tail_has(fc, ", soc "),
+                      "the run-end board-temperature line (chassis, soc, supply) is missing from the "
+                      "forgectrl log")
         finally:
             if not restored:
                 # The engine reads settings at run start only: restoring

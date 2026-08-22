@@ -623,11 +623,57 @@ until `releases/v<version>/acceptance.json` is committed.
 
 ## Hardware facts bank (measured)
 
+- **The factory's envelope, decoded** (firmware 2.6.0-2228, the 23 captured
+  headers, this board's own factory logs). The pulse header is the job's
+  operating envelope and the factory refuses to cut without it: 29 tags are
+  mandatory, 346 are header-legal, an unknown tag is logged and skipped. The
+  service fills the fan duties, the coolant window, the per-sensor temperature
+  ceilings, the lid IR thresholds, the accelerometer thresholds and an HV
+  current cap per job; a cut job carries the real fan duties (air assist
+  1023, exhaust 65535, intake 43278, equal to ForgeFIRM's run profile) and a
+  hunt or motion file carries air assist 204 with the extraction fans off.
+  Every tach window is zero in every capture except `AArx` 64500 on cuts, and
+  the factory's intake and exhaust tach monitors treat zero as not configured,
+  so a stalled extraction fan is caught there by the temperature it causes;
+  when a fan alert does fire during a cut the factory pauses the print on the
+  same transition as a user pause. Temperature runs two tiers there: a plain
+  alert pauses, a `*_temp_critical` fails the machine; the units are per
+  sensor (the coolant family is carried twice, raw counts with the NTC's hot
+  end as "min", and millidegrees), and a stock machine's live coolant window
+  is 10 to 30 C idle and 5 to 35 C warm-up and run, `CMrx` 33000 on a cut
+  being exactly the shipped 33 C ceiling. The factory does not verify coolant
+  flow: the calorimetric `CF` controller in its firmware is never armed and
+  its heater is written only at phase changes. ForgeFIRM's answer, all of it
+  landed and bench-proven in the catalog (`cooling.gate-off`,
+  `cooling.fan-gate-trips`, `cooling.critical-tier`, the hunt leg of
+  `cloud.mode-switch`) and in the CAMPAIGN-LOG drills: every gate a plain
+  setting with an off end; a header value only ever tightening a local one;
+  every fan held to a measured floor with a fault, not a pause, for the
+  session; a coolant critical line above the ceiling's pause; the board
+  temperatures watched per job; and the rest of the envelope declared, tag by
+  tag, in `CLOUD.md` "The pulse header".
 - **Board temperatures at idle** (room ~22 C, machine on for hours): the
   chassis LM75 reads **29.0 C**, `pic/pwr_temp` reads **589 raw** (the
-  unverified guess `raw * 0.08715 - 21` would make that 30.3 C; a thermometer
-  on the supply heatsink decides). Ranged per job by the engine from here
-  on.
+  unverified guess `raw * 0.08715 - 21` would make that 30.3 C), the SoC die
+  **42.8 C**. Ranged per job by the engine from here on. The supply stays a
+  raw count by decision: its heatsink cannot be reached with a thermometer
+  while the machine runs, so the conversion is not going to be verified on
+  this bench, and a number nobody has checked is not published as degrees.
+  The per-job range in raw counts is the record, and a ceiling, if one is
+  ever wanted, is set in raw counts from it (`temp_calibrate.py supply-*`
+  stays for a machine where the heatsink is reachable).
+- **The SoC guards itself.** The i.MX6DL (rev 1.3) on-die monitor is
+  `thermal_zone0` (`imx_thermal_zone`, the same node as `hwmon0`), governor
+  `step_wise`, trips at **85 C passive** and **90 C critical** (the
+  consumer-grade points the driver derives from the fuses: hot point 95,
+  critical at hot minus 5, passive at hot minus 10). The passive trip is
+  bound to `cpufreq-cpu0` (996 / 792 / 396 MHz, governor `ondemand`) and
+  both GPU cooling devices; the critical trip is the kernel's orderly
+  poweroff. A throttle slows the engine, the camera and the protocol thread
+  before the step stream (the ring is in hand). The factory board carries
+  **no heatsink or fan on the SoC**, only the mounting holes for one; the
+  factory's load never needed it, and ForgeFIRM's may, which is what the
+  per-job SoC range and the throttle log line are there to show.
 - **Fan speeds at the cut profile** (exhaust duty 65535, intake 43278, air
   assist 1023; sampled at 1 Hz over 120 s from idle, the exhaust duct's
   inline booster fan off): exhaust **11640 rpm** steady (spread 11444 to
@@ -975,7 +1021,10 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
    by tracking it, and the watch could be re-armed on fixed numbers after all.
    Unproven: it assumes the header's quartiles map onto the raw channels and
    share their units. Confirm both by reading the four channels while stepping
-   the lamp, then compare against the header the next cloud job carries.
+   the lamp, then compare against the header the next cloud job carries. By
+   decision those header thresholds (`IR??`) are the prior for this redesign
+   and nothing else: the cloud client declares them ignored, and the watch
+   stays disabled until it is lamp-aware.
 5. **Limit-switch homing.** The planned second homing method (`$22` stays 0
    until it lands); printable brackets are in `3d-models/`. Also: calibrate
    `gfcloud_home_x/y` against a jog to a known reference if the factory corner
@@ -1013,10 +1062,11 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
    `LCfl`. What is left is tracked in
    `python3-gfhardware/forgefirm-app/docs/CLOUD.md` "Outstanding items" and
    is short: whether the service accepts an 8 MP machine's larger images (no
-   HD machine has been on the bench), and the pulse header's unenforced
-   safety envelope, which is item 19, listed separately because the
-   enforcement lands in the cooling engine and has to hold in GRBL mode too,
-   not only under the cloud client. The memory guards
+   HD machine has been on the bench). The pulse header's envelope is
+   settled: every tag the service fills in is applied, passed through as a
+   limit that can only tighten, refused on, logged or declared ignored with
+   its reason (`CLOUD.md` "The pulse header"), and the gates behind it live
+   in the cooling engine so they hold in GRBL mode too. The memory guards
    (`pulse_reject_threshold_bytes`, 128 MiB of compressed body) stay
    reasoned rather than measured, by decision: nothing the service sends
    comes near them, and every job logs the body and program sizes the
@@ -1322,194 +1372,29 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     line does to it, and how it composes with the armed window's disarm grace
     across a long hold.
 
-19. **Pulse-header envelope (cloud mode).** The pulse header is the job's
-    operating envelope, and the factory refuses to cut without it: 29 of its
-    tags are mandatory, a header missing one is rejected, and a known tag that
-    is not header-legal is rejected too. The service fills the safety-relevant
-    ones with real values per job rather than echoing back what the machine
-    reported. ForgeFIRM applies thirteen tags (the three run fan duties,
-    `STfr`, the X/Y current, decay and microstep set, `ZSmd`), refuses the
-    file on two (`MCsn`, the serial it is locked to, and `PDfm`, the pulse
-    data format, both checked before a byte reaches the ring) and drops the
-    rest. Seventeen of the mandatory ones are among the dropped.
-
-    **Landed first, the pattern every gate ships on:** a gate is a plain
-    setting with a wide legal range, a recommended band, and an off end (a
-    ceiling at its maximum, a window of zero) that turns the gate off by
-    value, with no separate switch; the panel warns outside the band and
-    while any gate is off, the engine logs each gate setting at every run
-    start, `/status` and `/cool/status` carry `gates_off`, and an off gate
-    keeps measuring. Applied to the coolant ceiling, its resume gate, the
-    flow window and the flow rise (`forgectrl/src/gates.c`, `SERVICES.md`
-    "Gate settings", `COOLING.md` §8a, `cooling.gate-off` in the catalog,
-    bench PASS 2026-08-21 on dev image `20260821210903`).
-    **The pass-through is in:** the cloud client derives the job's limits
-    from the header (`CMrx`/`CMrn` as degrees, `EFrx`/`IFrx`/`AArx` as the
-    minimum speeds their maximum periods mean) and rides them on every
-    `/cool/state`; the engine resolves each as the stricter of local and
-    header, never loosening and never overruling an off gate, logs the
-    effective set and publishes it in `/cool/status`; the coolant ceiling
-    is the live consumer and the fan floors follow
-    (`cloud.pause-resume` checks both log lines on a real print; bench PASS
-    2026-08-21 on dev image `20260821220926`, the service's hunt windows
-    ignored as looser and the print's 33 C window matched). **The airflow
-    gates are in** (`forgectrl/src/airflow.c`): every fan held to a floor
-    while the run profile is applied (exhaust, intakes and air assist by
-    tachometer, purge by current), a spin-up grace, three ticks under the
-    floor, a fault for the rest of the session (`AIRFLOW`, no resume), a
-    header window only ever raising a floor. A fan is judged at the
-    operating point its floor was measured at: always while armed (when a
-    job's profile may raise a fan but never lower it below the run duty),
-    and unarmed whenever it is commanded at the run duty; a cloud hunt,
-    sent with the extraction fans off, is measured and not judged.
-    `cooling.fan-gate-trips` and the hunt leg of `cloud.mode-switch` in
-    the catalog, both PASS on the pinned dev image `20260822135848`
-    (campaign 18 of 18). The shipped floors are 55 percent of the bench
-    machine's measured steady speeds (facts bank: exhaust 6400, intake
-    2290, air assist 6000 rpm, purge current 300, grace 15 s). The
-    unplugged-exhaust-fan drill PASS on the same image: `AIRFLOW` at
-    grace plus three ticks with the exhaust dead, the other fans held,
-    the reason relayed on the Grbl port, and the replugged fan `ok` inside
-    the next session's grace (CAMPAIGN-LOG). From the drill: the fault
-    ends with its run session (decided; a standing hold at idle canceled
-    GRBL jogs and would have refused the cloud print that re-proves the
-    fan), since every session judges every fan afresh after the grace;
-    `cooling.fan-gate-trips` checks it, PASS on dev image `20260822145201`.
-    **The coolant critical tier is in:** `cool_temp_critical_c` (default
-    38 C, 6 to 70, off at 70, kept above the ceiling by the settings
-    cross-check) is the fail tier above the ceiling's pause: at or over it
-    in a run session the verdict is `CRITICAL` (fire blocked, hold, no
-    resume this job), the fault ends with the session, no header touches
-    it; `cooling.critical-tier` in the catalog (45), PASS on dev image
-    `20260822154257`, and the warm-loop drill (`critical_tier_drill.py`)
-    PASS the same day on a genuinely rising loop: `OVERTEMP` at the
-    ceiling, `CRITICAL` four seconds later at the line, the fault ending
-    with the session (CAMPAIGN-LOG). **The board temperatures are watched:**
-    the chassis LM75 (degrees) and the supply sensor (raw count, its
-    conversion still unverified) ride `/status` as `temps`, show on the
-    Status tab, and are ranged over every run session into one run-end
-    log line; no gate behind either until the record says where one
-    belongs, and the supply's conversion waits on thermometer points at
-    the heatsink during a long cut (`temp_calibrate.py supply-point`,
-    three points, then `supply-fit`). Bench run of the status fields and
-    the log line owed on the next image.
-
-    Nothing here can put energy where it was not commanded: the hardware chain
-    is the emission boundary and no header field touches it, and forgectrl runs
-    its own coolant ceiling, flow verification, emission witness, liveness gate
-    and silence timeout. The gap is that the envelope enforced is ForgeFIRM's
-    fixed one rather than the job's, and that several failure modes the factory
-    watches have no counterpart here at all. In rough order of what a failure
-    would cost:
-
-    - **Fan tachometers gate nothing.** Every tach is read for `/status` and
-      the dashboard and none is checked against a limit. A fan that stalls
-      mid-cut is invisible. Exhaust is the fume path and is the one to close
-      first. The tach conversions are already in the facts bank; what is
-      missing is a gate and a verdict, which belongs in the cooling engine next
-      to the flow check.
-
-      **What the factory does here is now settled, and it is not what the
-      header suggests.** Three facts, and they pull in different directions.
-
-      First, the header windows are empty and always have been. A cut job
-      carries real fan duties (`AArd` 1023, `EFrd` 65535, `IFrd` 43278); a
-      motion or hunt file carries `AArd` 204 and the other two at zero, which
-      is correct, since those jobs do not cut. But `AArn`, `AArx`, `EFrn`,
-      `EFrx`, `IFrn` and `IFrx` are zero in both kinds, and zero in pulse files
-      captured from a stock factory machine on the live service, and zero in
-      that machine's own settings report. The only movement in nine years is
-      that the service started setting `AArx` to 64500 on cut jobs. Nor do the
-      limits arrive out of band: across every captured session, counting every
-      action type, the service has ever pushed seven keys, all image, camera
-      and network. No limit that bounds the machine reaches it that way.
-
-      Second, the factory's own monitors are mostly disabled anyway. The intake
-      and exhaust tach monitors install a lenient evaluator that treats a zero
-      limit as "not configured" and returns in-range, so those two are disabled
-      twice over. Air assist keeps the strict evaluator and does receive
-      `AArx`, so it is the one fan monitor that can fire. Because the tach
-      attributes are pulse *periods* and the kernel reports 0 for a stopped or
-      absent tach, that alert means "no usable tach signal", not "slow fan".
-      A stalled extraction fan is not caught by tachometer on a factory
-      machine; it is caught by the temperature it causes.
-
-      Third, and this is the part worth adopting: when a fan tach alert does
-      fire during a cut, the factory **pauses the print**. It posts a
-      `HARDWARE_ALERT` to the hardware task, and in the running state that
-      event takes exactly the same transition as a user pause, differing only
-      in one flag. Not an abort, not a warning: a pause.
-
-      So the policy is known even though the numbers are not. Pick thresholds
-      on the bench, let a header value only tighten them, and make the verdict
-      a pause rather than an abort.
-    - **Only the coolant loop has a temperature ceiling.** `cool_temp_max` on
-      the upstream sensor is the whole thermal gate. Board, head, interconnect,
-      lid, fused and power-supply temperatures are read and displayed and gate
-      nothing, though the header carries a run max, a warmup max and a critical
-      max for each, and `PTmn`/`PTmx` on the supply are mandatory.
-
-      **The factory stops for temperature far more readily than it does for
-      fans, and the scale question is answered.** Its plain temperature alerts
-      raise an aggregate `alarm` condition which posts `ENVIRONMENTAL_ALERT`,
-      and during a cut that pauses the print on the same transition as a user
-      pause. Its `*_temp_critical` conditions are in the machine-unusable set
-      and post `FAILURE` instead, which is a different state and not a pause.
-      Two tiers, then: every temperature alert pauses, and a critical fails the
-      machine.
-
-      The units are per-sensor, not universal, which is what made the header
-      numbers look wrong. The coolant loop is the worked example: the factory
-      carries the same six per-phase limits twice, `CT{i,w,r}{n,x}` in raw ADC
-      counts and `CM{i,w,r}{n,x}` in millidegrees, and the raw family's "min"
-      is the *hot* limit because the thermistors are NTCs. Run the firmware's
-      own beta conversion over the compiled `CT` defaults and round numbers
-      fall out (4.01 to 50.01 C idle, 1.02 to 31.04 C warmup and run), which is
-      the check that the conversion is right. A stock machine's live `CM`
-      values are 10 to 30 C idle and 5 to 35 C warmup and run, with 1.0 C of
-      hysteresis on each end. The conversions live in `UAPI.md`.
-
-      What remains is per-sensor: establish each family's scale from its own
-      conversion before adopting any ceiling, and remember the factory reads
-      four locations where ForgeFIRM exposes one chassis sensor, so three of
-      the four header ceilings have nothing here to compare against.
-    - **Coolant flow is not verified by the factory either, and its heater is
-      idle.** Worth knowing before treating the factory as the reference for
-      the cooling engine's flow check. The loop is built for calorimetric flow
-      detection, a heater in line between two thermistors, and the firmware
-      carries a full closed-loop controller for it: the `CF` family, with a
-      setpoint, proportional and integral gains, a differential-temperature
-      readout and min/max limits on it. None of it is armed. The service never
-      sends those settings, a stock machine reports none of them, and the three
-      faults it would raise (`coolant_flow_alert`, `coolant_flow_fault`,
-      `coolant_heater_fault`) have no raiser anywhere in the factory image. The
-      factory watches one coolant thermistor against a per-phase window with
-      hysteresis, and that is all. Its heater is written only at phase changes,
-      from a configured per-phase value, and nothing reads the result back.
-      ForgeFIRM's flow verification is therefore ahead of the factory, not
-      behind it, and nothing about the factory's numbers should be used to
-      weaken it.
-    - **No crash or tilt abort.** The head accelerometer is used only as the
-      motion-liveness probe. The factory runs two tiers off the same sensor and
-      the header supplies both: a per-axis *alert* threshold, which posts
-      `MACHINE_INITIATED_PAUSE` and so pauses the print, and a separate per-axis
-      *abort* threshold, which posts `ABORT`. `HAxr`, `HAyr` and `HAar` arrive
-      every job. The lid accelerometer and the two tilt conditions ride the same
-      structure, with `lid_tilt` and `head_tilt` grouped with the fan alerts
-      rather than with the accelerometer ones.
-    - **Beam detect is unread.** The kernel carries the latch; no userspace
-      reads it. In the factory, `beam_detect_alert` pauses the print and
-      `beam_detect_abort` aborts it, and a `beam_detect_report` is uploaded
-      afterward at whatever severity the report-upload condition selects. See
-      also item 15, which is circling the same hardware from the other side.
-
-    Deciding what to adopt is part of the work, not a foregone conclusion. A
-    limit that arrives from a remote service is a limit that service can raise,
-    so the sane shape is probably to take the header value as a ceiling that
-    can only tighten a locally configured one, never loosen it. Whatever lands
-    needs acceptance coverage in the same change.
+19. **Head crash and rail-contact detector (planned).** The head
+    accelerometer is the motion-liveness probe and nothing more; the
+    factory runs two tiers off the same sensor (a per-axis alert that
+    pauses, a per-axis abort), and its thresholds arrive in every pulse
+    header in a unit and behind a filter that are not known. A detector
+    here is bench-measured from scratch, not adopted from the header: the
+    rail-contact signature in the facts bank (a 20 to 40 times jump within
+    4 ms on a fast strike, near-silent on a slow one) is the starting
+    point, and the header values are only a cross-check once the units
+    are established. A pause on contact, on the factory's shape, would be
+    the first use.
 
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the
 underrun itself alarms and unlinks the anchor). Not in the acceptance catalog
-by design, for the same reason.
+by design, for the same reason. From the pulse-header envelope, each by
+decision and each declared in the cloud client so every job's log counts it
+as decided rather than missed: the warm-up fan profile (the run profile
+covers the warm-up hold), the supply temperature window (the service sends
+the whole ADC range and the factory binds it to nothing; the supply is
+watched per job instead), the head, lid, interconnect and fused temperature
+ceilings (no sensor at those locations; the chassis is watched per job), the
+head accelerometer thresholds (item 19), the lid IR thresholds (item 4), the
+HV current caps (the sampled emission witness covers the idle case, and HV
+current is ranged per job), the thermal report upload conditions and the
+pump flag. Beam detect stays with item 15.

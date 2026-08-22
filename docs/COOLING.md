@@ -436,12 +436,17 @@ Stated plainly so nobody counts on them:
   cannot be detected (the output has no readback), so this will become a user
   setting plus a simple hysteresis around the factory's setpoints.
 - **A fire watch that acts** (§7).
-- **Chassis and supply ceilings.** Both temperatures are measured and not
-  gated: the chassis LM75 in degrees and the supply sensor as a raw count,
-  in `/status` as `temps`, and ranged over every job in one log line
-  (`temps this job: ...`). A ceiling for each comes from that record once
-  there is enough of it, and the supply's conversion from a thermometer on
-  its heatsink (`temp_calibrate.py supply-point`).
+- **Chassis, SoC and supply ceilings.** Three temperatures are measured and
+  not gated: the chassis LM75 and the SoC die in degrees, the supply sensor
+  as a raw count, in `/status` as `temps` (with the kernel's CPU throttle
+  state beside them), on the Status tab, and ranged over every job in one
+  log line (`temps this job: ...`, naming a throttle if one happened). The
+  SoC already guards itself (the kernel throttles the CPU at 85 C and
+  powers the board off at 90 C on this part). A ceiling for each comes
+  from that record once there is enough of it. The supply's conversion
+  stays unverified by decision (its heatsink is not reachable with a
+  thermometer while the machine runs), so its reading stays a raw count
+  and any ceiling for it would be set in raw counts too.
 - **Fan floors measured on more than one machine.** The shipped floors are
   a fraction of one bench machine's run-duty speeds; a machine whose fans
   read differently sets its own (§8), and a floor of zero turns that gate
