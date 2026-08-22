@@ -588,9 +588,12 @@ until `releases/v<version>/acceptance.json` is committed.
   its floor), `camera.*`,
   `laser.*` (emission witness, arm-wait lid, disarm-in-hold, armed kill,
   pause/resume/lid-cancel) and `cloud.*` (the mode round trip with the
-  lid-open hunt and the web-service homing on it, and the job-behavior
-  tests). Tests that share a setup are merged; the `auto` tests stay
-  separate for failure isolation. 27 are `auto`, 8 `operator`, 8 `live`.
+  lid-open hunt and the web-service homing on it, one real print, and the
+  job-behavior tests under the offline service: the cloud client driven
+  from a local socket with a synthesized laser-free job, no account, no
+  network, nothing on the bed). Tests that share a setup are merged; the
+  `auto` tests stay separate for failure isolation. 27 are `auto`, 8
+  `operator`, 8 `live`.
 - **The operator's part is asked for by name, not by popup**
   (`docs/ACCEPTANCE.md` "The operator's part"): a Ready prompt before a
   timed step, a standing notice the test takes down when the machine shows
@@ -1151,9 +1154,12 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     Cutting the operator's part of a campaign: the forgetest-only step
     (the operator channel, the merged mode-switch, the sensor witnesses,
     the steps pane, the journal, per-test implementation hashing) is done
-    and bench-validated (CAMPAIGN-LOG 2026-08-22). The steps after it, an
-    offline cloud service for the machine-behavior tests and a bench
-    actuator for the lid, interlock and button, are planned, not started. Catalog
+    and bench-validated (CAMPAIGN-LOG 2026-08-22). The offline cloud
+    service for the machine-behavior tests is code-complete (gfutilities
+    `OfflineService`, `gfcloud --offline`, `forgetest/puls.py`, four tests
+    re-ported) with host replays; **its bench run on the next dev image is
+    owed.** A bench actuator for the lid, interlock and button is planned,
+    not started. Catalog
     gaps left from the tool's own plan: `cooling.confirm-escalate` and
     `cooling.fire-gate-blocks-arm` are not ported (both need the pump switched
     by hand mid-run, so they are bench-tab material first), and whether

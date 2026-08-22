@@ -149,6 +149,21 @@ bench, or one whose `/data` has been wiped, starts from a full campaign.
    it carries the two service-driven motions with it: the connect-time
    hunt run with the lid open, and the web-service homing (`$H` with
    `homing_mode = gfcloud`) after the switch back.
+   The cloud tests split by what they prove. The service protocol (sign-in,
+   the WebSocket, the hunt, the print from the app, progress, the job's
+   limits reaching the engine) is `cloud.mode-switch` and one real print,
+   `cloud.pause-resume`. The machine's print behavior (the lid and
+   interlock aborts, the button-wait cancel, a paused print ended by the
+   lid, a print longer than the ring with the app's cancel) runs under the
+   **offline service** (`enter_offline`: the cloud client restarted with
+   the `/run/gfcloud-offline` marker, no account, no network; the test
+   hands it a synthesized job over `/run/gfcloud-offline.sock` and reads
+   the machine's events back, see `forgetest/puls.py` and the cloud
+   client's `docs/CLOUD.md`). Those jobs carry no laser command, so
+   nothing is on the bed and nothing burns, but the arm still unlocks the
+   latch, so they stay `live`. The offline client is left running; the
+   next test that needs the service restarts it (`enter_cloud` does), as
+   does a mode switch or a controller restart.
 4. Or hand the whole list to a queue. **Run what is left** offers two:
    **Unattended** takes every `auto` test the campaign does not already
    count as satisfied, and needs nobody in the room; **Operator and live**

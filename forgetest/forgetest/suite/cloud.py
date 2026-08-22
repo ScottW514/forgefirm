@@ -5,10 +5,12 @@ the web-service homing ($H) on the way back; the job-behavior tests run in
 cloud mode and leave the machine there (see enter_cloud)."""
 import json
 import os
+import socket
 import time
 
 from ..catalog import test
 from .. import hw
+from .. import puls
 from ..baseline import read_position, read_program_total
 
 _CLOUD_COVERS = [("forgefirm-app", "**"), ("python3-gfhardware", "**"), ("python3-gfutilities", "**"),
@@ -328,7 +330,14 @@ def mode_switch(ctx):
 # lid close, the hunt after a print) to finish before it ends, so the next
 # run - or the operator - gets a quiet machine.
 
-WS_MARKS = ("RX-EVENT: ready", "RX-EVENT: closed", "RECONNECTING", "CLOSING")
+# The offline service (gfcloud --offline, or the marker file at start):
+# the machine driven from a local socket, no web session at all. Its log
+# mark counts among the websocket state marks as "not connected".
+OFFLINE_MARK = "OFFLINE service"
+OFFLINE_MARKER = "/run/gfcloud-offline"
+OFFLINE_SOCKET = "/run/gfcloud-offline.sock"
+JOB_DIR = "/tmp/forgetest"          # the jobs the offline tests write (tmpfs)
+WS_MARKS = ("RX-EVENT: ready", "RX-EVENT: closed", "RECONNECTING", "CLOSING", OFFLINE_MARK)
 ACTIVITY_MARKS = ("start motion", "start return home", "starting run", "starting z homing cycle")
 LOG_TAIL_BYTES = 4 << 20
 QUIET_S = 8                 # the re-hunt's motions are ~4 s apart (a lid image between them)
@@ -484,7 +493,15 @@ def session_live(pid):
                     last_pid = m
     last = last_pid if last_pid is not None else last_any
     where = "pid %s" % pid if last_pid is not None else "newest lines"
+    if last == OFFLINE_MARK:
+        return False, "%s: offline service, no web session" % where
     return last == "RX-EVENT: ready", "%s: last websocket state %s" % (where, last)
+
+
+def client_offline(pid):
+    """The running cloud client is the offline service."""
+    live, detail = session_live(pid)
+    return (not live) and "offline" in detail
 
 
 def wait_quiet(ctx, offset, quiet_s=None, timeout=None):
@@ -564,13 +581,19 @@ def enter_cloud(ctx):
     fc = ctx.forgectrl
     st, m = fc.get("/mode")
     ctx.check(st == 200 and isinstance(m, dict), "GET /mode -> %s", st)
+    offline_marker_off(ctx)
+    live = detail = None
     if m.get("mode") == "cloud" and m.get("controller") == "running":
         live, detail = session_live(m.get("pid"))
-        ctx.check(live, "cloud mode is up (pid %s) but the client has no live service session (%s) - "
+        ctx.check(live or "offline" in detail,
+                  "cloud mode is up (pid %s) but the client has no live service session (%s) - "
                   "check credentials and network, or restart the controller", m.get("pid"), detail)
+    if live:
         ctx.log("cloud mode already up (pid %s), service session live - reusing it", m.get("pid"))
         offset = log_size(GFCLOUD_LOG)
     else:
+        if detail:
+            ctx.log("the running client is the offline service: restarting it with the service")
         offset = fresh_cloud_connect(ctx)
         hunt = wait_action_finished(ctx, offset, "hunt", HUNT_TIMEOUT_S)
         ctx.check(hunt, "the service sent no connect-time hunt (or it never finished) within %d s",
@@ -579,6 +602,151 @@ def enter_cloud(ctx):
     ctx.check(wait_quiet(ctx, offset), "the cloud client was still running service moves after %d s",
               QUIET_TIMEOUT_S)
     return log_size(GFCLOUD_LOG)
+
+
+def offline_marker_off(ctx):
+    """No client started from here on comes up offline."""
+    try:
+        os.remove(OFFLINE_MARKER)
+        ctx.log("offline marker removed")
+    except OSError:
+        pass
+
+
+def enter_offline(ctx):
+    """Cloud mode with the OFFLINE service: the machine driven from the
+    local socket, no web session. A running offline client is reused;
+    otherwise the marker is set and the client started fresh (restarted
+    in cloud mode, switched to from GRBL mode, the change declared) and
+    its listener waited for. The marker is taken down again at once: it
+    only ever applies to that one start. Returns the log offset where the
+    test's own window begins."""
+    fc = ctx.forgectrl
+    st, m = fc.get("/mode")
+    ctx.check(st == 200 and isinstance(m, dict), "GET /mode -> %s", st)
+    if m.get("mode") == "cloud" and m.get("controller") == "running" and client_offline(m.get("pid")):
+        ctx.log("the offline service is already up (pid %s) - reusing it", m.get("pid"))
+        return log_size(GFCLOUD_LOG)
+    offset = log_size(GFCLOUD_LOG)
+    with open(OFFLINE_MARKER, "w") as f:
+        f.write("forgetest %s\n" % ctx.test.id)
+    try:
+        if m.get("mode") == "cloud":
+            ctx.log("cloud mode: restarting the client offline (was pid %s)", m.get("pid"))
+            st, body = fc.post("/controller/stop")
+            ctx.check(st == 200, "controller stop refused: %s %s", st, body)
+            m = wait_mode(ctx, fc, "cloud", want_controller="standby", timeout=30)
+            ctx.check(m and m.get("controller") == "standby", "the cloud client did not stop: %s", m)
+            st, body = fc.post("/controller/start")
+            ctx.check(st == 200, "controller start refused: %s %s", st, body)
+        else:
+            ctx.log("%s mode: switching to cloud, offline", m.get("mode"))
+            st, body = fc.post("/mode", data={"controller": "cloud"})
+            ctx.check(st == 200, "mode switch to cloud refused: %s %s", st, body)
+        m = wait_mode(ctx, fc, "cloud", timeout=90)
+        ctx.check(m and m.get("mode") == "cloud" and m.get("controller") == "running",
+                  "cloud controller did not come up: %s", m)
+        ctx.mode_changed("cloud")
+        got = wait_log(ctx, offset, [OFFLINE_MARK], 60)
+        ctx.check(got[OFFLINE_MARK], "the client did not come up as the offline service within 60 s")
+        ctx.log("offline service up (pid %s): %s", m.get("pid"), message(got[OFFLINE_MARK]))
+    finally:
+        offline_marker_off(ctx)
+    ctx.check(wait_quiet(ctx, offset), "the machine was not quiet %d s after the offline start", QUIET_TIMEOUT_S)
+    return log_size(GFCLOUD_LOG)
+
+
+class Offline:
+    """The socket the offline service takes actions on: send the
+    service's messages, read the machine's events."""
+
+    def __init__(self, path=None):
+        self.path = path or OFFLINE_SOCKET
+        self.sock = None
+        self.buf = b""
+        self.events = []
+
+    def __enter__(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(5)
+        self.sock.connect(self.path)
+        self.sock.settimeout(0.05)
+        return self
+
+    def __exit__(self, *a):
+        if self.sock:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+        return False
+
+    def send(self, msg):
+        self.sock.sendall((json.dumps(msg) + "\n").encode())
+
+    def poll(self):
+        """Collect whatever events have arrived; returns the new ones."""
+        new = []
+        try:
+            while True:
+                d = self.sock.recv(65536)
+                if not d:
+                    break
+                self.buf += d
+        except (socket.timeout, OSError):
+            pass
+        while b"\n" in self.buf:
+            line, self.buf = self.buf.split(b"\n", 1)
+            if line.strip():
+                try:
+                    ev = json.loads(line.decode("utf-8", "replace"))
+                except ValueError:
+                    ev = {"raw": line.decode("utf-8", "replace")}
+                self.events.append(ev)
+                new.append(ev)
+        return new
+
+    def print_ready(self, action_id, path, settings=None):
+        self.send({"id": action_id, "action_type": "print", "status": "ready",
+                   "motion_url": "file://" + path, "settings": settings or {}})
+
+    def cancel(self, action_id, action_type="print"):
+        self.send({"id": action_id, "action_type": action_type, "status": "cancelled"})
+
+
+def offline_events(off):
+    """Every event the offline service has handed back so far, by name."""
+    off.poll()
+    return [e.get("event") for e in off.events if e.get("event")]
+
+
+def offline_job(ctx, name, **kw):
+    """Write a synthesized, laser-never-commanded job for the offline
+    service and return its path (under JOB_DIR, tmpfs)."""
+    os.makedirs(JOB_DIR, exist_ok=True)
+    path = os.path.join(JOB_DIR, name)
+    n, seconds, compressed = puls.write_job(path, **kw)
+    ctx.log("job %s: %d payload bytes, %.0f s at STfr %d%s", name, n, seconds,
+            kw.get("step_hz", 10000), " (gzip)" if compressed else "")
+    ctx.evidence.setdefault("jobs", {})[name] = {"payload_bytes": n, "seconds": round(seconds, 1),
+                                                  "compressed": compressed}
+    return path
+
+
+def offline_start_print(ctx, off, action_id, path, offset, settings=None):
+    """Hand the offline service a print and take it to its run: the
+    client loads the job, lights the button and waits; the operator's
+    press arms it and the run starts. Returns the 'starting run' line."""
+    off.print_ready(action_id, path, settings)
+    got = wait_log(ctx, offset, ["waiting for button"], 120)
+    ctx.check(got["waiting for button"], "the offline print never reached the button wait (refused, "
+                                         "or the job did not load)")
+    ctx.act("button", "press", text="The button is lit white: the press arms the print and the "
+            "head starts to move. Nothing fires: the job commands no laser.",
+            until=lambda: wait_print_running(ctx, offset, 0.1) is not None, timeout=180)
+    got = wait_print_running(ctx, offset, 10)
+    ctx.check(got, "the print did not start after the press")
+    return got
 
 
 def settle_cloud(ctx, offset):
@@ -614,6 +782,14 @@ def latch_locked():
 APP_PRINT_CUE = ("In the Glowforge app: scrap on the bed, lid closed, a SMALL engrave or score job "
                  "(about 30 s) set up. Click Done here, then press Print in the app and press the "
                  "physical button when it lights white.")
+OFFLINE_STEP = ("The machine in cloud mode under the OFFLINE service (the test starts it: no "
+                "account, no network, no job from the app; the job is a square the laser never "
+                "fires on). Nothing on the bed is needed. The client is left offline in cloud "
+                "mode; the next test that needs the service, a mode switch, or a controller "
+                "restart brings the service back.")
+ARM_STEP = ("Press the physical button when it lights white (the arm) - once per print. The "
+            "latch unlocks for the run, so the test is a live one even though the job carries "
+            "no laser command.")
 
 CANCELLED = 'finished with event ":cancelled"'
 COMPLETED = 'finished with event ":completed"'
@@ -658,13 +834,12 @@ def judge_abort_tail(ctx, ev, offset, tag, fin):
       subsystem="cloud", kind="live", est_min=11,
       covers=_CLOUD_COVERS + [("forgectrl", "src/super.c")],
       requires=["laser.emission-witness"], actions=["button", "lid", "interlock"],
-      steps=[CLOUD_STEP, LID_STEP,
-             "The app open in a browser; scrap on the bed and a small engrave/score job "
-             "ready - the test runs TWO prints.",
+      steps=[OFFLINE_STEP, ARM_STEP, LID_STEP,
+             "The head needs 40 mm of free +X and +Y travel. The test runs TWO prints.",
              "Be able to open the remote-interlock loop for the second print: unplug the Pro's "
              "interlock plug, or pull the jumper at J8 on a Basic/Plus. Restore it at the end.",
-             "Print 1: press the button to start, open the lid a few seconds in. Print 2: press the "
-             "button to start, open the interlock a few seconds in, then open the lid as well while "
+             "Print 1: press the button to start, open the lid when told. Print 2: press the "
+             "button to start, open the interlock when told, then open the lid as well while "
              "the head is parking."],
       description="Both enclosure triggers, on one setup, behaving as the factory's do. The lid: the "
                   "edge reaches the controlled stop within milliseconds, the head returns home at "
@@ -676,12 +851,18 @@ def lid_interlock_abort(ctx):
     ev = ctx.evidence
     sw = (ctx.forgectrl.status().get("switches") or {})
     ctx.check(sw.get("interlock_ok"), "the interlock loop already reads open - close it before this test")
-    offset = enter_cloud(ctx)
+    offset = enter_offline(ctx)
+    job = offline_job(ctx, "abort.puls", seconds=40)
+    off = Offline().__enter__()
+    try:
+        lid_interlock_abort_body(ctx, ev, off, job, offset)
+    finally:
+        off.__exit__(None, None, None)
 
+
+def lid_interlock_abort_body(ctx, ev, off, job, offset):
     # -- print 1: the lid ----------------------------------------------------
-    ctx.instruct(APP_PRINT_CUE)
-    got = wait_print_running(ctx, offset, 300)
-    ctx.check(got, "print 1 never reached its run within 300 s (not started, or the button not pressed)")
+    offline_start_print(ctx, off, 9001, job, offset)
     ctx.act("lid", "open", text="The head is moving: leave the lid open until the head has returned "
             "to the corner.", timeout=60)
     needles = ["lid opened", "lid opened mid-run; stopping motion", "start return home",
@@ -714,12 +895,11 @@ def lid_interlock_abort(ctx):
     judge_abort_tail(ctx, ev, offset, "lid", fin)
     ctx.act("lid", "close")
     settle_cloud(ctx, offset)
+    ev["events_print1"] = offline_events(off)
 
     # -- print 2: the interlock, with the lid opened during the park ---------
     offset = log_size(GFCLOUD_LOG)
-    ctx.instruct(APP_PRINT_CUE)
-    got = wait_print_running(ctx, offset, 300)
-    ctx.check(got, "print 2 never reached its run within 300 s (not started, or the button not pressed)")
+    offline_start_print(ctx, off, 9002, job, offset)
     ctx.act("interlock", "open", text="The head is moving.", timeout=60)
     sw = (ctx.forgectrl.status().get("switches") or {})
     ev["interlock_ok_after_pull"] = sw.get("interlock_ok")
@@ -752,6 +932,7 @@ def lid_interlock_abort(ctx):
     ev["restored"] = {"lid": sw.get("lid"), "interlock_ok": sw.get("interlock_ok")}
     ctx.check(sw.get("interlock_ok"), "the interlock loop is still open - restore it before continuing")
     settle_cloud(ctx, offset)
+    ev["events_print2"] = offline_events(off)
     ctx.log("PASS: lid open -> stop in %s ms and park with the lid open; interlock open -> the same "
             "tail with the park running through a lid edge; both prints ':cancelled'",
             ev.get("edge_to_stop_ms"))
@@ -760,18 +941,26 @@ def lid_interlock_abort(ctx):
 @test("cloud.lid-during-button-wait", title="Lid open at the cloud button prompt cancels the print",
       subsystem="cloud", kind="operator", est_min=6,
       covers=_CLOUD_COVERS, requires=[], actions=["lid"],
-      steps=[CLOUD_STEP, LID_STEP, "The app open; any small job ready (nothing will fire).",
-             "Print from the app; when the button lights white, do NOT press it - open the lid, and "
-             "close it when told."],
+      steps=[OFFLINE_STEP, LID_STEP,
+             "When the button lights white, do NOT press it - open the lid, and close it when told. "
+             "Nothing moves and nothing fires."],
       description="A cloud print waiting for the button is cancelled by the lid: the wait ends "
                   "with the lid named as the reason, the laser latch relocks, the armed window "
                   "closes, no run starts, and the job ends ':cancelled'.")
 def lid_during_button_wait(ctx):
     ev = ctx.evidence
-    offset = enter_cloud(ctx)
-    ctx.instruct("In the Glowforge app: lid closed, a small job set up. Click Done here, then press "
-                 "Print in the app. When the button lights white, do NOT press it.")
-    got = wait_log(ctx, offset, ["waiting for button"], 300)
+    offset = enter_offline(ctx)
+    job = offline_job(ctx, "wait.puls", seconds=20)
+    off = Offline().__enter__()
+    try:
+        lid_during_button_wait_body(ctx, ev, off, job, offset)
+    finally:
+        off.__exit__(None, None, None)
+
+
+def lid_during_button_wait_body(ctx, ev, off, job, offset):
+    off.print_ready(9003, job)
+    got = wait_log(ctx, offset, ["waiting for button"], 120)
     ctx.check(got["waiting for button"], "the print never reached the button wait")
     ctx.act("lid", "open", text="The button is lit: do NOT press it.", timeout=120)
     relock = "button wait lid opened - relocking the laser"
@@ -803,6 +992,7 @@ def lid_during_button_wait(ctx):
     ctx.check(ev["button_dark"] is False, "the button is still lit after the cancel (%s)", ev["button_dark"])
     ctx.act("lid", "close")
     settle_cloud(ctx, offset)
+    ev["events"] = offline_events(off)
     ctx.log("PASS: lid open at the button prompt cancelled the print; latch locked, armed=false, "
             "button dark")
 
@@ -922,13 +1112,10 @@ def pause_resume(ctx):
       subsystem="cloud", kind="live", est_min=12,
       covers=_CLOUD_COVERS,
       requires=["cloud.lid-interlock-abort", "cloud.pause-resume"], actions=["button"],
-      steps=[CLOUD_STEP,
-             "Scrap on the bed and a LONG job ready in the app - one whose run time is longer "
-             "than the ring holds (over an hour at the usual print tick). A full-bed raster "
-             "engrave is the easy way to get one.",
-             "Print from the app and press the button when it lights. The test lets it cut for "
-             "about two minutes, then asks for a press (pause) and another (resume), then for the "
-             "cancel from the app."],
+      steps=[OFFLINE_STEP, ARM_STEP,
+             "The head needs 40 mm of free +X and +Y travel. The job is an hour of squares, "
+             "longer than the ring holds; the test lets it run for about two minutes, asks for a "
+             "press (pause) and another (resume), then cancels it the way the app would."],
       description="The service sends one pulse file for a print however long it is, and a long one "
                   "is several times the ring: the machine holds the job in memory, fills the ring, "
                   "starts, and tops the ring up as it drains. This checks the signature of that - "
@@ -939,12 +1126,19 @@ def pause_resume(ctx):
                   "cleanly.")
 def oversize_stream(ctx):
     ev = ctx.evidence
-    offset = enter_cloud(ctx)
+    offset = enter_offline(ctx)
+    job = offline_job(ctx, "long.puls", seconds=3500)
     before = hw.sysfs_int("cnc/underruns", 0)
     ev["underruns_before"] = before
-    ctx.instruct("Start the long print from the app and press the button when it lights.")
-    got = wait_print_running(ctx, offset, 600)
-    ctx.check(got, "the print never reached its run within 600 s")
+    off = Offline().__enter__()
+    try:
+        oversize_stream_body(ctx, ev, off, job, offset, before)
+    finally:
+        off.__exit__(None, None, None)
+
+
+def oversize_stream_body(ctx, ev, off, job, offset, before):
+    offline_start_print(ctx, off, 9004, job, offset)
 
     # The load says so in as many words, and the device is in live-feed mode.
     got = wait_log(ctx, offset, ["job is longer than the ring"], 30)
@@ -1011,13 +1205,11 @@ def oversize_stream(ctx):
     # place the service-side cancel is exercised: the same tail as a lid
     # or interlock abort - stop, park back to the job start, relock,
     # disarm, ':cancelled' - judged in full.
-    ctx.notice("Now cancel the print from the app. The test watches for the cancel.")
+    off.cancel(9004)
+    ctx.log("cancelled the print as the app would")
     svc_stop = "action cancelled mid-run; stopping motion"
-    try:
-        got = wait_log(ctx, offset, [svc_stop, "start return home", "return home complete"], 300)
-        fin = wait_action_finished(ctx, offset, "print", 60)
-    finally:
-        ctx.clear_notice()
+    got = wait_log(ctx, offset, [svc_stop, "start return home", "return home complete"], 300)
+    fin = wait_action_finished(ctx, offset, "print", 60)
     ev["service_cancel"] = {k: message(v) for k, v in got.items()}
     ev["print_finished"] = message(fin)
     for k, v in ev["service_cancel"].items():
@@ -1032,6 +1224,7 @@ def oversize_stream(ctx):
     ev["button_dark"] = hw.button_lit()
     ctx.check(ev["button_dark"] is False, "the button is still lit after the cancel (%s)", ev["button_dark"])
     settle_cloud(ctx, offset)
+    ev["events"] = offline_events(off)
     ctx.log("PASS: a job longer than the ring ran live-fed, total grew, no underrun; the app's cancel "
             "stopped it, parked, relocked and reported ':cancelled'")
 
@@ -1040,8 +1233,8 @@ def oversize_stream(ctx):
       subsystem="cloud", kind="live", est_min=6,
       covers=_CLOUD_COVERS, requires=["cloud.pause-resume", "cloud.lid-interlock-abort"],
       actions=["button", "lid"],
-      steps=[CLOUD_STEP, LID_STEP,
-             "The app open in a browser; scrap on the bed and a small engrave/score job ready.",
+      steps=[OFFLINE_STEP, ARM_STEP, LID_STEP,
+             "The head needs 40 mm of free +X and +Y travel.",
              "Press the button to start; when asked, press it again (pause), then open the lid and "
              "leave it open until the head is back; close it when told."],
       description="A job paused on the button is cancelled by the lid, from the state the factory "
@@ -1052,12 +1245,18 @@ def oversize_stream(ctx):
                   "ended that way: cloud.oversize-stream.)")
 def paused_lid_cancel(ctx):
     ev = ctx.evidence
-    offset = enter_cloud(ctx)
+    offset = enter_offline(ctx)
+    job = offline_job(ctx, "paused.puls", seconds=60)
+    off = Offline().__enter__()
+    try:
+        paused_lid_cancel_body(ctx, ev, off, job, offset)
+    finally:
+        off.__exit__(None, None, None)
 
+
+def paused_lid_cancel_body(ctx, ev, off, job, offset):
     # -- paused on the button, then the lid ---------------------------------
-    ctx.instruct(APP_PRINT_CUE)
-    got = wait_print_running(ctx, offset, 300)
-    ctx.check(got, "the print never reached its run within 300 s (not started, or the button not pressed)")
+    offline_start_print(ctx, off, 9005, job, offset)
     ctx.act("button", "press", text="The head is moving: the press pauses the print.",
             until=lambda: log_has(offset, PAUSE_LINES[0]), timeout=PRESS_TIMEOUT_S, fail=False)
     got = wait_log(ctx, offset, list(PAUSE_LINES), 10)
@@ -1092,4 +1291,5 @@ def paused_lid_cancel(ctx):
     ctx.check(ev["button_dark"] is False, "the button is still lit after the cancel (%s)", ev["button_dark"])
     ctx.act("lid", "close")
     settle_cloud(ctx, offset)
+    ev["events"] = offline_events(off)
     ctx.log("PASS: a paused print cancelled by the lid stopped, parked, relocked and reported ':cancelled'")

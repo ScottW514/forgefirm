@@ -103,6 +103,42 @@ class Script:
             time.sleep(0.02)
 
 
+OFFLINE_LINE = ("2026-08-22T23:00:00.100000+00:00 gfcloud[3100] INFO offline:open OFFLINE service: "
+                "no web session; listening on /run/gfcloud-offline.sock")
+
+
+class FakeOffline:
+    """The offline service's socket, as the tests see it: what was sent,
+    and a hook that lands the machine's lines for each message."""
+    on_send = None
+    sent = []
+
+    def __init__(self, path=None):
+        self.events = []
+        self.buf = b""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def send(self, msg):
+        FakeOffline.sent.append(msg)
+        if FakeOffline.on_send:
+            FakeOffline.on_send(msg)
+
+    def poll(self):
+        return []
+
+    def print_ready(self, action_id, path, settings=None):
+        self.send({"id": action_id, "action_type": "print", "status": "ready",
+                   "motion_url": "file://" + path, "settings": settings or {}})
+
+    def cancel(self, action_id, action_type="print"):
+        self.send({"id": action_id, "action_type": action_type, "status": "cancelled"})
+
+
 class CloudSuiteTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="forgetest-cloud-")
@@ -126,10 +162,16 @@ class CloudSuiteTests(unittest.TestCase):
         self.homelog = os.path.join(self.tmp, "gfhome.log")
         open(self.homelog, "wb").close()
         self.saved = (cloud.GFCLOUD_LOG, cloud.FORGECTRL_LOG, cloud.QUIET_S, cloud.QUIET_TIMEOUT_S,
-                      cloud.HUNT_TIMEOUT_S, cloud.GFHOME_LOG)
+                      cloud.HUNT_TIMEOUT_S, cloud.GFHOME_LOG, cloud.Offline, cloud.OFFLINE_MARKER,
+                      cloud.JOB_DIR)
         cloud.GFCLOUD_LOG = self.log
         cloud.FORGECTRL_LOG = self.fclog
         cloud.GFHOME_LOG = self.homelog
+        cloud.Offline = FakeOffline
+        cloud.OFFLINE_MARKER = os.path.join(self.tmp, "offline-marker")
+        cloud.JOB_DIR = os.path.join(self.tmp, "jobs")
+        FakeOffline.sent = []
+        FakeOffline.on_send = None
         self.engine_line = EFFECTIVE_LINE      # what the engine logs at the print; None = nothing
         self.client_limits = True              # the client names its header limits
         cloud.QUIET_S = 0.4
@@ -144,7 +186,8 @@ class CloudSuiteTests(unittest.TestCase):
         if self.grbl:
             self.grbl.stop()
         (cloud.GFCLOUD_LOG, cloud.FORGECTRL_LOG, cloud.QUIET_S, cloud.QUIET_TIMEOUT_S,
-         cloud.HUNT_TIMEOUT_S, cloud.GFHOME_LOG) = self.saved
+         cloud.HUNT_TIMEOUT_S, cloud.GFHOME_LOG, cloud.Offline, cloud.OFFLINE_MARKER,
+         cloud.JOB_DIR) = self.saved
         os.environ.pop("GF_SYSFS_ROOT", None)
         os.environ.pop("GF_LEDS_ROOT", None)
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -176,6 +219,23 @@ class CloudSuiteTests(unittest.TestCase):
     def lid(self, closed):
         self.fc.state["status"]["switches"]["lid"] = bool(closed)
 
+    def in_offline(self, pid=3100):
+        """Cloud mode with the offline service already up (its mark is the
+        newest websocket-state line for the pid)."""
+        self.in_cloud(pid=pid)
+        self.append([OFFLINE_LINE.replace("gfcloud[3100]", "gfcloud[%d]" % pid)])
+
+    def offline_print_hooks(self, pre, cancel_tail=None):
+        """The fake socket's reactions: a print lands its prologue through
+        the run (the operator's press is already in it), a cancel lands the
+        app-cancel tail."""
+        def on_send(msg):
+            if msg["action_type"] == "print" and msg["status"] == "ready":
+                self.append(pre, delay=0.1)
+            elif msg["status"] == "cancelled" and cancel_tail:
+                self.append(cancel_tail, delay=0.05)
+        FakeOffline.on_send = on_send
+
     def run_test(self, fn, hooks=None, test_id="cloud.x"):
         run = Run("test", test_id, test_id)
         run.baseline_captured = {"mode": self.fc.state["mode"]["mode"], "position": [0, 0, 0]}
@@ -194,6 +254,96 @@ class CloudSuiteTests(unittest.TestCase):
         return cm.exception
 
     # -- session detection -------------------------------------------------
+    def test_offline_mark_is_not_a_live_session(self):
+        self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[3100] INFO websocket:_on_open RX-EVENT: ready",
+                     OFFLINE_LINE])
+        live, detail = cloud.session_live(3100)
+        self.assertFalse(live)
+        self.assertIn("offline", detail)
+        self.assertTrue(cloud.client_offline(3100))
+
+    # -- the offline entry ----------------------------------------------------------
+    def test_enter_offline_reuses_a_running_offline_client(self):
+        self.in_offline()
+        run = Run("test", "cloud.x", "cloud.x")
+        run.baseline_captured = {"mode": "cloud", "position": [0, 0, 0]}
+        ctx = Context(run, None, helpers.make_test("cloud.x", []))
+        cloud.enter_offline(ctx)
+        self.assertEqual(self.fc.posts, [])
+        self.assertFalse(os.path.exists(cloud.OFFLINE_MARKER))
+
+    def test_enter_offline_from_grbl_sets_the_marker_for_one_start_and_declares_the_mode(self):
+        seen = {}
+
+        def on_post(path, form):
+            if path == "/mode":
+                seen["marker_at_start"] = os.path.exists(cloud.OFFLINE_MARKER)
+                self.append([OFFLINE_LINE], delay=0.2)
+            return None
+        self.fc.on_post = on_post
+        run = Run("test", "cloud.x", "cloud.x")
+        run.baseline_captured = {"mode": "grbl", "position": [0, 0, 0]}
+        ctx = Context(run, None, helpers.make_test("cloud.x", []))
+        cloud.enter_offline(ctx)
+        self.assertEqual([p for p, _ in self.fc.posts], ["/mode"])
+        self.assertTrue(seen["marker_at_start"])                  # the client started offline
+        self.assertFalse(os.path.exists(cloud.OFFLINE_MARKER))     # and the marker is gone again
+        self.assertEqual(run.baseline_captured["mode"], "cloud")
+        self.assertTrue(any("offline service up" in l for l in run.lines))
+
+    def test_enter_offline_restarts_a_service_client_in_cloud_mode(self):
+        self.in_cloud(pid=2278)
+
+        def on_post(path, form):
+            if path == "/controller/stop":
+                self.fc.state["mode"] = dict(self.fc.state["mode"], controller="standby", pid=0)
+            elif path == "/controller/start":
+                self.fc.state["mode"] = dict(self.fc.state["mode"], controller="running", pid=3100)
+                self.append([OFFLINE_LINE], delay=0.2)
+            return None
+        self.fc.on_post = on_post
+        run = Run("test", "cloud.x", "cloud.x")
+        run.baseline_captured = {"mode": "cloud", "position": [0, 0, 0]}
+        ctx = Context(run, None, helpers.make_test("cloud.x", []))
+        cloud.enter_offline(ctx)
+        self.assertEqual([p for p, _ in self.fc.posts], ["/controller/stop", "/controller/start"])
+
+    def test_enter_cloud_restarts_an_offline_client_with_the_service(self):
+        self.in_offline()
+        with open(cloud.OFFLINE_MARKER, "w") as f:
+            f.write("stale\n")
+        lines = fixture("huntlid")
+        pre, post = cut(lines, "gfuiservice:__init__ INITIALIZED")
+        hunt_part, _close = cut(post, "_switch_event lid closed")
+
+        def on_post(path, form):
+            if path == "/controller/stop":
+                self.fc.state["mode"] = dict(self.fc.state["mode"], controller="standby", pid=0)
+            elif path == "/controller/start":
+                self.assertFalse(os.path.exists(cloud.OFFLINE_MARKER))   # taken down before the start
+                self.fc.state["mode"] = dict(self.fc.state["mode"], controller="running", pid=2278)
+                self.append(pre + hunt_part, delay=0.2)
+            return None
+        self.fc.on_post = on_post
+        run = Run("test", "cloud.x", "cloud.x")
+        run.baseline_captured = {"mode": "cloud", "position": [0, 0, 0]}
+        ctx = Context(run, None, helpers.make_test("cloud.x", []))
+        cloud.enter_cloud(ctx)
+        self.assertEqual([p for p, _ in self.fc.posts], ["/controller/stop", "/controller/start"])
+        self.assertTrue(any("offline service: restarting it with the service" in l for l in run.lines))
+
+    def test_offline_jobs_are_the_synthesized_square(self):
+        from forgetest import puls
+        run = Run("test", "cloud.x", "cloud.x")
+        ctx = Context(run, None, helpers.make_test("cloud.x", []))
+        path = cloud.offline_job(ctx, "t.puls", seconds=5)
+        tags, payload = puls.parse(open(path, "rb").read())
+        self.assertEqual(tags["MCsn"], 0)
+        self.assertEqual(tags["STfr"], 10000)
+        self.assertFalse(any(b & 0x10 for b in payload if not b & 0x80))   # no LASER bit anywhere
+        self.assertEqual(payload[0], 0x80)                                  # a leading power byte of zero
+        self.assertEqual(run.evidence["jobs"]["t.puls"]["compressed"], False)
+
     def test_session_live_is_per_client(self):
         lines = fixture("huntlid")
         # the old client (1927) closed and left; the new one (2278) is ready
@@ -499,9 +649,11 @@ class CloudSuiteTests(unittest.TestCase):
         return pre, rest, stop + [tail[0]], tail[1:]
 
     def abort_hooks(self, pre, lid_tail, ilk_stop, ilk_park, prints):
-        def next_print():
-            prints.append(1)
-            self.append(pre, delay=0.1)
+        def on_send(msg):
+            if msg["status"] == "ready":
+                prints.append(msg["id"])
+                self.append(pre, delay=0.1)
+        FakeOffline.on_send = on_send
 
         def pull_interlock():
             self.fc.state["status"]["switches"]["interlock_ok"] = False
@@ -510,8 +662,7 @@ class CloudSuiteTests(unittest.TestCase):
         def restore():
             self.lid(True)
             self.fc.state["status"]["switches"]["interlock_ok"] = True
-        return {"Click Done here": next_print,
-                "leave the lid open until the head has returned": lambda: (self.lid(False),
+        return {"leave the lid open until the head has returned": lambda: (self.lid(False),
                                                                            self.append(lid_tail, delay=0.05)),
                 "Close the lid.": lambda: self.lid(True),
                 "Open the remote-interlock loop": pull_interlock,
@@ -519,14 +670,15 @@ class CloudSuiteTests(unittest.TestCase):
                 "Restore the remote-interlock loop": restore}
 
     def test_lid_interlock_abort_on_the_bench_excerpt(self):
-        self.in_cloud(pid=1522)
-        self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
+        self.in_offline()
         prints = []
         run = self.run_test(cloud.lid_interlock_abort,
                             hooks=self.abort_hooks(*self.abort_parts(), prints),
                             test_id="cloud.lid-interlock-abort")
         ev = run.evidence
-        self.assertEqual(len(prints), 2)                      # two prints, one cue each
+        self.assertEqual(prints, [9001, 9002])                 # two prints, handed over the socket
+        self.assertTrue(FakeOffline.sent[0]["motion_url"].endswith("abort.puls"))
+        self.assertEqual(ev["jobs"]["abort.puls"]["compressed"], False)
         # print 1: the lid
         self.assertLess(ev["edge_to_stop_ms"], 60)
         self.assertIn(":cancelled", ev["lid_log"]["print finished"])
@@ -545,14 +697,13 @@ class CloudSuiteTests(unittest.TestCase):
         self.assertTrue(any("PASS: lid open" in l for l in run.lines), run.lines)
 
     def test_lid_interlock_abort_refuses_when_the_loop_is_already_open(self):
-        self.in_cloud(pid=1522)
+        self.in_offline()
         self.fc.state["status"]["switches"]["interlock_ok"] = False
         self.assertFails(cloud.lid_interlock_abort, "already reads open")
 
     def test_lid_interlock_abort_fails_when_the_park_stops_at_the_lid(self):
         # the regression this guards: a park an open lid can interrupt
-        self.in_cloud(pid=1522)
-        self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
+        self.in_offline()
         pre, lid_tail, ilk_stop, ilk_park = self.abort_parts()
         ilk_park = [l for l in ilk_park if "return home complete" not in l]
         saved = cloud.wait_log
@@ -568,8 +719,7 @@ class CloudSuiteTests(unittest.TestCase):
 
     def test_lid_interlock_abort_fails_when_the_lid_stop_is_not_edge_driven(self):
         # a polled stop (the pre-parity behavior) shows up as a long edge->stop gap
-        self.in_cloud(pid=1522)
-        self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
+        self.in_offline()
         pre, lid_tail, ilk_stop, ilk_park = self.abort_parts()
         lid_tail = [l.replace("2026-08-17T09:42:30.838627", "2026-08-17T09:42:31.838627")
                     if "lid opened mid-run; stopping motion" in l else l for l in lid_tail]
@@ -577,16 +727,16 @@ class CloudSuiteTests(unittest.TestCase):
                          hooks=self.abort_hooks(pre, lid_tail, ilk_stop, ilk_park, []))
 
     def test_lid_during_button_wait_on_the_bench_excerpt(self):
-        self.in_cloud(pid=1927)
-        self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1927] INFO websocket:_on_open RX-EVENT: ready"])
+        self.in_offline()
         lines = fixture("buttonwait")
         pre, rest = cut(lines, "waiting for button")
         pre, rest = pre + [rest[0]], rest[1:]
-        hooks = {"Click Done here": lambda: self.append(pre, delay=0.1),
-                 "do NOT press it": lambda: (self.lid(False), self.append(rest, delay=0.05)),
+        self.offline_print_hooks(pre)
+        hooks = {"do NOT press it": lambda: (self.lid(False), self.append(rest, delay=0.05)),
                  "Close the lid.": lambda: self.lid(True)}
         run = self.run_test(cloud.lid_during_button_wait, hooks=hooks, test_id="cloud.lid-during-button-wait")
         ev = run.evidence
+        self.assertEqual([m["status"] for m in FakeOffline.sent], ["ready"])
         self.assertEqual(ev["runs_started_after_wait"], 0)
         self.assertIn(":cancelled", ev["log"]["print finished"])
         self.assertTrue(ev["latch_locked"])
@@ -611,23 +761,17 @@ class CloudSuiteTests(unittest.TestCase):
         return pre, paused, rest, app_cancel
 
     def test_paused_lid_cancel_on_the_bench_excerpt(self):
-        self.in_cloud(pid=1522)
-        self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
+        self.in_offline()
         pre, paused, lid_tail, _app = self.cancel_parts()
-        prints = []
-
-        def next_print():
-            prints.append(1)
-            self.append(pre, delay=0.1)
+        self.offline_print_hooks(pre)
         run = self.run_test(cloud.paused_lid_cancel,
-                            hooks={"Click Done here": next_print,
-                                   "the press pauses the print": lambda: self.append(paused, delay=0.05),
+                            hooks={"the press pauses the print": lambda: self.append(paused, delay=0.05),
                                    "The print is paused: leave the lid open": lambda: (
                                        self.lid(False), self.append(lid_tail, delay=0.05)),
                                    "Close the lid.": lambda: self.lid(True)},
                             test_id="cloud.paused-lid-cancel")
         ev = run.evidence
-        self.assertEqual(len(prints), 1)                      # one print, one cue
+        self.assertEqual(len(FakeOffline.sent), 1)            # one print, handed over the socket
         self.assertEqual(ev["paused"], {"button pressed mid-run; pausing": True, "paused at": True})
         self.assertIn(":cancelled", ev["lid_from_pause"]["print finished"])
         self.assertTrue(ev["lid_from_pause"]["return home complete"])
@@ -640,14 +784,13 @@ class CloudSuiteTests(unittest.TestCase):
 
     def test_paused_lid_cancel_fails_when_the_paused_print_resumes_instead(self):
         # a lid that resumed (or was ignored) leaves the print ':completed'
-        self.in_cloud(pid=1522)
-        self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
+        self.in_offline()
         pre, paused, lid_tail, _app = self.cancel_parts()
         lid_tail = [l.replace(':cancelled"', ':completed"') for l in lid_tail]
+        self.offline_print_hooks(pre)
         self.assertFails(
             cloud.paused_lid_cancel, "the print did not end ':cancelled'",
-            hooks={"Click Done here": lambda: self.append(pre, delay=0.1),
-                   "the press pauses the print": lambda: self.append(paused, delay=0.05),
+            hooks={"the press pauses the print": lambda: self.append(paused, delay=0.05),
                    "The print is paused: leave the lid open": lambda: (
                        self.lid(False), self.append(lid_tail, delay=0.05))})
 
