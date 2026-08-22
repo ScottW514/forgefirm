@@ -10,7 +10,7 @@ import time
 from ..catalog import test
 from .. import hw
 
-_COOL_COVERS = [("forgectrl", "src/cool.*"), ("forgectrl", "src/diag.*"),
+_COOL_COVERS = [("forgectrl", "src/cool.*"), ("forgectrl", "src/coolfmt.*"), ("forgectrl", "src/diag.*"),
                 ("forgectrl", "src/gates.*"), ("forgectrl", "src/airflow.*"),
                 ("forgectrl", "src/settings.*"),
                 ("forgectrl", "src/status.*"), ("forgectrl", "src/ui/**"),
@@ -239,6 +239,18 @@ def _run_session(ctx, g, fc, until, what, wait=None):
         _session_ended(ctx, fc, what)
 
 
+def _after_session(ctx, fc, wait=5):
+    """The engine's state a few ticks after a session ended."""
+    c = {}
+    t0 = time.time()
+    while time.time() - t0 < wait:
+        ctx.sleep(1)
+        c = _cool(fc)
+        if c.get("phase") != "run" and c.get("verdict") == "OK":
+            break
+    return c
+
+
 def _tail_has(fc, needle):
     st, body = fc.get("/logs/tail", params={"name": "forgectrl", "lines": GATE_LOG_LINES})
     text = body.get("text", "") if st == 200 and isinstance(body, dict) else ""
@@ -358,9 +370,10 @@ def _fan_gate(c, name):
       description="The airflow gates judge a fan commanded at the cut fan profile, which a bare M8 "
                   "applies, armed or not. An exhaust floor no fan "
                   "can meet must trip AIRFLOW after the grace plus three ticks (hold, fire blocked, no "
-                  "resume while the session lasts); a purge current floor at the ADC rail must trip the "
-                  "same way; a floor of zero must read off in gates_off and trip nothing; restored, the "
-                  "next session runs OK with every fan reading at or above its floor.")
+                  "resume while the session lasts) and the fault must end with the session (verdict OK, "
+                  "no hold, once the session is over); a purge current floor at the ADC rail must trip "
+                  "the same way; a floor of zero must read off in gates_off and trip nothing; restored, "
+                  "the next session runs OK with every fan reading at or above its floor.")
 def fan_gate_trips(ctx):
     fc = ctx.forgectrl
     ev = ctx.evidence
@@ -397,6 +410,13 @@ def fan_gate_trips(ctx):
             ctx.check(_fan_gate(c, "exhaust").get("state") == "TRIPPED",
                       "the exhaust gate does not read TRIPPED: %s", c.get("fan_gates"))
             ctx.check("exhaust" in (c.get("reason") or ""), "the reason does not name the fan: %r", c.get("reason"))
+            # The fault is the session's: with the session over, the
+            # verdict is back to OK and nothing holds (jogs and the next
+            # job's pre-check must not see a fan fault at idle).
+            c = _after_session(ctx, fc)
+            ev["exhaust_trip_after"] = c
+            ctx.check(c.get("verdict") == "OK" and c.get("hold") is False,
+                      "the fan fault outlived its run session: %s", c)
 
             # Leg 2: the purge fan by current, floor at the ADC rail.
             _set_gates(ctx, fc, {"cool_tach_exhaust_min_rpm": orig["cool_tach_exhaust_min_rpm"],

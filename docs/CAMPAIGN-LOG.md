@@ -3308,6 +3308,63 @@ purge in the purge leg, the exhaust read `off` with floor 0 in the off leg,
 and the restore showed every fan `ok` at the shipped floors (exhaust 11723,
 intakes 4157 and 4162, air assist 11078 rpm, purge 628 counts).
 
+## 2026-08-22: the measured floors and the operating-point rule on a pinned image
+
+Dev image `20260822135848` (forgectrl 47e4256 pinned by forgefirm adcd1ad;
+release `20260822135751` built alongside), flashed after a fetch-verified
+both-image build. Campaign `c-20260822140659-2f25`, every auto test the
+pin bump invalidated plus the rest of the non-operator, non-live catalog:
+**18 of 18 PASS** (cooling.flow-verify, image.health, kernel.latch-locked-idle,
+kernel.k1-k2, kernel.backtrack-bounds, forgectrl.auth,
+forgectrl.settings-bounds, forgectrl.panel-serves, logs.tree-tail-export,
+logs.level-settings, motion.deadman, cooling.fans-quiet-after-motion,
+cooling.gate-off, cooling.fan-gate-trips, camera.sensor-profile,
+camera.frame-health, cloud.mode-switch, kernel.fire-line).
+
+The two that carry this change, as recorded: `cooling.fan-gate-trips` in
+58 s with only the exhaust `TRIPPED` in its leg, only the purge in its,
+the exhaust `off` at floor 0 in the same tick `gates_off` named it, and
+the restore reading exhaust 11726, intakes 4160 and 4193, air assist
+11095 rpm, purge 627 counts, every gate `ok` at the shipped floors;
+`cloud.mode-switch` in 29 s with the connect-time hunt's run tick reading
+the exhaust at 0 rpm, `unjudged`, the air assist `unjudged`, verdict `OK`
+throughout, and the hunt finishing `:completed`. The hunt's run phase is a
+few seconds long and gave one sample at a 1 s poll, so the watcher now
+samples twice a second.
+
+## 2026-08-22: the unplugged-exhaust-fan drill
+
+The gate on the real failure path, not a settings override: the operator
+unplugged the exhaust fan's whole connector at the Interconnect PCB (fan
+dead, tach silent), the machine idle in GRBL mode, lid closed, nothing
+armed. One `M8` session from the board, `/cool/status` read once a second
+(dev image `20260822135848`):
+
+- 1 to 14 s: every gate `grace` (the shipped 15 s), exhaust reading 0.
+- 15 and 16 s: exhaust `under` at 0 rpm; intakes, air assist and purge
+  `ok`, up to speed inside the grace.
+- 17 s: verdict **`AIRFLOW`**, `fire_ok false`, `hold true`, exhaust
+  `TRIPPED`, reason `AIRFLOW: exhaust 0 under the 6400 floor for 3 s -
+  hold, no resume this job`; the other four fans held at run duty around
+  the dead one. grblHAL relayed the reason on the Grbl port as a
+  `[MSG:Warning: ...]`, and forgectrl logged the `WARNING` line.
+- `M9` ended the session into the smoke-clear phase with the fault still
+  named; the operator replugged the connector.
+- The next `M8` session: exhaust 4112 rpm at 1 s, 6623 at 2 s (past the
+  floor), 11640 at 7 s (the measured time to 90 percent), `ok` with every
+  gate at the end of the grace, verdict `OK`, clean end.
+
+One observation for a decision: between the two sessions the engine sat
+at idle with the verdict still `AIRFLOW`, `hold=true`, `fire_ok=false`.
+The fan fault latches for the run session and clears at the next session
+start, the same shape as the fire alarm; at idle the hold cancels GRBL
+jogs and the cloud client's print pre-check refuses a print before a
+session could re-prove the fan (a hunt clears it). Decision (operator,
+the same day): the fault ends with its session, since every session
+judges every fan afresh after the grace before anything can fire;
+`cooling.fan-gate-trips` now checks the verdict is `OK` with no hold once
+the tripped session is over. The fire alarm keeps its idle hold.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

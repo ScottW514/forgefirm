@@ -1358,12 +1358,20 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     and unarmed whenever it is commanded at the run duty; a cloud hunt,
     sent with the extraction fans off, is measured and not judged.
     `cooling.fan-gate-trips` and the hunt leg of `cloud.mode-switch` in
-    the catalog. The shipped floors are 55 percent of the bench machine's
-    measured steady speeds (facts bank: exhaust 6400, intake 2290, air
-    assist 6000 rpm, purge current 300, grace 15 s); the bench run of the
-    gate tests on an image carrying them, and the unplugged-tach drill,
-    are still owed. The coolant critical tier and the watch-only board
-    temperatures follow.
+    the catalog, both PASS on the pinned dev image `20260822135848`
+    (campaign 18 of 18). The shipped floors are 55 percent of the bench
+    machine's measured steady speeds (facts bank: exhaust 6400, intake
+    2290, air assist 6000 rpm, purge current 300, grace 15 s). The
+    unplugged-exhaust-fan drill PASS on the same image: `AIRFLOW` at
+    grace plus three ticks with the exhaust dead, the other fans held,
+    the reason relayed on the Grbl port, and the replugged fan `ok` inside
+    the next session's grace (CAMPAIGN-LOG). From the drill: the fault
+    ends with its run session (decided; a standing hold at idle canceled
+    GRBL jogs and would have refused the cloud print that re-proves the
+    fan), since every session judges every fan afresh after the grace;
+    `cooling.fan-gate-trips` checks it, bench run owed on the next image.
+    The coolant critical tier and the watch-only board temperatures
+    follow.
 
     Nothing here can put energy where it was not commanded: the hardware chain
     is the emission boundary and no header field touches it, and forgectrl runs

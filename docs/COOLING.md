@@ -170,7 +170,10 @@ floor.
   session: a fan that has stopped moving air is not a condition to cut
   through. The fans stay at run duty (a stalled extraction fan needs every
   other fan around it running), and the reason names the fan, the reading
-  and the floor. The next job starts the gates fresh.
+  and the floor. The fault ends with the session: at idle the verdict is
+  `OK` again (a standing hold would cancel jogs and refuse the next job
+  before it could re-prove the fan), and the next session judges every fan
+  afresh after the grace.
 - **A floor of zero is that gate off** (§8a). It still measures: the first
   reading in a job that would have tripped the shipped default is logged.
 

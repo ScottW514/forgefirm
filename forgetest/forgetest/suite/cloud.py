@@ -372,8 +372,8 @@ def wait_action_finished(ctx, offset, action, timeout, poll=0.5):
 
 def watch_hunt_gates(ctx, offset, timeout):
     """Wait for the action's terminal line like wait_action_finished,
-    sampling /cool/status once a second meanwhile. Returns (line or
-    None, samples)."""
+    sampling /cool/status twice a second meanwhile (a hunt's run phase
+    can be a few seconds). Returns (line or None, samples)."""
     fc = ctx.forgectrl
     samples = []
     t0 = time.time()
@@ -386,7 +386,7 @@ def watch_hunt_gates(ctx, offset, timeout):
         i = action_finish_index(lines, "hunt")
         if i is not None:
             return lines[i], samples
-        time.sleep(1)
+        time.sleep(0.5)
     return None, samples
 
 

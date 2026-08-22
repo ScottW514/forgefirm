@@ -448,6 +448,10 @@ class FanGateTests(unittest.TestCase):
             def end():
                 time.sleep(0.3)
                 cool["phase"] = "idle"
+                # the fan fault is the session's: it ends with it
+                cool.update(verdict="OK", fire_ok=True, hold=False, reason="")
+                for g in cool.get("fan_gates", {}).values():
+                    g["state"] = "idle"
             threading.Thread(target=end, daemon=True).start()
             return
         if line != "M8":
