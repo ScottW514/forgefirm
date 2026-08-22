@@ -111,7 +111,8 @@ def snapshot(ctx):
     st, body = fc.get("/cam/status")
     ev["cam_status_after"] = body
     ctx.log("cam status after: %s", body)
-    ctx.log("PASS: snapshot %d bytes, %d with the lamp off, stream %s", len(data), len(dark), ctype)
+    ctx.log("PASS: half-res snapshot %d bytes, %d with the lamp off; full-res %d; stream %s",
+            ev["snapshot_bytes"], len(dark), len(data), ctype)
 
 
 @test("camera.sensor-profile", title="Camera geometry follows the fitted sensor", subsystem="camera",

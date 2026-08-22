@@ -229,24 +229,35 @@ def jog_roundtrip(ctx):
                 r = g.command(jog)
                 ctx.check(not any(x.startswith("error") for x in r), "%s: jog refused: %s", name, r)
                 peak, states, _ = wait_idle(ctx, g)
-                p2px, p2py, n = accel.p2p(t0)
+                t1 = time.time()
+                p2px, p2py, n = accel.p2p(t0, t1)
                 leg = "out" if jog == out else "back"
                 ctx.log("%s %s: peak %.0f mm/min, states %s; accel p2p x=%d y=%d over %d samples",
                         name, leg, peak, states, p2px, p2py, n)
                 moves.append({"name": name, "leg": leg, "peak": peak, "states": states,
-                              "accel_p2p": [p2px, p2py], "accel_samples": n})
+                              "accel_p2p": [p2px, p2py], "accel_samples": n, "t0": t0, "t1": t1})
                 ctx.check("TIMEOUT" not in states, "%s %s did not return to Idle", name, leg)
         ev["moves"] = moves
-        # The witness: every leg the sampler caught with enough samples
-        # must have moved the head; the short max-rate legs may land too
-        # few samples to judge on their own and are judged with the rest.
-        judged = [m for m in moves if m["accel_samples"] >= 3]
-        ctx.check(len(judged) >= 4, "the accelerometer sampled too few legs to judge motion (%d of %d; "
-                  "%d read errors)", len(judged), len(moves), accel.errors)
-        still = [m for m in judged if max(m["accel_p2p"]) < hw.ACCEL_P2P_MOVING]
-        ev["accel_still_legs"] = [m["name"] + " " + m["leg"] for m in still]
-        ctx.check(not still, "the head did not move on %s (accel p2p below %d): the counters ran "
-                  "without the gantry", ", ".join(ev["accel_still_legs"]), hw.ACCEL_P2P_MOVING)
+        # The witness sees the ramps, not the travel: a sysfs read lands
+        # two or three samples in a one-second leg, and two samples on
+        # the constant-velocity stretch read near the idle level with the
+        # head in full flight (bench: 17 samples over the eight legs, a
+        # ramp caught on three of them). So the verdict is over the
+        # sequence: the head moved during the jogs (p2p over all the
+        # legs), and on more than one of them, never one leg alone.
+        p2px, p2py, n = accel.p2p(moves[0]["t0"], moves[-1]["t1"])
+        moving = [m for m in moves if max(m["accel_p2p"]) >= hw.ACCEL_P2P_MOVING]
+        ev["accel_overall"] = {"p2p": [p2px, p2py], "samples": n, "errors": accel.errors}
+        ev["accel_moving_legs"] = [m["name"] + " " + m["leg"] for m in moving]
+        ctx.log("accel over all %d legs: p2p x=%d y=%d (%d samples, %d errors); motion seen on %d legs",
+                len(moves), p2px, p2py, n, accel.errors, len(moving))
+        ctx.check(n >= 8, "the accelerometer landed only %d samples over the jogs (%d read errors): "
+                  "the motion witness is not reading", n, accel.errors)
+        ctx.check(max(p2px, p2py) >= hw.ACCEL_P2P_MOVING,
+                  "the head did not move during the jogs (accel p2p x=%d y=%d, below %d): the counters "
+                  "ran without the gantry", p2px, p2py, hw.ACCEL_P2P_MOVING)
+        ctx.check(len(moving) >= 2, "the accelerometer saw motion on only %d leg(s) of %d (one jolt is "
+                  "not a gantry moving on every jog)", len(moving), len(moves))
         maxrate = max(m["peak"] for m in moves if m["name"].startswith("X max-rate"))
         ev["max_rate_peak"] = maxrate
         ctx.check(maxrate >= 6000, "max-rate jog peaked at only %.0f mm/min", maxrate)
@@ -274,8 +285,8 @@ def jog_roundtrip(ctx):
     machine_idle(ctx)
     ctx.check("Hold" in held["state"], "feed hold did not park (state %s)", held["state"])
     ctx.check(drift <= 0.05, "position drift %.3f mm", drift)
-    ctx.log("PASS: %d jogs, peak %.0f mm/min, hold parked, drift %.3f mm, the head seen moving on "
-            "%d of %d legs", len(moves), maxrate, drift, len(judged), len(moves))
+    ctx.log("PASS: %d jogs, peak %.0f mm/min, hold parked, drift %.3f mm, accel p2p %d over the jogs, "
+            "motion on %d of %d legs", len(moves), maxrate, drift, max(p2px, p2py), len(moving), len(moves))
 
 
 # ---------------------------------------------------------------- liveness

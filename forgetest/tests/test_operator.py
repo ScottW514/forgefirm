@@ -297,3 +297,54 @@ class JournalTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AccelSamplerTests(unittest.TestCase):
+    """The head accelerometer sampler over a fake iio tree."""
+
+    def setUp(self):
+        from forgetest import hw
+        self.hw = hw
+        self.tmp = tempfile.mkdtemp(prefix="forgetest-iio-")
+        d = os.path.join(self.tmp, "iio_device1")      # no colon: the host may be Windows
+        os.makedirs(d)
+        with open(os.path.join(d, "name"), "w") as f:
+            f.write("lis2hh12 3-001e\n")
+        self.dir = d
+        self.write(100, 200)
+        os.environ["GF_IIO_ROOT"] = self.tmp
+
+    def tearDown(self):
+        os.environ.pop("GF_IIO_ROOT", None)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def write(self, x, y):
+        for axis, v in (("x", x), ("y", y)):
+            with open(os.path.join(self.dir, "in_accel_%s_raw" % axis), "w") as f:
+                f.write("%d\n" % v)
+
+    def test_found_by_bus_address_and_sampled(self):
+        self.assertEqual(self.hw.head_accel_dir(), self.dir)
+        s = self.hw.AccelSampler(period=0.02)
+        self.assertTrue(s.available)
+        with s:
+            t0 = time.time()
+            time.sleep(0.1)
+            self.write(1100, 200)
+            time.sleep(0.1)
+            self.write(100, 200)
+            time.sleep(0.1)
+            t1 = time.time()
+        p2px, p2py, n = s.p2p(t0, t1)
+        self.assertGreaterEqual(n, 5)
+        self.assertEqual((p2px, p2py), (1000, 0))
+        # a window with no samples reads as nothing, not as an error
+        self.assertEqual(s.p2p(t1 + 10, t1 + 20), (0, 0, 0))
+
+    def test_absent_device_is_unavailable(self):
+        os.environ["GF_IIO_ROOT"] = os.path.join(self.tmp, "nowhere")
+        s = self.hw.AccelSampler()
+        self.assertFalse(s.available)
+        with s:
+            pass
+        self.assertEqual(s.p2p(0), (0, 0, 0))
