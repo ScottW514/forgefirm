@@ -3254,6 +3254,60 @@ value), and the test quoted the session's first job-limits line, a hunt's,
 where the print's is the one worth keeping (it now takes the first line
 after the print's action request).
 
+## 2026-08-22: the fan floors measured, and a hunt that would have tripped them
+
+`fan_floor_measure.py spinup` (bench page `fan-floor`, 120 s at the cut
+profile from idle, GRBL mode, the exhaust duct's inline booster fan off, so
+the exhaust worked against more back pressure than a normal cut):
+
+| fan | steady rpm | min | max | sd | t90 |
+|---|---|---|---|---|---|
+| exhaust | 11638 | 11444 | 11947 | 103 | 5 s |
+| intake 1 | 4157 | 4102 | 4193 | 12 | 7 s |
+| intake 2 | 4158 | 4128 | 4173 | 6 | 7 s |
+| air assist | 11048 | 11029 | 11061 | 8 | 1 s |
+
+Purge current 627 at idle and 625 at run duty: the engine holds purge air on
+continuously, so both are the "on" reading (the off reading, ~1, is from an
+earlier observation). The floors shipped from this: exhaust 6400, intake
+2290, air assist 6000 rpm (55 percent of steady, bands 50 to 60 percent),
+purge current 300, grace 15 s (twice the slowest time to 90 percent). The
+provisional floors had come from a snapshot at a lower exhaust speed; the
+measured margin is larger.
+
+The run also sent the first `/cool/status` with the limits and the fan rows
+through a 512-byte reply buffer, and then a 160-byte limits fragment: twice
+a cut-off document, found by the measurement tool refusing to parse it.
+Both fixed in forgectrl with a host test that renders the widest legal
+document and parses it (`tests/coolfmt_test.c`).
+
+Reading the measurement through cloud mode found a defect in the gates as
+first built: the service reports every action as a run, and its hunt and
+motion headers command the exhaust and the intakes off and the air assist
+at idle, so a hunt longer than the grace would have tripped `AIRFLOW` at
+any floor. Decision (operator): a fan is judged only at the operating
+point its floor was measured at: always while the laser is armed, when a
+job's profile may raise a fan but never lower it below the run duty; and
+unarmed when commanded at the run duty. A hunt is measured, published as
+`unjudged`, and not judged. `cloud.mode-switch` now watches the connect-time
+hunt's gate rows for it.
+
+Both tests ran the same day on a hot-deployed forgectrl (the working tree
+cross-built and installed over dev image `20260821230723`; informational,
+not acceptance). `cloud.mode-switch` PASS: the hunt reported two run ticks
+with the exhaust off and `unjudged`, verdict `OK` throughout.
+`cooling.fan-gate-trips` FAIL first, for two reasons worth keeping: the
+run-start tick resolved the effective limits before it reloaded the
+settings, so for one tick `gates_off` named the exhaust while its row still
+carried the old floor (fixed: the session start re-resolves the limits after
+the reload, so rows, `gates_off` and the log line agree); and the test's
+2 s grace, chosen against the provisional 1800 rpm intake floor, now let
+both intakes trip at ~1850 rpm on their 7 s spin-up (the test grace is 8 s).
+Rerun PASS in 59 s: only the exhaust tripped in the exhaust leg, only the
+purge in the purge leg, the exhaust read `off` with floor 0 in the off leg,
+and the restore showed every fan `ok` at the shipped floors (exhaust 11723,
+intakes 4157 and 4162, air assist 11078 rpm, purge 628 counts).
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

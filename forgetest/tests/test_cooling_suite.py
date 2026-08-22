@@ -498,7 +498,7 @@ class FanGateTests(unittest.TestCase):
         self.assertEqual(ev["exhaust_off"]["cool"]["gates_off"], ["exhaust"])
         self.assertTrue(all(g["state"] == "ok" for g in ev["restored"].values()))
         posts = self.settings_posts()
-        self.assertEqual(posts[0], {"cool_tach_exhaust_min_rpm": "20000.0", "cool_fan_grace_s": "2"})
+        self.assertEqual(posts[0], {"cool_tach_exhaust_min_rpm": "20000.0", "cool_fan_grace_s": "8"})
         self.assertEqual(posts[-1], {"cool_tach_exhaust_min_rpm": "", "cool_purge_min_current": "",
                                      "cool_fan_grace_s": ""})
         self.assertEqual(self.grbl.commands.count("M8"), 4)

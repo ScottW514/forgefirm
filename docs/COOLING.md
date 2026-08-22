@@ -145,9 +145,20 @@ floor.
 
 - **The floors** are settings (§8): `cool_tach_exhaust_min_rpm`,
   `cool_tach_intake_min_rpm` (either intake), `cool_tach_air_assist_min_rpm`
-  and `cool_purge_min_current`, each a fraction of what the fan reaches at
-  run duty on the bench machine. A cloud job's header can raise a tach floor
-  for that job, never lower it (§2).
+  and `cool_purge_min_current`, each 55 percent of the steady speed the fan
+  reaches at the cut profile on the bench machine (exhaust 11640, intakes
+  4160, air assist 11050 rpm; the recommended bands are 50 to 60 percent).
+  A cloud job's header can raise a tach floor for that job, never lower it
+  (§2).
+- **A fan is judged at the operating point its floor was measured at.**
+  While the laser is armed every fan is judged, and a job's own fan profile
+  (a cloud header's run duties) may raise a fan above the cut profile but
+  never lower it while armed. Unarmed, a fan is judged whenever it is
+  commanded at or above the cut profile (a bare `M8` from a GRBL job), and a
+  fan the job runs slower is measured, published as `unjudged`, and not
+  judged: the factory's hunts and homing moves run with the exhaust and the
+  intakes off and the air assist at idle, and nothing can fire during them.
+  The purge fan has no duty (it is always on) and is judged in every run.
 - **A spin-up grace** (`cool_fan_grace_s`) runs from the moment the run
   profile is written; nothing counts inside it, because the big exhaust fan
   takes seconds to reach speed.
@@ -164,7 +175,8 @@ floor.
   reading in a job that would have tripped the shipped default is logged.
 
 `/cool/status` carries each fan's reading, floor and state (`grace`, `ok`,
-`under`, `TRIPPED`, `off`, or `idle` outside a run) as `fan_gates`.
+`under`, `TRIPPED`, `off`, `unjudged` for a fan the job runs below the cut
+profile unarmed, or `idle` outside a run) as `fan_gates`.
 
 ---
 
@@ -355,9 +367,9 @@ start of every run, so a change takes effect on your next job.
 | `cool_temp_resume` | 31 °C | 5 to 59 °C | 20 to 36 °C | Resume gate: below it, continue. Always kept below the ceiling. |
 | `cool_cooldown_s` | 15 s | 0 to 1800 s | | Smoke-clear phase at run duty after a job. |
 | `cool_cooldown_max_s` | 300 s | 0 to 1800 s | | Cap on the thermal cooldown phase. |
-| `cool_tach_exhaust_min_rpm` | 3700 rpm | 0 to 20000 | 2500 to 5000 | Exhaust fan floor at run duty (§3a). `0` turns the gate off. |
-| `cool_tach_intake_min_rpm` | 1800 rpm | 0 to 20000 | 1200 to 2500 | Intake fan floor, either intake (§3a). `0` turns the gate off. |
-| `cool_tach_air_assist_min_rpm` | 6000 rpm | 0 to 30000 | 4000 to 8000 | Air-assist fan floor (§3a). `0` turns the gate off. |
+| `cool_tach_exhaust_min_rpm` | 6400 rpm | 0 to 20000 | 5800 to 7000 | Exhaust fan floor at run duty (§3a). `0` turns the gate off. |
+| `cool_tach_intake_min_rpm` | 2290 rpm | 0 to 20000 | 2100 to 2500 | Intake fan floor, either intake (§3a). `0` turns the gate off. |
+| `cool_tach_air_assist_min_rpm` | 6000 rpm | 0 to 30000 | 5500 to 6600 | Air-assist fan floor (§3a). `0` turns the gate off. |
 | `cool_purge_min_current` | 300 raw | 0 to 1023 | 150 to 500 | Purge-air fan current floor (the fan has no tachometer; about 1 off, about 630 on). `0` turns the gate off. |
 | `cool_fan_grace_s` | 15 s | 0 to 120 s | 5 to 30 s | Spin-up window after the run profile is written, during which no floor counts. |
 

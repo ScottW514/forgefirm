@@ -96,15 +96,18 @@ def wait_mode(ctx, fc, want_mode, want_controller="running", timeout=90):
 
 
 @test("cloud.mode-switch", title="Controller mode switch grbl -> cloud -> grbl", subsystem="cloud",
-      kind="auto", mode="grbl", est_min=4,
-      covers=_CLOUD_COVERS, requires=["forgectrl.auth", "motion.pacing"],
+      kind="auto", mode="grbl", est_min=5,
+      covers=_CLOUD_COVERS + [("forgectrl", "src/cool.*"), ("forgectrl", "src/airflow.*")],
+      requires=["forgectrl.auth", "motion.pacing"],
       steps=["Bed clear: the cloud client homes the head to the corner on connect (the factory "
              "hunt) and the test jogs it back to where it started afterward. Cloud credentials "
              "configured; the machine on the network."],
       description="POST /mode switches to the cloud controller: gfcloud comes up under "
                   "supervision, authenticates and establishes its service session (its own log "
                   "lines are the evidence; the connect-time firmware probe is recorded when "
-                  "configured); the camera service survives the switch; switching back brings "
+                  "configured); its connect-time hunt, which runs with the extraction fans off, "
+                  "is measured by the airflow gates but not judged (no AIRFLOW, the exhaust row "
+                  "reads unjudged); the camera service survives the switch; switching back brings "
                   "grblHAL up with the Grbl port open and Idle, and the head returns to its start.")
 def mode_switch(ctx):
     fc = ctx.forgectrl
@@ -157,6 +160,26 @@ def mode_switch(ctx):
     st, cam1 = fc.get("/cam/status")
     ev["cam_during_cloud"] = cam1
     ctx.check(st == 200 and isinstance(cam1, dict), "camera status lost during cloud mode (%s)", st)
+    # The connect-time hunt reports a run to the cooling engine with the
+    # exhaust and the intakes commanded off (the factory's motion profile):
+    # the gates measure it and judge nothing, whatever the floors say.
+    hunt, samples = watch_hunt_gates(ctx, log_offset, HUNT_TIMEOUT_S)
+    ev["hunt"] = hunt
+    ev["hunt_gates"] = samples
+    ctx.check(hunt, "the connect-time hunt did not finish within %d s", HUNT_TIMEOUT_S)
+    run = [c for c in samples if c.get("phase") == "run"]
+    ctx.log("hunt: %d status samples, %d in phase run; verdicts %s", len(samples), len(run),
+            sorted({c.get("verdict") for c in samples}))
+    ctx.check(run, "no /cool/status sample saw the hunt as a run session (the client did not "
+                   "report run, or the hunt was shorter than the 1 s poll)")
+    ctx.check(all(c.get("verdict") != "AIRFLOW" for c in samples),
+              "a hunt with its extraction fans off tripped an airflow gate")
+    exh = [((c.get("fan_gates") or {}).get("exhaust") or {}) for c in run]
+    ctx.check(exh and all(g.get("state") == "unjudged" for g in exh),
+              "the exhaust gate judged a hunt: states %s", sorted({g.get("state") for g in exh}))
+    ctx.check(exh and all(g.get("reading", 0) < g.get("floor", 0) for g in exh),
+              "the exhaust was not off during the hunt (readings %s), so the unjudged state "
+              "proves nothing", sorted({g.get("reading") for g in exh}))
 
     st, body = fc.post("/mode", data={"controller": "grbl"})
     ctx.log("POST /mode controller=grbl -> %s %s", st, body)
@@ -345,6 +368,26 @@ def wait_action_finished(ctx, offset, action, timeout, poll=0.5):
             return lines[i]
         time.sleep(poll)
     return None
+
+
+def watch_hunt_gates(ctx, offset, timeout):
+    """Wait for the action's terminal line like wait_action_finished,
+    sampling /cool/status once a second meanwhile. Returns (line or
+    None, samples)."""
+    fc = ctx.forgectrl
+    samples = []
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        ctx.checkpoint()
+        st, c = fc.get("/cool/status")
+        if st == 200 and isinstance(c, dict):
+            samples.append(c)
+        lines = log_lines_since(GFCLOUD_LOG, offset)
+        i = action_finish_index(lines, "hunt")
+        if i is not None:
+            return lines[i], samples
+        time.sleep(1)
+    return None, samples
 
 
 def message(line):

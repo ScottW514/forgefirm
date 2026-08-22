@@ -623,6 +623,18 @@ until `releases/v<version>/acceptance.json` is committed.
 
 ## Hardware facts bank (measured)
 
+- **Fan speeds at the cut profile** (exhaust duty 65535, intake 43278, air
+  assist 1023; sampled at 1 Hz over 120 s from idle, the exhaust duct's
+  inline booster fan off): exhaust **11640 rpm** steady (spread 11444 to
+  11947, 90 percent of steady in 5 s), intakes **4157 / 4158 rpm** (spread
+  under 100, 7 s), air assist **11050 rpm** (spread 30, 1 s); at idle the
+  exhaust and intakes read 0 / ~745 rpm and the air assist ~1900 rpm
+  (idle duty 204). The purge-air fan is always on and reads **~625 counts**
+  of `head/purge_air_current` (~1 when off). The airflow floors are 55
+  percent of these (bands 50 to 60 percent); an inline booster fan changes
+  the exhaust's back pressure and can move its reading by a few percent
+  either way, well inside the margin.
+
 - **DRV8825 stepper drivers wedge on 40 V rail glitches** (factory board; the
   TMC2130s belong to the upgraded OpenGlow board only). A glitch can leave the
   drivers unserviceable: SDMA playback and the position counters run normally
@@ -1340,13 +1352,18 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     while the run profile is applied (exhaust, intakes and air assist by
     tachometer, purge by current), a spin-up grace, three ticks under the
     floor, a fault for the rest of the session (`AIRFLOW`, no resume), a
-    header window only ever raising a floor; `cooling.fan-gate-trips` in
-    the catalog. The shipped floors are provisional, 55 percent of one
-    run-duty snapshot (exhaust 3700, intake 1800, air assist 6000 rpm,
-    purge current 300, grace 15 s) until `fan_floor_measure.py` has been
-    run on the bench and the numbers in `forgectrl/src/gates.c` set from
-    it. The coolant critical tier and the watch-only board temperatures
-    follow.
+    header window only ever raising a floor. A fan is judged at the
+    operating point its floor was measured at: always while armed (when a
+    job's profile may raise a fan but never lower it below the run duty),
+    and unarmed whenever it is commanded at the run duty; a cloud hunt,
+    sent with the extraction fans off, is measured and not judged.
+    `cooling.fan-gate-trips` and the hunt leg of `cloud.mode-switch` in
+    the catalog. The shipped floors are 55 percent of the bench machine's
+    measured steady speeds (facts bank: exhaust 6400, intake 2290, air
+    assist 6000 rpm, purge current 300, grace 15 s); the bench run of the
+    gate tests on an image carrying them, and the unplugged-tach drill,
+    are still owed. The coolant critical tier and the watch-only board
+    temperatures follow.
 
     Nothing here can put energy where it was not commanded: the hardware chain
     is the emission boundary and no header field touches it, and forgectrl runs

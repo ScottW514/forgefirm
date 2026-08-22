@@ -342,7 +342,7 @@ def gate_off(ctx):
 
 
 FAN_KEYS = ("cool_tach_exhaust_min_rpm", "cool_purge_min_current", "cool_fan_grace_s")
-FAN_GRACE_S = "2"           # the shortest grace the test can wait out with margin
+FAN_GRACE_S = "8"           # past the intakes' 7 s to 90 percent, so only the leg's floor trips
 FAN_TRIP_WAIT_S = 20        # grace + three ticks, with slack for the 1 Hz pipeline
 
 
@@ -352,10 +352,11 @@ def _fan_gate(c, name):
 
 @test("cooling.fan-gate-trips", title="A fan under its floor past the grace is a fault; a floor of zero is off",
       subsystem="cooling", kind="auto", mode="grbl", est_min=4,
-      covers=_COOL_COVERS, requires=["cooling.gate-off"],
+      covers=_COOL_COVERS + [("forgectrl", "src/main.c")], requires=["cooling.gate-off"],
       steps=["Machine idle, fans quiet. The test writes the exhaust floor, the purge current floor and "
              "the spin-up grace and restores them; four short M8/M9 cycles spin the fans."],
-      description="The airflow gates run while the cut fan profile is applied. An exhaust floor no fan "
+      description="The airflow gates judge a fan commanded at the cut fan profile, which a bare M8 "
+                  "applies, armed or not. An exhaust floor no fan "
                   "can meet must trip AIRFLOW after the grace plus three ticks (hold, fire blocked, no "
                   "resume while the session lasts); a purge current floor at the ADC rail must trip the "
                   "same way; a floor of zero must read off in gates_off and trip nothing; restored, the "
@@ -410,7 +411,8 @@ def fan_gate_trips(ctx):
             # gates_off says so, and the other fans are judged on their own.
             _set_gates(ctx, fc, {"cool_tach_exhaust_min_rpm": "0",
                                  "cool_purge_min_current": orig["cool_purge_min_current"]})
-            c = _run_session(ctx, grbl, fc, lambda c: c.get("verdict") == "OK" and "exhaust" in (c.get("gates_off") or []),
+            c = _run_session(ctx, grbl, fc, lambda c: c.get("verdict") == "OK" and "exhaust" in (c.get("gates_off") or [])
+                             and _fan_gate(c, "exhaust").get("state") == "off",
                              "exhaust off leg")
             ev["exhaust_off"] = {"cool": c, "gate": _fan_gate(c, "exhaust")}
             ctx.check(c.get("verdict") == "OK", "the exhaust floor at zero did not clear the gate: %s", c)
