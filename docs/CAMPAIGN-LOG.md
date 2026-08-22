@@ -3416,7 +3416,34 @@ only while the ceiling is a gate (its own table row's off end decides),
 `cooling.critical-tier` pins that the off-end POST is accepted with the
 default line, and the unit fake mirrors it. The test restored the
 settings on its failure path as designed (the trip leg had passed: a 6 C
-ceiling read `OVERTEMP` in 1 s).
+ceiling read `OVERTEMP` in 1 s). Rebuilt and flashed as dev image
+`20260822174523`: `cooling.gate-off` and `cooling.critical-tier` PASS.
+
+## 2026-08-22: the pulse-header envelope closed out
+
+Dev image `20260822182931` (forgectrl b27398a, python3-gfhardware e65cfc2
+pinned by meta-openglow 6bfd26e and forgefirm 4e0c90b), the close-out
+image of the envelope work. Campaign `c-20260822183742-95a9`, every
+unattended test: **18 of 18 PASS**, the same set as the 2026-08-22
+morning campaign plus `cooling.critical-tier`.
+
+What the new instrumentation said on the machine: `/status` `temps`
+read chassis 29.9 C, SoC die 44.0 C, supply 602 raw, throttle state 0 at
+idle; the run-end line after a session read `temps this job: chassis
+26.8..26.9 C, soc 36.6..37.1 C, supply raw 549..553`; and the cloud
+client's connect-time hunt logged `79 of 101 header keys have no applier
+here (30 declared ignored, 49 undecided)`. The 49 are the families the
+disposition table calls undecided (the client's network backoff, the air
+filter's fans, the camera exposure and gain values, the per-phase idle
+variants of the limits), named at debug level by every job; the number is
+recorded here so the next decision on them starts from a measurement.
+
+The first build of this image ran on a stale layer: the launch's shell
+session closed while the source sync was still copying, rsync took the
+hangup, and meta-openglow stayed one commit behind (the old gfhardware
+pin). The build was stopped, the tree synced and every moved pin checked
+in it, and the build relaunched detached; the image manifest carries all
+three components at the intended commits.
 
 ## Superseded status notes
 
