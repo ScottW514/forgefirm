@@ -14,6 +14,14 @@ Usage:
   temp_calibrate.py point <measured_C> [note]  record a calibration point
   temp_calibrate.py fit                        fit and print the calibration
 
+  temp_calibrate.py supply-watch [seconds]     the same for the power supply
+  temp_calibrate.py supply-point <C> [note]    sensor (pic/pwr_temp, raw):
+  temp_calibrate.py supply-fit                 thermometer on the heatsink vs
+                                               the raw count; UAPI.md's guess
+                                               raw * 0.08715 - 21 is shown
+                                               beside it. Points go to
+                                               supply_calibration.json.
+
 Points accumulate in temp_calibration.json in the bench data directory
 (gfbench.data_path: next to this script, or FORGETEST_BENCH_DATA). Take
 at least two points as far apart in temperature as practical (e.g. cold
@@ -28,6 +36,22 @@ import time
 from gfbench import board, degc, data_path
 
 STORE = data_path('temp_calibration.json')
+SUPPLY_STORE = data_path('supply_calibration.json')
+
+
+def supply_guess_c(raw):
+    """UAPI.md's unverified guess for pic/pwr_temp."""
+    return raw * 0.08715 - 21
+
+
+def supply_raw(samples=5, delay=1.0):
+    acc, n = 0, 0
+    for _ in range(samples):
+        out = board('cat /sys/glowforge/pic/pwr_temp').strip()
+        if out.isdigit():
+            acc += int(out); n += 1
+        time.sleep(delay)
+    return acc / n if n else None
 
 
 def uapi_c(raw):
@@ -72,8 +96,71 @@ def fit(points, key):
     return slope, my - slope * mx
 
 
+def supply_main(mode):
+    if mode == 'supply-watch':
+        seconds = float(sys.argv[2]) if len(sys.argv) > 2 else 60.0
+        print('pwr_temp raw   guess-C   (%.0f s)' % seconds)
+        t0 = time.time()
+        while time.time() - t0 < seconds:
+            r = supply_raw(1, 0)
+            if r is None:
+                print('  (no reading)')
+            else:
+                print('  %6.1f      %.2f' % (r, supply_guess_c(r)), flush=True)
+            time.sleep(2)
+        return 0
+    if mode == 'supply-point':
+        try:
+            measured = float(sys.argv[2])
+        except (IndexError, ValueError):
+            print('supply-point needs the thermometer reading in C (value)')
+            return 2
+        note = sys.argv[3] if len(sys.argv) > 3 else ''
+        print('sampling pwr_temp (5 s)...', flush=True)
+        r = supply_raw()
+        if r is None:
+            print('no reading from the machine')
+            return 1
+        data = {'points': []}
+        if os.path.exists(SUPPLY_STORE):
+            with open(SUPPLY_STORE) as f:
+                data = json.load(f)
+        data['points'].append({'measured_c': measured, 'raw': r, 'note': note,
+                               'when': time.strftime('%Y-%m-%d %H:%M:%S')})
+        with open(SUPPLY_STORE, 'w') as f:
+            json.dump(data, f, indent=2)
+        print('recorded: measured %.2f C  raw=%.1f (guess %.1f C)  (%d points total in %s)'
+              % (measured, r, supply_guess_c(r), len(data['points']), SUPPLY_STORE))
+        return 0
+    if mode == 'supply-fit':
+        if not os.path.exists(SUPPLY_STORE):
+            print('no points yet')
+            return 1
+        with open(SUPPLY_STORE) as f:
+            pts = json.load(f)['points']
+        if len(pts) < 2:
+            print('need at least 2 points (have %d)' % len(pts))
+            return 1
+        print('points:')
+        for p in pts:
+            print('  %6.2f C   raw=%.1f  guess %.1f C   %s %s'
+                  % (p['measured_c'], p['raw'], supply_guess_c(p['raw']), p['when'], p['note']))
+        slope, offset = fit(pts, 'raw')
+        if slope is None:
+            print('points share one raw value; no fit')
+            return 1
+        print('fit: degC = %.5f * raw + %.2f   (UAPI.md guess: 0.08715 * raw - 21)' % (slope, offset))
+        worst = max(abs(p['measured_c'] - supply_guess_c(p['raw'])) for p in pts)
+        print('the guess is off by at most %.1f C at these points' % worst)
+        return 0
+    print(__doc__)
+    return 2
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else 'watch'
+    if mode.startswith('supply-'):
+        return supply_main(mode)
 
     if mode == 'watch':
         seconds = float(sys.argv[2]) if len(sys.argv) > 2 else 60.0

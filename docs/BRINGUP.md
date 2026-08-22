@@ -623,6 +623,11 @@ until `releases/v<version>/acceptance.json` is committed.
 
 ## Hardware facts bank (measured)
 
+- **Board temperatures at idle** (room ~22 C, machine on for hours): the
+  chassis LM75 reads **29.0 C**, `pic/pwr_temp` reads **589 raw** (the
+  unverified guess `raw * 0.08715 - 21` would make that 30.3 C; a thermometer
+  on the supply heatsink decides). Ranged per job by the engine from here
+  on.
 - **Fan speeds at the cut profile** (exhaust duty 65535, intake 43278, air
   assist 1023; sampled at 1 Hz over 120 s from idle, the exhaust duct's
   inline booster fan off): exhaust **11640 rpm** steady (spread 11444 to
@@ -1375,9 +1380,19 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     cross-check) is the fail tier above the ceiling's pause: at or over it
     in a run session the verdict is `CRITICAL` (fire blocked, hold, no
     resume this job), the fault ends with the session, no header touches
-    it; `cooling.critical-tier` in the catalog (45), bench run owed on the
-    next image, plus the heater-driven warm-loop drill to the critical
-    line. The watch-only board temperatures follow.
+    it; `cooling.critical-tier` in the catalog (45), PASS on dev image
+    `20260822154257`, and the warm-loop drill (`critical_tier_drill.py`)
+    PASS the same day on a genuinely rising loop: `OVERTEMP` at the
+    ceiling, `CRITICAL` four seconds later at the line, the fault ending
+    with the session (CAMPAIGN-LOG). **The board temperatures are watched:**
+    the chassis LM75 (degrees) and the supply sensor (raw count, its
+    conversion still unverified) ride `/status` as `temps`, show on the
+    Status tab, and are ranged over every run session into one run-end
+    log line; no gate behind either until the record says where one
+    belongs, and the supply's conversion waits on thermometer points at
+    the heatsink during a long cut (`temp_calibrate.py supply-point`,
+    three points, then `supply-fit`). Bench run of the status fields and
+    the log line owed on the next image.
 
     Nothing here can put energy where it was not commanded: the hardware chain
     is the emission boundary and no header field touches it, and forgectrl runs

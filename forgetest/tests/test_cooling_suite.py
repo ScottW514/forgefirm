@@ -229,11 +229,13 @@ class GateOffTests(unittest.TestCase):
         cooling.SESSION_END_WAIT_S = 3
         self.fc.state["status"] = dict(self.fc.state["status"],
                                        coolant={"down_c": 22.4, "up_c": 22.3, "pump": True, "tec": False},
+                                       temps={"chassis_c": 29.0, "supply_raw": 589},
                                        gates_off=[])
         self.fc.state["cool"] = {"phase": "idle", "verdict": "OK", "fire_ok": False, "hold": False,
                                  "gates_off": []}
         self.fc.state["settings"].update({"cool_temp_max": "", "cool_temp_resume": ""})
         self.log_line = True        # the engine writes its run-start line
+        self.temps_line = True      # the engine writes its run-end temperature line
         self.report_off = True      # the engine reports the off gate
         self.trips = True           # the engine trips a low ceiling
         self.sessions = 0           # run sessions the engine saw (M8 with the phase not run)
@@ -279,6 +281,10 @@ class GateOffTests(unittest.TestCase):
             def end():
                 time.sleep(0.3)
                 cool["phase"] = "smoke"
+                if self.temps_line:
+                    self.fc.state["logs_tail"]["text"] += (
+                        "Aug 22 12:00:30 forgectrl: cool: temps this job: chassis 29.0..29.4 C, "
+                        "supply raw 587..592\n")
                 time.sleep(0.2)
                 cool["phase"] = "idle"
             threading.Thread(target=end, daemon=True).start()
@@ -366,6 +372,12 @@ class GateOffTests(unittest.TestCase):
             self.run_test()
         self.assertIn("run-start log line", str(cm.exception))
         self.assertEqual(self.fc.state["settings"]["cool_temp_max"], "")
+
+    def test_a_missing_run_end_temperature_line_fails(self):
+        self.temps_line = False
+        with self.assertRaises(Failed) as cm:
+            self.run_test()
+        self.assertIn("board-temperature line", str(cm.exception))
 
     def test_a_custom_ceiling_is_restored_verbatim(self):
         self.fc.state["settings"].update({"cool_temp_max": "30", "cool_temp_resume": "28"})

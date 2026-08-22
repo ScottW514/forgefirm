@@ -3368,6 +3368,40 @@ and flashed the same day (dev image `20260822145201`, forgectrl d51dbdb):
 `cooling.fan-gate-trips` PASS in 60 s, the engine reading `OK`, no hold,
 fire allowed in the smoke-clear phase right after the tripped session.
 
+## 2026-08-22: the coolant critical tier, on an image and on a rising loop
+
+Dev image `20260822154257` (forgectrl a1875a8 pinned by forgefirm f51140e):
+`cooling.critical-tier` PASS in 23 s. As recorded: the settings API refused
+a critical line equal to the ceiling (`400 cool_temp_critical_c must be
+above cool_temp_max`) and changed nothing; with the ceiling at 6 C, the
+resume gate at 5 C and the critical line at 7 C under 24.3 C coolant the
+session read `CRITICAL` (`fire_ok false`, `hold true`, no `resume_ok`,
+reason `CRITICAL: coolant 24.3 C at or over the 7 C critical line - hold,
+no resume this job`); after the session the ceiling alone held
+(`OVERTEMP`); with the critical line at its top of 70 the gate was off
+(`gates_off` naming `coolant_critical`, the run-start log line) and the
+ceiling alone paused; restored, `OK` with nothing off.
+
+The physical drill, `critical_tier_drill.py`, the same day. The loop heater
+reaches the high twenties at most, so the lines were set a few tenths
+above the live upstream reading (24.57 C: ceiling 25.0, resume 24.8,
+critical 25.3) and the engine's own flow-check heater (100 percent, 300 s
+windows, rechecks every 30 s, the suspect threshold at its top) warmed the
+loop through them inside one `M8` session. Transitions, as sampled once a
+second: `OK` at 24.1 C; `OVERTEMP` at 10 s with the upstream at 25.05 C
+(`coolant 25.0 C over 25 C limit - hold until 25 C`); `CRITICAL` at 14 s
+at 26.24 C (`fire_ok false`, `hold true`, relayed on the Grbl port as a
+`[MSG:Warning: CRITICAL: ...]`). `M9` ended the fault and the ceiling's
+`OVERTEMP` stood in the smoke-clear phase (upstream 27.7 C, downstream
+49.7 C from the heater, which the session end switched off). Settings
+restored and re-read in a short session: `OK`, limits back to 33 / 31 / 38.
+
+One find, cosmetic: after the session the reason text still read the
+critical line's message under the ceiling's verdict, because the ceiling
+names itself only on its rising edge and the critical fault had overwritten
+it. The engine now re-publishes the standing hold's reason when a critical
+fault clears (no new log line), and `cooling.critical-tier` checks it.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

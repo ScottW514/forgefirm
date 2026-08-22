@@ -126,6 +126,13 @@ TOOLS = [
      "args": [_arg("cycles", "int", 3, "cycles per case (flow / no-flow)")],
      "desc": "Runs the real check (40 percent / 50 s, cut-profile fans) from a heater-warmed baseline, alternating "
              "flow and no-flow; results to the bench data directory. Slow: about 15 minutes per cycle."},
+    {"id": "critical-tier", "title": "Coolant critical-tier warm-loop drill", "script": "critical_tier_drill.py",
+     "safety": "dry", "where": "board", "ported": True,
+     "args": [_arg("max_seconds", "int", 1200, "give up after this long without CRITICAL", flag="--max-seconds")],
+     "desc": "Sets the ceiling, the resume gate and the critical line a few tenths above the live upstream "
+             "reading and lets the engine's own flow-check heater warm the loop through them inside one M8 "
+             "session: OVERTEMP at the ceiling, then CRITICAL (fire blocked, hold, no resume), the fault ending "
+             "with the session; settings restored and re-read. Results to the bench data directory."},
     {"id": "flow-recheck", "title": "Coolant re-check characterization", "script": "flow_recheck_char.py",
      "safety": "takeover", "where": "board", "ported": True,
      "args": [_arg("heater_pct", "int", 50, "heater duty percent"), _arg("window_s", "int", 30, "re-check window")],
@@ -144,10 +151,13 @@ TOOLS = [
      "desc": "Prints elapsed,raw_down,raw_up at the interval; the sampler behind the flow tools."},
     {"id": "temp-calibrate", "title": "Coolant temperature spot-check", "script": "temp_calibrate.py",
      "safety": "dry", "where": "board", "ported": True,
-     "args": [_arg("mode", "choice", "watch", "watch / point / fit", ["watch", "point", "fit"]),
+     "args": [_arg("mode", "choice", "watch", "coolant: watch / point / fit; supply (pic/pwr_temp): "
+                   "supply-watch / supply-point / supply-fit",
+                   ["watch", "point", "fit", "supply-watch", "supply-point", "supply-fit"]),
               _arg("value", "str", None, "point: the thermometer reading in C; watch: seconds (default 60)")],
-     "desc": "Pairs a measured temperature with averaged raw readings; fits a per-machine line. Points "
-             "accumulate in the bench data directory."},
+     "desc": "Pairs a measured temperature with averaged raw readings; fits a per-machine line. The coolant "
+             "sensors, or the power supply's (thermometer on its heatsink, against the unverified guess in "
+             "UAPI.md). Points accumulate in the bench data directory."},
     {"id": "fan-test", "title": "Fan/coolant bench", "script": "fan_test.py",
      "safety": "dry", "where": "board", "ported": True, "args": [],
      "desc": "Snapshots fan PWMs/tachs/temps, drives M8 -> cut fans, M9 -> cooldown -> idle; the tach "

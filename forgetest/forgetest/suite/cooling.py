@@ -270,7 +270,9 @@ def _tail_has(fc, needle):
                   "(OVERTEMP, hold, fire blocked) at the next run start; set to its top the "
                   "engine must skip the gate (verdict OK), report it in gates_off on /status "
                   "and /cool/status, say so in the settings reply, and log the run-start line; "
-                  "restored, everything reads as before.")
+                  "restored, everything reads as before. Alongside: /status carries the watched "
+                  "board temperatures (chassis in degrees, supply as a raw count) and every run "
+                  "session ends with them ranged into one log line.")
 def gate_off(ctx):
     fc = ctx.forgectrl
     ev = ctx.evidence
@@ -278,8 +280,17 @@ def gate_off(ctx):
     orig = {k: before.get(k, "") for k in GATE_KEYS}
     ev["orig"] = orig
     ctx.log("original: %s", orig)
-    up = (fc.status().get("coolant") or {}).get("up_c")
+    st0 = fc.status()
+    up = (st0.get("coolant") or {}).get("up_c")
     ctx.check(up is not None and up > 8.0, "coolant too cold for the trip leg (up_c %s)", up)
+    # The board temperatures ride /status, watched and not gated: the
+    # chassis in degrees, the supply as its raw count.
+    temps = st0.get("temps") or {}
+    ev["temps"] = temps
+    ctx.check(isinstance(temps.get("chassis_c"), (int, float)) and 5.0 <= temps["chassis_c"] <= 80.0,
+              "/status temps.chassis_c is not a plausible chassis temperature: %s", temps)
+    ctx.check(isinstance(temps.get("supply_raw"), int) and 0 <= temps["supply_raw"] <= 1023,
+              "/status temps.supply_raw is not a 10-bit count: %s", temps)
     c0 = _cool(fc)
     ctx.check(c0.get("verdict") == "OK", "engine is not at OK before the test: %s", c0)
     ctx.check(c0.get("gates_off") == [], "a gate is already off: %s", c0.get("gates_off"))
@@ -336,6 +347,10 @@ def gate_off(ctx):
             ctx.check(c.get("verdict") == "OK" and c.get("gates_off") == [],
                       "engine did not return to OK with no gate off after the restore: %s", c)
             ctx.log("restored ceiling %s reports state %s", val, state)
+            # Every run session ends with the board temperatures ranged
+            # into one line.
+            ctx.check(_tail_has(fc, "temps this job: chassis "),
+                      "the run-end board-temperature line is missing from the forgectrl log")
         finally:
             if not restored:
                 # The engine reads settings at run start only: restoring
@@ -436,6 +451,9 @@ def critical_tier(ctx):
             ctx.check(c.get("verdict") == "OVERTEMP",
                       "after the faulted session the engine reads %s, expected the ceiling's OVERTEMP: %s",
                       c.get("verdict"), c)
+            ctx.check("CRITICAL" not in (c.get("reason") or ""),
+                      "the reason still names the ended critical fault under the ceiling's hold: %r",
+                      c.get("reason"))
 
             # Leg 2: the critical line at its top is the gate off; the
             # ceiling alone pauses, and gates_off says so.
