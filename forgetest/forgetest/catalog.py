@@ -15,10 +15,12 @@ under the runner with a Context (log, prompts, evidence, hardware
 helpers) and reports by returning normally (PASS) or raising
 runner.Failed (FAIL).
 """
+import ast
 import hashlib
 import inspect
 import os
 import re
+import threading
 
 from . import manifest as _manifest
 
@@ -59,12 +61,16 @@ class Test:
 
     @property
     def source_sha(self):
-        """sha256 of the module file that defines the test, line endings
-        normalized. Part of the fingerprint: a changed implementation
-        invalidates earlier passes of this test and no other."""
+        """The hash of the test's own implementation: its function (the
+        decorator included) together with the code its module shares
+        among its tests - everything outside the @test functions. Part
+        of the fingerprint: a change inside one test's body invalidates
+        that test's earlier passes and no other; a change to a helper
+        invalidates the tests of that module. A test the module does not
+        define in the @test form hashes its whole file."""
         if self._source_sha is None:
             path = inspect.getsourcefile(self.fn) or inspect.getfile(self.fn)
-            self._source_sha = source_file_sha(path)
+            self._source_sha = implementation_sha(path, self.id)
         return self._source_sha
 
     def fingerprint(self, manifest):
@@ -115,6 +121,55 @@ def source_file_sha(path):
     with open(path, "rb") as f:
         data = f.read().replace(b"\r\n", b"\n")
     return hashlib.sha256(data).hexdigest()
+
+
+_PARTS = {}                 # path -> (shared sha, {test id: own sha}); the files never change under a run
+_PARTS_LOCK = threading.Lock()
+
+
+def module_parts(path):
+    """(shared sha, {test id: own sha}) for a suite module: the test ids
+    are read from the @test("...") decorators on the module's top-level
+    functions; a test's own text runs from its first decorator line to
+    the end of its body; the shared text is every other line of the
+    file. Line endings normalized."""
+    with _PARTS_LOCK:
+        hit = _PARTS.get(path)
+    if hit is not None:
+        return hit
+    with open(path, "rb") as f:
+        text = f.read().replace(b"\r\n", b"\n").decode("utf-8")
+    lines = text.split("\n")
+    spans = {}
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        tree = None
+    for node in (tree.body if tree is not None else []):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        for d in node.decorator_list:
+            if (isinstance(d, ast.Call) and isinstance(d.func, ast.Name) and d.func.id == "test"
+                    and d.args and isinstance(d.args[0], ast.Constant) and isinstance(d.args[0].value, str)):
+                start = min([dd.lineno for dd in node.decorator_list] + [node.lineno])
+                spans[d.args[0].value] = (start, node.end_lineno)
+    owned = set()
+    for a, b in spans.values():
+        owned.update(range(a, b + 1))
+    shared = "\n".join(ln for i, ln in enumerate(lines, 1) if i not in owned)
+    own = {tid: _manifest.sha256_text("\n".join(lines[a - 1:b])) for tid, (a, b) in spans.items()}
+    parts = (_manifest.sha256_text(shared), own)
+    with _PARTS_LOCK:
+        _PARTS[path] = parts
+    return parts
+
+
+def implementation_sha(path, test_id):
+    """The implementation hash of one test (see Test.source_sha)."""
+    shared, own = module_parts(path)
+    if test_id not in own:
+        return source_file_sha(path)
+    return _manifest.sha256_text("%s:%s" % (shared, own[test_id]))
 
 
 def test(id, *, title, subsystem, kind="auto", hardware="api", mode=None, covers=(),

@@ -1,3 +1,4 @@
+import os
 import unittest
 
 import helpers
@@ -151,3 +152,84 @@ class CatalogTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ImplementationHashTests(unittest.TestCase):
+    """A test's implementation hash is its own function plus the code its
+    module shares: a body edit moves one test, a helper edit moves them
+    all, and a file without @test functions hashes whole."""
+
+    MODULE = '''"""a suite module"""
+from forgetest.catalog import test
+
+
+def helper(x):
+    return x + 1
+
+
+@test("m.one", title="one", subsystem="m")
+def one(ctx):
+    ctx.log(helper(1))
+
+
+@test("m.two", title="two", subsystem="m",
+      steps=["a step"])
+def two(ctx):
+    ctx.log(helper(2))
+'''
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.mkdtemp(prefix="forgetest-impl-")
+        self.path = os.path.join(self.tmp, "mod.py")
+        self.write(self.MODULE)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def write(self, text):
+        catalog._PARTS.pop(self.path, None)
+        with open(self.path, "w", newline="\n") as f:
+            f.write(text)
+
+    def shas(self):
+        return catalog.implementation_sha(self.path, "m.one"), catalog.implementation_sha(self.path, "m.two")
+
+    def test_a_body_edit_moves_that_test_only(self):
+        a1, b1 = self.shas()
+        self.write(self.MODULE.replace("ctx.log(helper(2))", "ctx.log(helper(3))"))
+        a2, b2 = self.shas()
+        self.assertEqual(a1, a2)
+        self.assertNotEqual(b1, b2)
+
+    def test_a_decorator_edit_moves_that_test_only(self):
+        a1, b1 = self.shas()
+        self.write(self.MODULE.replace('steps=["a step"]', 'steps=["another step"]'))
+        a2, b2 = self.shas()
+        self.assertEqual(a1, a2)
+        self.assertNotEqual(b1, b2)
+
+    def test_a_helper_edit_moves_every_test_of_the_module(self):
+        a1, b1 = self.shas()
+        self.write(self.MODULE.replace("return x + 1", "return x + 2"))
+        a2, b2 = self.shas()
+        self.assertNotEqual(a1, a2)
+        self.assertNotEqual(b1, b2)
+
+    def test_line_endings_do_not_count(self):
+        a1, b1 = self.shas()
+        catalog._PARTS.pop(self.path, None)
+        with open(self.path, "wb") as f:
+            f.write(self.MODULE.replace("\n", "\r\n").encode())
+        self.assertEqual((a1, b1), self.shas())
+
+    def test_an_unknown_id_hashes_the_whole_file(self):
+        self.assertEqual(catalog.implementation_sha(self.path, "m.none"), catalog.source_file_sha(self.path))
+
+    def test_every_suite_test_is_spanned(self):
+        import inspect
+        reg = catalog.load_suite()
+        for t in catalog.all_tests(reg):
+            path = inspect.getsourcefile(t.fn)
+            self.assertIn(t.id, catalog.module_parts(path)[1], t.id)

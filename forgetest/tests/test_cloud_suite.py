@@ -596,7 +596,8 @@ class CloudSuiteTests(unittest.TestCase):
     # -- a paused print cancelled by the lid, a running one by the app --------
     def cancel_parts(self):
         """(print prologue, the pause lines, the lid stop + park + cancel,
-        the same tail with the app's cancel as the trigger)."""
+        the same tail with the app's cancel as the trigger - what
+        cloud.oversize-stream's ending looks like)."""
         lines = fixture("lidabort")
         pre, rest = cut(lines, "waiting for button")
         run_pre, rest = cut(rest, "machine:_run_loop starting run")
@@ -609,46 +610,42 @@ class CloudSuiteTests(unittest.TestCase):
                                 "action cancelled mid-run; stopping motion") for l in rest]
         return pre, paused, rest, app_cancel
 
-    def test_pause_cancel_paths_on_the_bench_excerpt(self):
+    def test_paused_lid_cancel_on_the_bench_excerpt(self):
         self.in_cloud(pid=1522)
         self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
-        pre, paused, lid_tail, app_tail = self.cancel_parts()
+        pre, paused, lid_tail, _app = self.cancel_parts()
         prints = []
 
         def next_print():
             prints.append(1)
             self.append(pre, delay=0.1)
-        run = self.run_test(cloud.pause_cancel_paths,
+        run = self.run_test(cloud.paused_lid_cancel,
                             hooks={"Click Done here": next_print,
                                    "the press pauses the print": lambda: self.append(paused, delay=0.05),
                                    "The print is paused: leave the lid open": lambda: (
                                        self.lid(False), self.append(lid_tail, delay=0.05)),
-                                   "Close the lid.": lambda: self.lid(True),
-                                   "cancel the print from the app now": lambda: self.append(app_tail,
-                                                                                            delay=0.05)},
-                            test_id="cloud.pause-cancel-paths")
+                                   "Close the lid.": lambda: self.lid(True)},
+                            test_id="cloud.paused-lid-cancel")
         ev = run.evidence
-        self.assertEqual(len(prints), 2)                      # two prints, one cue each
+        self.assertEqual(len(prints), 1)                      # one print, one cue
         self.assertEqual(ev["paused"], {"button pressed mid-run; pausing": True, "paused at": True})
         self.assertIn(":cancelled", ev["lid_from_pause"]["print finished"])
-        self.assertIn(":cancelled", ev["service_cancel"]["print finished"])
         self.assertTrue(ev["lid_from_pause"]["return home complete"])
-        self.assertTrue(ev["service_cancel"]["return home complete"])
-        self.assertEqual(ev["counters_after_print1"], [0, 0, 3])
-        self.assertEqual(ev["counters_after_print2"], [0, 0, 3])
-        self.assertTrue(ev["latch_locked_after_print1"] and ev["latch_locked_after_print2"])
-        self.assertFalse(ev["armed_after_print1"] or ev["armed_after_print2"])
+        self.assertEqual(ev["counters_after"], [0, 0, 3])
+        self.assertTrue(ev["latch_locked_after"])
+        self.assertFalse(ev["armed_after"])
+        self.assertFalse(ev["button_dark"])
         self.assertEqual(self.fc.posts, [])
         self.assertTrue(any("PASS: a paused print cancelled by the lid" in l for l in run.lines), run.lines)
 
-    def test_pause_cancel_paths_fails_when_the_paused_print_resumes_instead(self):
+    def test_paused_lid_cancel_fails_when_the_paused_print_resumes_instead(self):
         # a lid that resumed (or was ignored) leaves the print ':completed'
         self.in_cloud(pid=1522)
         self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
         pre, paused, lid_tail, _app = self.cancel_parts()
         lid_tail = [l.replace(':cancelled"', ':completed"') for l in lid_tail]
         self.assertFails(
-            cloud.pause_cancel_paths, "print 1 did not end ':cancelled'",
+            cloud.paused_lid_cancel, "the print did not end ':cancelled'",
             hooks={"Click Done here": lambda: self.append(pre, delay=0.1),
                    "the press pauses the print": lambda: self.append(paused, delay=0.05),
                    "The print is paused: leave the lid open": lambda: (

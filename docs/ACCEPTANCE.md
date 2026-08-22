@@ -65,9 +65,12 @@ each test's *details*.
 
 A test's **domain fingerprint** is the hash of the `(component, path,
 blob-id)` triples its coverage globs select in the image manifest, plus the
-platform identity, plus the hash of the test's own implementation. A PASS
-recorded under fingerprint F applies to any build whose recomputed
-fingerprint is F - the same code computes it on the board and in the gate.
+platform identity, plus the hash of the test's own implementation: its
+function (decorator included) together with the code its suite module
+shares among its tests, everything outside the module's `@test`
+functions. A PASS recorded under fingerprint F applies to any build whose
+recomputed fingerprint is F - the same code computes it on the board and
+in the gate.
 
 Consequences:
 
@@ -85,8 +88,9 @@ Consequences:
   init scripts, a third-party pin with no manifest entry) is layer content
   and invalidates everything; so does a pin written into a recipe body
   instead of its pin file (the safe direction).
-- A change to a test's implementation invalidates that test's earlier
-  passes and no other.
+- A change inside a test's body invalidates that test's earlier passes
+  and no other; a change to a helper its module shares invalidates the
+  tests of that module.
 - "Touched" is computed from content hashes carried in the image, never
   declared by hand.
 
