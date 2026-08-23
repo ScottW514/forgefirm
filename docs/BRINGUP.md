@@ -1161,11 +1161,15 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     and bench-validated on dev image `20260822232347` (43 of 43, the four
     offline tests in 5.5 minutes, nothing on the bed). The service-protocol
     test on the emulator (`cloud.service-protocol`, `gfcloud --emulate`, the
-    `python3-gfutilities-emulator` fixtures on the dev image) is
-    code-complete with host replays and built into dev image
-    `20260823002125`; **that image carries a layer change, so its first
-    campaign is a full one, and it is owed** (flash, the 28 unattended, then
-    the 17 attended: the new test needs only a Print in the app). A bench
+    `python3-gfutilities-emulator` fixtures on the dev image; only a Print
+    in the app to drive) is done and bench-validated on dev image
+    `20260823161333` (44 of 44, CAMPAIGN-LOG 2026-08-23). The service's
+    connect-time hunt is paid only where it is the subject: every cloud
+    client the tool starts for anything else comes up under
+    `/run/gfcloud-nohunt` (`gfcloud --no-hunt`, the first settings report in
+    the reconnect form), while the two homing tests and the one real print
+    get theirs, the print by never reusing a session that has not hunted
+    the machine itself (the contract's cloud split in ACCEPTANCE.md). A bench
     actuator for the lid, interlock and button is planned, not started. Catalog
     gaps left from the tool's own plan: `cooling.confirm-escalate` and
     `cooling.fire-gate-blocks-arm` are not ported (both need the pump switched

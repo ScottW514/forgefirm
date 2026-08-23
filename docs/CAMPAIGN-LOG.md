@@ -3542,6 +3542,94 @@ same as the lid's. Every print's `print:running`,
 the socket. The real service was still proven on the same image by
 `cloud.mode-switch` and the one real print, `cloud.pause-resume`.
 
+## 2026-08-23: the service protocol proven by the emulator, and the hunt paid only where it is the subject
+
+Three dev images in one day, each a campaign, the last one full and
+clean.
+
+**Dev image `20260823002125`** (forgefirm 4c9dcca, python3-gfhardware
+12ad3b1 pinned by meta-openglow a4e3abf, the first image with the
+`python3-gfutilities-emulator` fixtures) carried a layer change, so every
+test was owed. Campaign `c-20260823140444-80ae`: the 27 unattended tests
+passed in 10 minutes. Before the operator's part, the emulator path was
+dry-checked from a shell the way the offline one had been, and it caught
+a defect the host replays could not: the session came up (sign-in, the
+firmware check, the WebSocket ready) and the service sent `settings` and
+nothing else. The real client's hunt lands 1 to 2 s after `ws_connect
+ESTABLISHED`; the emulator waited minutes. `build_emulator` had set
+`EMULATOR.BYPASS_HOMING`, which makes gfutilities answer the settings
+request with `"settings":{}`, the reconnect form the service answers by
+keeping its head position and skipping the hunt. The fix (gfhardware
+b7e8035: the report carries the values; a host test proves it red on the
+old flag) was hot-patched on the bench for the rest of the dry-check: the
+hunt landed 1 s after the settings report and completed; the service was
+satisfied after two home frames and one motion (the real client takes
+four frames and three motions); the app showed Ready; a Print from the
+app reached the emulator 7 s later, behind a pre-print motion pair and a
+`lidar_image` request the emulator answered, and downloaded (20 KB
+gzip, 643 KB of pulses, a 134-tag header, STfr 10000) and completed. The
+shipped file was put back and the real client restarted before anything
+else ran.
+
+**The operator's change, before the next image:** a mode switch from GRBL
+to cloud costs the service's connect-time hunt, and during cloud
+development those add up. gfcloud gained `--no-hunt` and the one-start
+marker `/run/gfcloud-nohunt` (gfhardware 351a623): the first settings
+report goes out in the reconnect form, which is what the factory client
+does on every reconnect within a session. With it, every one-start marker
+is now read and taken down by the client itself, first thing, before the
+imports that take seconds on this board, so a respawn never inherits one
+and a writer can move on once the supervisor reports the client up.
+forgetest (forgefirm 969bac6) sets the marker for every cloud client it
+starts except where the hunt is the subject: `cloud.mode-switch` and
+`cloud.service-protocol` keep theirs, and so does the one real print,
+since `enter_cloud` now reuses a running session only when that client
+has hunted the machine itself (`session_hunted`: never the emulator's
+session, never a no-hunt start) and otherwise restarts the client with
+the hunt. The decision, the operator's: all starts skip the hunt but
+those three. The hazard it leaves, written into ACCEPTANCE.md: a machine
+a campaign leaves in cloud mode may not have hunted since GRBL mode moved
+the head, so a lid cycle or a controller restart before printing from
+the app.
+
+**Dev image `20260823153019`** (forgefirm 908e0c7, gfhardware 351a623 by
+meta-openglow 9e988b5). The pin-file mechanism held across the bump: 21
+tests inherited, the 6 always-required core tests ran (76 s), and the
+operator took the attended block: the four motion tests, the five laser
+tests, `camera.lid-privacy` and `cloud.mode-switch` passed, and
+`cloud.service-protocol` ERRORed on its first line, `forgectrl POST /mode:
+timed out`. Two defects, one each side. forgectrl's mode switch answers
+only after the new controller's first job-state report to the cooling
+engine, 15 s without one; the real client reports within seconds of its
+machine coming up, and the emulator never reported at all, so the answer
+came at the deadline, past forgetest's 10 s client timeout (the dry-check
+had used curl, which has none, and so never showed it). The emulator now
+runs the same idle, unarmed 1 Hz reporter as the hardware machine
+(gfhardware 537d0db), and forgetest gives the supervisor's three levers
+(`/mode`, `/controller/start`, `/controller/stop`) a 120 s timeout, above
+the daemon's own waits (forgefirm ab0a515).
+
+**Dev image `20260823161333`** (forgefirm 8379aa5, gfhardware 537d0db by
+meta-openglow 730db53). Campaign `c-20260823161923-0dd7`: 29 inherited,
+the 6 core tests in 74 s, then 9 attended: the emission witness,
+`camera.lid-privacy`, `cloud.mode-switch`, `cloud.service-protocol` (68 s:
+the session, the hunt, three image uploads, a print from the app
+downloaded with its 134-tag header and completed against the real
+service with nothing behind it, then the real client back in 14 s under
+`NO-HUNT` with no hunt), the four offline tests, and the one real print,
+`cloud.pause-resume`, which found the offline client running and started
+a fresh one with its own hunt before printing, as the rule requires.
+**44 of 44, release authorized**, 868 s of attended test time. No release
+cut. The offline client is what a campaign now leaves running in cloud
+mode; the next thing that needs the service restarts it.
+
+What this closes: the cloud split of the acceptance plan is complete.
+The service protocol is proven by the emulator with only the app to
+drive, the machine's print behavior by the offline service with nothing
+on the bed, and the two together by one real print. Still open from that
+plan: the bench actuator for the lid, interlock and button, and the
+finer coverage maps.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
