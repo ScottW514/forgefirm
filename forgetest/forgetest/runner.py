@@ -535,6 +535,7 @@ class Runner:
         self.batch = None
         self.fixture = None       # the bench actuator, when one is up (fixture.py)
         self._fixture_probed = 0.0
+        self._fixture_said = None
         self.boot_ref = None
         self.recover()
         threading.Thread(target=self._take_boot_reference, daemon=True,
@@ -564,7 +565,15 @@ class Runner:
             return self.fixture
         self._fixture_probed = now
         had = self.fixture
-        fx = _fixture.probe(self._note if had is None else (lambda m: None))
+        # a box that is not there is said once, not every probe
+        said = []
+        fx = _fixture.probe(said.append)
+        for m in said:
+            if m != self._fixture_said:
+                self._note(m)
+                self._fixture_said = m
+        if fx is not None:
+            self._fixture_said = None
         if fx is None and had is not None:
             self._note("fixture: %s no longer answers - running without it" % had.hostname)
         self.fixture = fx

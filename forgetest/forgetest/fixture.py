@@ -108,6 +108,20 @@ def mdns_answers(data, name):
     return out
 
 
+def _local_ipv4s():
+    """The interface addresses to send a multicast query from: the
+    default first (None), then every IPv4 address this host answers to."""
+    out = [None]
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_DGRAM):
+            ip = info[4][0]
+            if ip not in out and not ip.startswith("127."):
+                out.append(ip)
+    except OSError:
+        pass
+    return out
+
+
 def resolve_mdns(hostname, timeout=2.0, tries=3):
     """The IPv4 address of <hostname>.local, asked of the network
     directly; None when nothing answers."""
@@ -123,12 +137,28 @@ def resolve_mdns(hostname, timeout=2.0, tries=3):
         # the name, so the ephemeral port and unicast replies will do.
         try:
             sock.bind(("", MDNS_PORT))
+        except OSError:
+            sock.bind(("", 0))
+        try:
             sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
                             socket.inet_aton(MDNS_GROUP) + socket.inet_aton("0.0.0.0"))
         except OSError:
-            sock.bind(("", 0))
+            pass            # no group membership: unicast replies still arrive
         for _ in range(tries):
-            sock.sendto(query, (MDNS_GROUP, MDNS_PORT))
+            # The query goes out of every local IPv4 interface that will
+            # take it (a host with a VPN or a VM adapter as its default
+            # route would otherwise never reach the bench network).
+            sent = False
+            for ifaddr in _local_ipv4s():
+                try:
+                    if ifaddr is not None:
+                        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(ifaddr))
+                    sock.sendto(query, (MDNS_GROUP, MDNS_PORT))
+                    sent = True
+                except OSError:
+                    continue
+            if not sent:
+                return None
             deadline = time.time() + timeout
             while True:
                 left = deadline - time.time()
