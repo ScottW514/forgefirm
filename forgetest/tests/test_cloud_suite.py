@@ -13,6 +13,7 @@ reuse an existing cloud session and never switch back, restart the client
 for a fresh hunt, judge the print's own finish line (not another action's),
 wait the service's deferred moves out, and fail for the right reasons."""
 import contextlib
+import json
 import os
 import shutil
 import struct
@@ -170,6 +171,9 @@ class CloudSuiteTests(unittest.TestCase):
         cloud.Offline = FakeOffline
         cloud.OFFLINE_MARKER = os.path.join(self.tmp, "offline-marker")
         cloud.JOB_DIR = os.path.join(self.tmp, "jobs")
+        self.saved_emu = (cloud.EMULATE_MARKER, cloud.EMULATOR_WORK)
+        cloud.EMULATE_MARKER = os.path.join(self.tmp, "emulate-marker")
+        cloud.EMULATOR_WORK = os.path.join(self.tmp, "emu-work")
         FakeOffline.sent = []
         FakeOffline.on_send = None
         self.engine_line = EFFECTIVE_LINE      # what the engine logs at the print; None = nothing
@@ -188,6 +192,7 @@ class CloudSuiteTests(unittest.TestCase):
         (cloud.GFCLOUD_LOG, cloud.FORGECTRL_LOG, cloud.QUIET_S, cloud.QUIET_TIMEOUT_S,
          cloud.HUNT_TIMEOUT_S, cloud.GFHOME_LOG, cloud.Offline, cloud.OFFLINE_MARKER,
          cloud.JOB_DIR) = self.saved
+        (cloud.EMULATE_MARKER, cloud.EMULATOR_WORK) = self.saved_emu
         os.environ.pop("GF_SYSFS_ROOT", None)
         os.environ.pop("GF_LEDS_ROOT", None)
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -261,6 +266,84 @@ class CloudSuiteTests(unittest.TestCase):
         self.assertFalse(live)
         self.assertIn("offline", detail)
         self.assertTrue(cloud.client_offline(3100))
+
+    # -- the emulator ------------------------------------------------------------------
+    EMU_PID = 4100
+    EMU_START = ["2026-08-22T23:50:00.100000+00:00 gfcloud[4100] INFO ffmachine:build_emulator EMULATE: the "
+                 "emulator in this machine's identity, frames from /usr/share/gfutilities/emulator, no hardware",
+                 "2026-08-22T23:50:02.000000+00:00 gfcloud[4100] INFO authentication:authenticate_machine SUCCESS",
+                 "2026-08-22T23:50:03.000000+00:00 gfcloud[4100] INFO websocket:ws_connect ESTABLISHED",
+                 "2026-08-22T23:50:05.000000+00:00 gfcloud[4100] INFO basemachine:_finish_action hunt [1578300001]: "
+                 "finished with event \":completed\"",
+                 "2026-08-22T23:50:06.000000+00:00 gfcloud[4100] INFO websocket:img_upload COMPLETE",
+                 "2026-08-22T23:50:06.500000+00:00 gfcloud[4100] INFO basemachine:_finish_action lid_image [1578300002]: "
+                 "finished with event \":completed\""]
+    EMU_PRINT = ["2026-08-22T23:51:00.000000+00:00 gfcloud[4100] INFO gfuiservice:run service action request: print (ready)",
+                 "2026-08-22T23:51:01.000000+00:00 gfcloud[4100] INFO websocket:fetch_motion pulse data is uncompressed, "
+                 "47848 byte body",
+                 "2026-08-22T23:51:02.000000+00:00 gfcloud[4100] INFO basemachine:_finish_action print [1578300003]: "
+                 "finished with event \":completed\""]
+    REAL_BACK = ["2026-08-22T23:52:02.000000+00:00 gfcloud[4200] INFO authentication:authenticate_machine SUCCESS",
+                 "2026-08-22T23:52:03.000000+00:00 gfcloud[4200] INFO websocket:ws_connect ESTABLISHED",
+                 "2026-08-22T23:52:03.500000+00:00 gfcloud[4200] INFO websocket:_on_open RX-EVENT: ready",
+                 "2026-08-22T23:52:15.000000+00:00 gfcloud[4200] INFO basemachine:_finish_action hunt [1578300010]: "
+                 "finished with event \":completed\""]
+
+    def emulator_setup(self, print_lines=None, info=True):
+        self.in_cloud(pid=2278)
+        self.append(["2026-08-22T23:49:00.500000+00:00 gfcloud[2278] INFO websocket:_on_open RX-EVENT: ready"])
+        starts = []
+
+        def on_post(path, form):
+            if path == "/controller/stop":
+                self.fc.state["mode"] = dict(self.fc.state["mode"], controller="standby", pid=0)
+            elif path == "/controller/start":
+                starts.append(os.path.exists(cloud.EMULATE_MARKER))
+                if len(starts) == 1:
+                    self.fc.state["mode"] = dict(self.fc.state["mode"], controller="running", pid=self.EMU_PID)
+                    self.append(self.EMU_START, delay=0.2)
+                else:
+                    self.fc.state["mode"] = dict(self.fc.state["mode"], controller="running", pid=4200)
+                    self.append(self.REAL_BACK, delay=0.2)
+            return None
+        self.fc.on_post = on_post
+
+        def at_print():
+            os.makedirs(cloud.EMULATOR_WORK, exist_ok=True)
+            if info:
+                with open(os.path.join(cloud.EMULATOR_WORK, "2026-08-22_235101_print.info"), "w") as f:
+                    json.dump({"header_data": {"STfr": 10000, "MCsn": 0, "PDfm": 0}}, f)
+            self.append(print_lines if print_lines is not None else self.EMU_PRINT, delay=0.1)
+        return starts, {"Set up any small job": at_print}
+
+    def test_service_protocol_against_the_emulator(self):
+        starts, hooks = self.emulator_setup()
+        run = self.run_test(cloud.service_protocol, hooks=hooks, test_id="cloud.service-protocol")
+        ev = run.evidence
+        self.assertEqual(starts, [True, False])            # emulator under the marker, the real client without
+        self.assertFalse(os.path.exists(cloud.EMULATE_MARKER))
+        self.assertEqual([p for p, _ in self.fc.posts],
+                         ["/controller/stop", "/controller/start", "/controller/stop", "/controller/start"])
+        self.assertIn(":completed", ev["hunt"])
+        self.assertIn(":completed", ev["print"])
+        self.assertEqual(ev["images_uploaded"], 1)
+        self.assertEqual(ev["header_stfr"], 10000)
+        self.assertEqual(self.script.asked, ["Does the app show the print complete?"])
+        self.assertTrue(any("PASS: session, hunt" in l for l in run.lines), run.lines[-5:])
+        self.assertFalse(os.path.exists(cloud.EMULATOR_WORK))
+
+    def test_service_protocol_fails_when_the_print_does_not_complete_and_still_restores_the_client(self):
+        failed = [l.replace(':completed"', ':failed"') for l in self.EMU_PRINT]
+        starts, hooks = self.emulator_setup(print_lines=failed)
+        self.assertFails(cloud.service_protocol, "did not complete", hooks=hooks)
+        self.assertEqual(starts, [True, False])            # the real client came back regardless
+
+    def test_the_emulators_session_is_not_the_machines(self):
+        self.append(self.EMU_START + ["2026-08-22T23:50:07.000000+00:00 gfcloud[4100] INFO websocket:_on_open "
+                                      "RX-EVENT: ready"])
+        live, detail = cloud.session_live(4100)
+        self.assertFalse(live)
+        self.assertIn("emulator", detail)
 
     # -- the offline entry ----------------------------------------------------------
     def test_enter_offline_reuses_a_running_offline_client(self):

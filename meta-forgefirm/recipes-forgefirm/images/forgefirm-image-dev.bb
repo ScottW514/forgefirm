@@ -5,10 +5,12 @@ DESCRIPTION = "OpenGlow/ForgeFIRM development image for Glowforge"
 # Strict superset of forgefirm-image: everything the main image ships, plus
 # debug tooling. forgetest is the release acceptance tool (HTTP :8090) and
 # the bench diagnostics page; it belongs to the bench, never to a release
-# image (docs/ACCEPTANCE.md).
+# image (docs/ACCEPTANCE.md). The gfutilities emulator fixtures are the
+# canned frames its service-protocol test answers the service with.
 IMAGE_INSTALL += " \
   forgectrl \
   forgetest \
+  python3-gfutilities-emulator \
   htop \
 "
 

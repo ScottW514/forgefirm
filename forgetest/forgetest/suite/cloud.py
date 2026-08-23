@@ -318,6 +318,93 @@ def mode_switch(ctx):
             "grbl (port open, %s), then $H homed in %.1f s", ev["grbl_state"], ev["homing_s"])
 
 
+@test("cloud.service-protocol", title="The service protocol, answered by the emulator in this "
+                                       "machine's identity",
+      subsystem="cloud", kind="operator", est_min=5,
+      covers=[("python3-gfutilities", "gfutilities/service/**"),
+              ("python3-gfutilities", "gfutilities/device/basemachine.py"),
+              ("python3-gfutilities", "gfutilities/device/emulator.py"),
+              ("python3-gfutilities", "gfutilities/device/settings.py"),
+              ("python3-gfutilities", "gfutilities/configuration.py"),
+              ("python3-gfutilities", "gfutilities/_common.py"),
+              ("python3-gfutilities", "gfutilities/__init__.py"),
+              ("python3-gfutilities", "examples/**"),
+              ("forgefirm-app", "gfcloud.py"), ("forgefirm-app", "ffmachine.py"),
+              ("forgectrl", "src/super.c")],
+      requires=["forgectrl.auth"],
+      steps=["Cloud credentials configured; the machine on the network; the app open in a browser "
+             "(anyone can drive it, at the machine or not: nothing here moves, arms, or fires).",
+             "When told, set up any small job in the app and press Print; the emulator runs it at "
+             "once. Then confirm the app shows the print complete."],
+      description="The Glowforge service, end to end, with the machine emulated: the cloud client "
+                  "restarted as gfutilities' Emulator in this machine's identity signs in, passes "
+                  "the firmware check, opens the WebSocket, answers the connect-time hunt and the "
+                  "service's image requests with canned frames, and runs a print from the app "
+                  "through the same download path a job takes (the pulse header parsed, the "
+                  "serial and format checked) and the same lifecycle events, to ':completed'. "
+                  "What the service accepts is what the app shows. The real client is restarted "
+                  "afterward and its connect-time hunt waited out. The machine's own side of a "
+                  "print is the other cloud tests' to prove.")
+def service_protocol(ctx):
+    ev = ctx.evidence
+    offset = enter_emulator(ctx)
+    try:
+        service_protocol_body(ctx, ev, offset)
+    finally:
+        leave_emulator(ctx)
+        import shutil
+        shutil.rmtree(EMULATOR_WORK, ignore_errors=True)
+
+
+def service_protocol_body(ctx, ev, offset):
+    # the service's connect-time hunt, answered at once
+    hunt = wait_action_finished(ctx, offset, "hunt", HUNT_TIMEOUT_S)
+    ev["hunt"] = message(hunt)
+    ctx.check(hunt, "the service sent no connect-time hunt (or it never finished) within %d s", HUNT_TIMEOUT_S)
+    ctx.check(COMPLETED in hunt, "the emulator's hunt did not complete: %s", ev["hunt"])
+    # and the image it asks for after, uploaded from the canned frames
+    got = wait_log(ctx, offset, ["img_upload COMPLETE"], 120)
+    ctx.check(got["img_upload COMPLETE"], "no image upload completed after the hunt")
+    ctx.notice("In the app the machine shows Ready (its bed image is the emulator's canned frame). "
+               "Set up any small job and press Print. Nothing moves here; the test watches the "
+               "service's print reach the emulator and complete.")
+    try:
+        got = wait_log(ctx, offset, ["service action request: print"], 600)
+        ctx.check(got["service action request: print"], "no print reached the machine within 600 s")
+        fin = wait_action_finished(ctx, offset, "print", 300)
+    finally:
+        ctx.clear_notice()
+    ev["print"] = message(fin)
+    ctx.check(fin, "the print did not finish within 300 s of reaching the machine")
+    ctx.check(COMPLETED in fin, "the print did not complete: %s", ev["print"])
+    lines = log_lines_since(GFCLOUD_LOG, offset)
+    ev["images_uploaded"] = sum(1 for ln in lines if "img_upload COMPLETE" in ln)
+    ev["pulse"] = next((message(ln) for ln in lines if "pulse data is" in ln), None)
+    ctx.log("print: %s; %d images uploaded; %s", ev["print"], ev["images_uploaded"], ev["pulse"])
+    ctx.check(ev["pulse"], "the print's pulse data was not downloaded and parsed")
+    infos = []
+    try:
+        infos = sorted(f for f in os.listdir(EMULATOR_WORK) if f.endswith(".info"))
+    except OSError:
+        pass
+    ev["downloads"] = infos
+    header = None
+    if infos:
+        try:
+            with open(os.path.join(EMULATOR_WORK, infos[-1])) as f:
+                header = (json.load(f) or {}).get("header_data") or {}
+        except (OSError, ValueError):
+            header = None
+    ev["header_tags"] = len(header) if header else 0
+    ev["header_stfr"] = (header or {}).get("STfr")
+    ctx.check(header and header.get("STfr"), "the downloaded job's header was not parsed (%s)", infos)
+    ctx.log("the job's header: %d tags, STfr %s", ev["header_tags"], ev["header_stfr"])
+    ctx.confirm("Does the app show the print complete?")
+    ctx.log("PASS: session, hunt, %d image upload(s), a print downloaded (%d-tag header) and "
+            "completed, all against the real service with no hardware behind it",
+            ev["images_uploaded"], ev["header_tags"])
+
+
 # ---- lid / button behavior of a cloud job (the factory's) ------------------
 #
 # These tests run IN cloud mode and stay there: enter_cloud() reuses a live
@@ -337,6 +424,11 @@ OFFLINE_MARK = "OFFLINE service"
 OFFLINE_MARKER = "/run/gfcloud-offline"
 OFFLINE_SOCKET = "/run/gfcloud-offline.sock"
 JOB_DIR = "/tmp/forgetest"          # the jobs the offline tests write (tmpfs)
+# The emulator (gfcloud --emulate, or the marker at start): the real
+# service driven in this machine's identity with no hardware behind it.
+EMULATE_MARK = "EMULATE: the emulator"
+EMULATE_MARKER = "/run/gfcloud-emulate"
+EMULATOR_WORK = "/tmp/gfcloud-emulate"
 WS_MARKS = ("RX-EVENT: ready", "RX-EVENT: closed", "RECONNECTING", "CLOSING", OFFLINE_MARK)
 ACTIVITY_MARKS = ("start motion", "start return home", "starting run", "starting z homing cycle")
 LOG_TAIL_BYTES = 4 << 20
@@ -485,7 +577,10 @@ def session_live(pid):
     in (the client may log under a wrapper's pid)."""
     tag = "gfcloud[%s]" % pid if pid else None
     last_pid = last_any = None
+    emulator = False
     for ln in log_tail(GFCLOUD_LOG):
+        if EMULATE_MARK in ln and (not tag or tag in ln):
+            emulator = True
         for m in WS_MARKS:
             if m in ln:
                 last_any = m
@@ -495,6 +590,9 @@ def session_live(pid):
     where = "pid %s" % pid if last_pid is not None else "newest lines"
     if last == OFFLINE_MARK:
         return False, "%s: offline service, no web session" % where
+    if emulator:
+        # the emulator's session is live, and it is not the machine's
+        return False, "%s: the emulator, not the machine" % where
     return last == "RX-EVENT: ready", "%s: last websocket state %s" % (where, last)
 
 
@@ -605,12 +703,80 @@ def enter_cloud(ctx):
 
 
 def offline_marker_off(ctx):
-    """No client started from here on comes up offline."""
+    """No client started from here on comes up offline, or as the emulator."""
+    for path, what in ((OFFLINE_MARKER, "offline"), (EMULATE_MARKER, "emulate")):
+        try:
+            os.remove(path)
+            ctx.log("%s marker removed", what)
+        except OSError:
+            pass
+
+
+def restart_client(ctx, marker=None, who=""):
+    """The cloud client started fresh - restarted in cloud mode, switched to
+    from GRBL mode (the change declared) - under `marker` if one is given,
+    which stays in place until the client has read it (the caller waits
+    for the client's own line and takes the marker down; the supervisor
+    reports the client running seconds before Python has finished
+    importing). Returns the log offset from before the start."""
+    fc = ctx.forgectrl
+    st, m = fc.get("/mode")
+    ctx.check(st == 200 and isinstance(m, dict), "GET /mode -> %s", st)
+    offset = log_size(GFCLOUD_LOG)
+    if marker:
+        with open(marker, "w") as f:
+            f.write("forgetest %s\n" % ctx.test.id)
+    if m.get("mode") == "cloud":
+        ctx.log("cloud mode: restarting the client%s (was pid %s)", who, m.get("pid"))
+        st, body = fc.post("/controller/stop")
+        ctx.check(st == 200, "controller stop refused: %s %s", st, body)
+        m = wait_mode(ctx, fc, "cloud", want_controller="standby", timeout=30)
+        ctx.check(m and m.get("controller") == "standby", "the cloud client did not stop: %s", m)
+        st, body = fc.post("/controller/start")
+        ctx.check(st == 200, "controller start refused: %s %s", st, body)
+    else:
+        ctx.log("%s mode: switching to cloud%s", m.get("mode"), who)
+        st, body = fc.post("/mode", data={"controller": "cloud"})
+        ctx.check(st == 200, "mode switch to cloud refused: %s %s", st, body)
+    m = wait_mode(ctx, fc, "cloud", timeout=90)
+    ctx.check(m and m.get("mode") == "cloud" and m.get("controller") == "running",
+              "cloud controller did not come up: %s", m)
+    ctx.mode_changed("cloud")
+    return offset
+
+
+def enter_emulator(ctx):
+    """The real service with the emulator in this machine's identity: the
+    client restarted under the emulate marker (one start), its session
+    established. Returns the log offset from before the start, so the
+    caller sees the connect. The caller restarts the real client when
+    done (leave_emulator)."""
+    offset = restart_client(ctx, marker=EMULATE_MARKER, who=" as the emulator")
     try:
-        os.remove(OFFLINE_MARKER)
-        ctx.log("offline marker removed")
-    except OSError:
-        pass
+        got = wait_log(ctx, offset, [EMULATE_MARK], 60)
+        ctx.check(got[EMULATE_MARK], "the client did not come up as the emulator within 60 s")
+    finally:
+        offline_marker_off(ctx)
+    session = wait_session(ctx, offset)
+    ctx.check(session_established(session),
+              "the emulator never established its service session (no credentials, no network, "
+              "or the service refused)")
+    ctx.log("emulator session established: %s", "; ".join(ln.split(" ", 1)[-1][:80] for ln in session))
+    return offset
+
+
+def leave_emulator(ctx):
+    """The real client back, its session waited for and its connect-time
+    hunt waited out, so the machine is what the next test expects."""
+    offline_marker_off(ctx)
+    offset = restart_client(ctx, who=" with the machine")
+    session = wait_session(ctx, offset)
+    ctx.check(session_established(session), "the real client did not establish its session after the emulator")
+    hunt = wait_action_finished(ctx, offset, "hunt", HUNT_TIMEOUT_S)
+    ctx.check(hunt, "the real client's connect-time hunt did not finish within %d s", HUNT_TIMEOUT_S)
+    ctx.check(wait_quiet(ctx, offset), "the service was still moving the head %d s after the real "
+              "client came back", QUIET_TIMEOUT_S)
+    ctx.log("the machine is back under the real client")
 
 
 def enter_offline(ctx):
@@ -627,29 +793,11 @@ def enter_offline(ctx):
     if m.get("mode") == "cloud" and m.get("controller") == "running" and client_offline(m.get("pid")):
         ctx.log("the offline service is already up (pid %s) - reusing it", m.get("pid"))
         return log_size(GFCLOUD_LOG)
-    offset = log_size(GFCLOUD_LOG)
-    with open(OFFLINE_MARKER, "w") as f:
-        f.write("forgetest %s\n" % ctx.test.id)
+    offset = restart_client(ctx, marker=OFFLINE_MARKER, who=" offline")
     try:
-        if m.get("mode") == "cloud":
-            ctx.log("cloud mode: restarting the client offline (was pid %s)", m.get("pid"))
-            st, body = fc.post("/controller/stop")
-            ctx.check(st == 200, "controller stop refused: %s %s", st, body)
-            m = wait_mode(ctx, fc, "cloud", want_controller="standby", timeout=30)
-            ctx.check(m and m.get("controller") == "standby", "the cloud client did not stop: %s", m)
-            st, body = fc.post("/controller/start")
-            ctx.check(st == 200, "controller start refused: %s %s", st, body)
-        else:
-            ctx.log("%s mode: switching to cloud, offline", m.get("mode"))
-            st, body = fc.post("/mode", data={"controller": "cloud"})
-            ctx.check(st == 200, "mode switch to cloud refused: %s %s", st, body)
-        m = wait_mode(ctx, fc, "cloud", timeout=90)
-        ctx.check(m and m.get("mode") == "cloud" and m.get("controller") == "running",
-                  "cloud controller did not come up: %s", m)
-        ctx.mode_changed("cloud")
         got = wait_log(ctx, offset, [OFFLINE_MARK], 60)
         ctx.check(got[OFFLINE_MARK], "the client did not come up as the offline service within 60 s")
-        ctx.log("offline service up (pid %s): %s", m.get("pid"), message(got[OFFLINE_MARK]))
+        ctx.log("offline service up: %s", message(got[OFFLINE_MARK]))
     finally:
         offline_marker_off(ctx)
     ctx.check(wait_quiet(ctx, offset), "the machine was not quiet %d s after the offline start", QUIET_TIMEOUT_S)

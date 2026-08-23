@@ -150,9 +150,16 @@ bench, or one whose `/data` has been wiped, starts from a full campaign.
    hunt run with the lid open, and the web-service homing (`$H` with
    `homing_mode = gfcloud`) after the switch back.
    The cloud tests split by what they prove. The service protocol (sign-in,
-   the WebSocket, the hunt, the print from the app, progress, the job's
-   limits reaching the engine) is `cloud.mode-switch` and one real print,
-   `cloud.pause-resume`. The machine's print behavior (the lid and
+   the firmware check, the WebSocket, the hunt, the image uploads, a
+   print's download and lifecycle as the app sees them) is
+   `cloud.service-protocol`: the cloud client restarted as gfutilities'
+   emulator in this machine's identity under the `/run/gfcloud-emulate`
+   marker, answering the real service with the dev image's canned frames
+   and running the print from the app without hardware, so only the app
+   has to be driven (by a person or an agent, anywhere). The service and
+   the machine together are `cloud.mode-switch` and one real print,
+   `cloud.pause-resume` (progress, the button wait, the job's limits
+   reaching the engine). The machine's print behavior (the lid and
    interlock aborts, the button-wait cancel, a paused print ended by the
    lid, a print longer than the ring with the app's cancel) runs under the
    **offline service** (`enter_offline`: the cloud client restarted with
