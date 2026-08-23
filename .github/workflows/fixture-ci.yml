@@ -1,0 +1,56 @@
+# forgefixture: the bench actuator's firmware, proven on the host.
+#
+#  - the policy test: the decisions that need no hardware (channel
+#    names, the loop request words, the button pulse clamp, the key
+#    comparison), compiled with gcc and run
+#  - the firmware build: the whole project in the pinned ESP-IDF
+#    container, with a placeholder fixture.env, so a change that does
+#    not compile never reaches a bench
+
+name: fixture-ci
+
+on:
+  push:
+    paths:
+      - 'fixture/**'
+      - '.github/workflows/fixture-ci.yml'
+  pull_request:
+    paths:
+      - 'fixture/**'
+  workflow_dispatch:
+
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Policy host test
+        working-directory: fixture
+        run: CC=gcc sh test/run.sh
+
+  firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: espressif/idf:v5.5.5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Placeholder fixture.env (the build needs one; the values are not used)
+        working-directory: fixture
+        run: |
+          printf 'WIFI_SSID=ci-network\nWIFI_PSK=ci-passphrase\nAPI_KEY=%s\nHOSTNAME=forgefixture\n' \
+            0123456789abcdef0123456789abcdef > fixture.env
+      - name: Build
+        working-directory: fixture
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh >/dev/null
+          idf.py set-target esp32s3 >/dev/null
+          idf.py build
+      - name: Size
+        working-directory: fixture
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh >/dev/null
+          idf.py size | tail -n 20

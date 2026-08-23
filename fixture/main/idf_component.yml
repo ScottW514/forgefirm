@@ -1,0 +1,5 @@
+## The managed components this firmware uses (fetched by the IDF
+## component manager on the first build; dependencies.lock pins them).
+dependencies:
+  idf: ">=5.3"
+  espressif/mdns: "^1.11.3"

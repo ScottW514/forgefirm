@@ -1,0 +1,14 @@
+# The bench's own wifi details and API key: never committed.
+fixture.env
+
+# ESP-IDF build products and the per-checkout config (regenerated from
+# sdkconfig.defaults).
+build/
+sdkconfig
+sdkconfig.old
+managed_components/
+
+
+# Host test binaries.
+test/policy_test
+test/*.o

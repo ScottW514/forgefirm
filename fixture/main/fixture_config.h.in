@@ -1,0 +1,7 @@
+/* Generated from fixture.env by main/CMakeLists.txt. Do not edit. */
+#pragma once
+
+#define FIXTURE_WIFI_SSID "@FIXTURE_WIFI_SSID@"
+#define FIXTURE_WIFI_PSK  "@FIXTURE_WIFI_PSK@"
+#define FIXTURE_API_KEY   "@FIXTURE_API_KEY@"
+#define FIXTURE_HOSTNAME  "@FIXTURE_HOSTNAME@"

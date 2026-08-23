@@ -1,0 +1,36 @@
+# forgefixture build defaults (ESP32-S3 DevKitC-1). idf.py merges these
+# into sdkconfig on the first configure; sdkconfig itself is not tracked.
+CONFIG_IDF_TARGET="esp32s3"
+
+# Any DevKitC-1 has at least 8 MB; a 4 MB layout with one large app
+# partition fits every one of them and leaves nothing to choose.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
+# A hung task reboots the board to every relay line low rather than
+# holding a button press: the task watchdog panics, and a panic resets.
+CONFIG_ESP_TASK_WDT_INIT=y
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=5
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=y
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=y
+CONFIG_ESP_INT_WDT=y
+CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
+
+# Brownout (the relays share the board's 3.3 V with nothing else, but the
+# USB supply is whatever it is): reset rather than limp.
+CONFIG_ESP_BROWNOUT_DET=y
+
+# The log on both USB ports: the UART bridge and the native USB-Serial-JTAG.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y
+
+# HTTP server: a few clients, small requests.
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_HTTPD_MAX_URI_LEN=128
+CONFIG_HTTPD_PURGE_BUF_LEN=32
+
+# Wifi station only; no Bluetooth.
+CONFIG_BT_ENABLED=n
+CONFIG_ESP_WIFI_NVS_ENABLED=y
+CONFIG_LWIP_IPV6=n
