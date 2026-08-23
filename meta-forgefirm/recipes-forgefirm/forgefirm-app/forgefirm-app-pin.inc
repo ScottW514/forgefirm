@@ -4,9 +4,9 @@
 # because the component entry already identifies the pinned source
 # (forgefirm-image-manifest.bbclass). The python3-gfhardware recipe in
 # meta-glowforge-bsp pins the same repository; move both together.
-SRCREV = "351a623c75ec0119e191dfdf7e86fef8488c5108"
+SRCREV = "537d0db2403d8c449897bdbc19698178c1cf9eef"
 
 # Bump PV with every SRCREV move: the hash-derived package version is not
 # monotonic on its own and buildhistory QA fails the build when it sorts
 # backwards.
-PV = "0.1.20+git"
+PV = "0.1.21+git"
