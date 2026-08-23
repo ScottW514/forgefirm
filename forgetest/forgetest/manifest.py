@@ -67,6 +67,37 @@ def match_files(files, pattern):
     return [(p, b) for p, b in files if rx.match(p)]
 
 
+# Paths that carry no target behavior: docs, CI, the components' own unit
+# tests, licenses, editor setup. Outside every fingerprint (a README edit
+# re-requires nothing) and outside the coverage lint (no test has to name
+# them). Reviewed with the catalog: widening this list is a change like
+# any other. "*" applies to every component.
+NON_BEHAVIORAL = [
+    ("*", ".github/**"),
+    ("*", ".gitignore"),
+    ("*", ".gitattributes"),
+    ("*", ".gitmodules"),
+    ("*", "**/*.md"),
+    ("*", "LICENSE*"),
+    ("*", "COPYING*"),
+    ("*", "docs/**"),
+    ("*", "tests/**"),
+    ("*", "graphify-out/**"),
+    ("*", "**/.gitkeep"),
+    ("*", ".devcontainer/**"),
+    ("*", ".vscode/**"),
+    ("*", ".env.example"),
+    ("forgectrl", "tools/**"),        # host-side dev tools (panel dev server)
+]
+
+
+def non_behavioral(comp, path, allow=NON_BEHAVIORAL):
+    for c, pat in allow:
+        if c in ("*", comp) and glob_to_regex(pat).match(path):
+            return True
+    return False
+
+
 class Manifest:
     def __init__(self, data):
         self.data = data
@@ -133,6 +164,8 @@ def fingerprint(manifest, covers, extra=()):
             parts.add((comp, "@missing", ""))
             continue
         for p, b in match_files(files, pat):
+            if non_behavioral(comp, p):
+                continue
             parts.add((comp, p, b))
     h = hashlib.sha256()
     h.update(canonical(sorted(parts)).encode("utf-8"))
@@ -144,7 +177,24 @@ def fingerprint(manifest, covers, extra=()):
     return h.hexdigest()
 
 
-def coverage_report(manifest, tests, allow=()):
+def empty_covers(manifest, tests):
+    """Coverage entries that select no file of their component: a glob
+    that never matched (paths anchor at the repository root, so a file
+    under a recipe's subdirectory needs that directory in the glob), or
+    a component not in the manifest. Such an entry covers nothing, and
+    the test's fingerprint would not move with the file it meant.
+    Returns [(test id, component, glob)]. A glob selecting only
+    non-behavioral paths is hollow too: nothing it names is fingerprinted."""
+    out = []
+    for t in tests:
+        for comp, pat in t.covers:
+            files = manifest.files(comp)
+            if files is None or not [p for p, _b in match_files(files, pat) if not non_behavioral(comp, p)]:
+                out.append((t.id, comp, pat))
+    return out
+
+
+def coverage_report(manifest, tests, allow=NON_BEHAVIORAL):
     """Which manifest paths no test covers.
 
     tests: iterable with .covers. allow: iterable of (component, glob)

@@ -34,7 +34,12 @@ Every test declares, in code (`forgetest/forgetest/suite/*.py`):
   mode it finds, or manages the mode itself (the `cloud.*` job tests,
   through `enter_cloud`, which also waits for the service session);
 - **covers** - the source paths whose content the test stands for, as
-  `(component, glob)` pairs;
+  `(component, glob)` pairs. Globs anchor at the component's repository
+  root (`forgefirm-app/gfcloud.py`, not `gfcloud.py`), and a glob that
+  selects nothing is a lint failure. Non-behavioral paths (docs, CI, the
+  components' own unit tests, licenses; the list is `NON_BEHAVIORAL` in
+  `forgetest/forgetest/manifest.py`) are outside every fingerprint, so a
+  README edit re-requires nothing;
 - **requires** - tests that must be satisfied first (the emission tests
   require the motion and readback tests). This orders the runs; it is not
   a release condition of its own (the release needs every test satisfied
@@ -171,6 +176,19 @@ bench, or one whose `/data` has been wiped, starts from a full campaign.
    latch, so they stay `live`. The offline client is left running; the
    next test that needs the service restarts it (`enter_cloud` does), as
    does a mode switch or a controller restart.
+   **The coverage maps follow the split.** The protocol test stands for
+   the web session, the emulator and its fixtures; the offline tests for
+   the run loop, the hardware it drives, the offline dispatch and the
+   pulse path; `cloud.mode-switch` for the homing path (the session, the
+   whole hardware library, `gfhome`); and every one of them for the
+   client's common ground (`gfcloud.py`, `ffmachine.py`, the config, the
+   identity, the cooling reporter, gfutilities' core and its transport
+   helpers). The one real print keeps the coarse maps, all three cloud
+   components whole: it is the integration, and the floor the lint needs,
+   so whatever the finer maps leave out still re-requires it. A sign-in
+   change therefore re-requires the protocol test and the print; a feeder
+   change the offline tests and the print; a camera change the mode
+   switch and the print.
    **The service's connect-time hunt is paid only where it is the
    subject.** A cloud client the tool starts for anything else (the real
    client back after the emulator, a mode the runner switches to or hands
@@ -341,9 +359,9 @@ The mechanical floor is the coverage lint,
 
     python3 -m forgetest.coverage --manifest <manifest.json> [--enforce]
 
-which lists every manifest path no test covers, minus the allowlist of
-non-behavioral paths in `forgetest/forgetest/coverage.py` (docs, CI, tests,
-licenses). CI (`forgetest-ci.yml`) runs it on a manifest generated from the
+which lists every manifest path no test covers, minus the non-behavioral
+paths (docs, CI, tests, licenses), and every coverage entry that selects
+nothing. CI (`forgetest-ci.yml`) runs it on a manifest generated from the
 recipe pins with `scripts/manifest-from-tree.py` (no Yocto build needed)
 and fails the job on any uncovered path. On the board, run it against
 `/etc/forgefirm-manifest.json`. The lint proves a

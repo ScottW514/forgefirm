@@ -115,6 +115,31 @@ class CoverageReportTests(unittest.TestCase):
         self.assertNotIn("forgetest", m.coverage_report(man, [], allow=[]),
                          "dev-only components are outside the report")
 
+    def test_non_behavioral_paths_are_outside_every_fingerprint(self):
+        man = helpers.make_manifest()
+        t = helpers.make_test("a.one", [("forgectrl", "**")])
+        a = m.fingerprint(man, t.covers)
+        for comp, path in (("forgectrl", "README.md"), ("forgectrl", "docs/SERVICES.md"),
+                           ("forgectrl", "tests/test_x.py"), ("forgectrl", ".github/workflows/ci.yml")):
+            self.assertEqual(a, m.fingerprint(helpers.with_file(man, comp, path, "changed"), t.covers),
+                             path)
+        self.assertNotEqual(a, m.fingerprint(helpers.with_file(man, "forgectrl", "src/ui.c", "changed"),
+                                             t.covers))
+        self.assertTrue(m.non_behavioral("forgectrl", "tools/devserver.py"))
+        self.assertFalse(m.non_behavioral("grblhal-glowforge", "tools/devserver.py"))
+
+    def test_an_entry_that_selects_nothing_is_reported(self):
+        man = helpers.make_manifest()
+        good = helpers.make_test("a.one", [("forgectrl", "src/ui.c")])
+        # the recipe's subdirectory left out of the glob, and an unknown component
+        bad = helpers.make_test("a.two", [("forgectrl", "ui.c"), ("no-such", "**")])
+        self.assertEqual(m.empty_covers(man, [good]), [])
+        self.assertEqual(m.empty_covers(man, [good, bad]),
+                         [("a.two", "forgectrl", "ui.c"), ("a.two", "no-such", "**")])
+        # a glob that selects docs only names nothing any fingerprint carries
+        docs = helpers.make_test("a.three", [("forgectrl", "**/*.md")])
+        self.assertEqual(m.empty_covers(man, [docs]), [("a.three", "forgectrl", "**/*.md")])
+
 
 class CatalogTests(unittest.TestCase):
     def test_catalog_hash_is_definition_only(self):
