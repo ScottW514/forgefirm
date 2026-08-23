@@ -648,12 +648,11 @@ until `releases/v<version>/acceptance.json` is committed.
   GPIO 7 to GND. The lid contact (NC) goes in series with the lid-switch
   loop at J4.12/13; the button contact (NO) across the front button input
   at J5 (BTN and its 12 V); the interlock contact (NC) in the remote
-  interlock loop, which SAFETY.md places on J8 and the sister project's
-  connector map on J6 (J8 being Y1's coils there): **to be settled at the
-  bench before the harness is made.** The DevKit and the machine share a
-  ground through the modules, so the DevKit is powered from a USB wall
-  adapter. The interposer harness itself is bench-local and is not
-  described in any repository.
+  interlock loop at J8 (SAFETY.md; J6 is the speaker). The machine's 3.3 V
+  rail carries the three coils with room to spare. The DevKit and the
+  machine share a ground through the modules, so the DevKit is powered from
+  a USB wall adapter. The interposer harness itself is bench-local and is
+  not described in any repository.
 
 - **The factory's envelope, decoded** (firmware 2.6.0-2228, the 23 captured
   headers, this board's own factory logs). The pulse header is the job's
