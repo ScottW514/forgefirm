@@ -1159,8 +1159,14 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     service for the machine-behavior tests (gfutilities `OfflineService`,
     `gfcloud --offline`, `forgetest/puls.py`, four tests re-ported) is done
     and bench-validated on dev image `20260822232347` (43 of 43, the four
-    offline tests in 5.5 minutes, nothing on the bed). A bench actuator for
-    the lid, interlock and button is planned, not started. Catalog
+    offline tests in 5.5 minutes, nothing on the bed). The service-protocol
+    test on the emulator (`cloud.service-protocol`, `gfcloud --emulate`, the
+    `python3-gfutilities-emulator` fixtures on the dev image) is
+    code-complete with host replays and built into dev image
+    `20260823002125`; **that image carries a layer change, so its first
+    campaign is a full one, and it is owed** (flash, the 28 unattended, then
+    the 17 attended: the new test needs only a Print in the app). A bench
+    actuator for the lid, interlock and button is planned, not started. Catalog
     gaps left from the tool's own plan: `cooling.confirm-escalate` and
     `cooling.fire-gate-blocks-arm` are not ported (both need the pump switched
     by hand mid-run, so they are bench-tab material first), and whether
