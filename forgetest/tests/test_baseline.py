@@ -293,6 +293,69 @@ class BaselineModeTests(BaselineTests):
         self.fc.state["mode"] = {"mode": "cloud", "controller": "running", "pid": 7, "motion": "verified"}
         self.fc.state["settings"]["controller_mode"] = "cloud"
 
+    def nohunt_marker(self, refuse=False):
+        """The no-hunt marker under the fake tree; what each POST found.
+        The fake client takes the marker down as gfcloud does, first thing
+        at its start; with refuse the POST is refused and no client starts."""
+        baseline.NOHUNT_MARKER = os.path.join(self.tmp, "nohunt-marker")
+        seen = []
+
+        def on_post(path, form):
+            seen.append((path, dict(form), os.path.exists(baseline.NOHUNT_MARKER)))
+            if refuse:
+                return 409, {"error": "busy"}
+            if os.path.exists(baseline.NOHUNT_MARKER):
+                os.remove(baseline.NOHUNT_MARKER)
+            if path == "/mode":
+                self.fc.state["mode"] = dict(self.fc.state["mode"], mode=form["controller"], controller="running")
+            elif path == "/controller/start":
+                self.fc.state["mode"] = dict(self.fc.state["mode"], controller="running")
+            return None
+        self.fc.on_post = on_post
+        return seen
+
+    def test_a_refused_switch_leaves_no_marker_for_the_next_start(self):
+        seen = self.nohunt_marker(refuse=True)
+        ok, detail = self.bl().switch_mode("cloud")
+        self.assertFalse(ok)
+        self.assertEqual(seen, [("/mode", {"controller": "cloud"}, True)])
+        self.assertFalse(os.path.exists(baseline.NOHUNT_MARKER))
+
+    def test_a_switch_to_cloud_starts_the_client_without_the_hunt(self):
+        seen = self.nohunt_marker()
+        ok, detail = self.bl().switch_mode("cloud")
+        self.assertTrue(ok, detail)
+        self.assertEqual(seen, [("/mode", {"controller": "cloud"}, True)])
+        self.assertFalse(os.path.exists(baseline.NOHUNT_MARKER))      # one start, never left behind
+
+    def test_a_switch_to_grbl_sets_no_marker(self):
+        seen = self.nohunt_marker()
+        self.cloud()
+        ok, detail = self.bl().switch_mode("grbl")
+        self.assertFalse(ok)              # the fake has no Grbl port: the switch itself happened
+        self.assertEqual(seen, [("/mode", {"controller": "grbl"}, False)])
+        self.assertFalse(os.path.exists(baseline.NOHUNT_MARKER))
+
+    def test_the_mode_handed_back_is_cloud_without_the_hunt(self):
+        seen = self.nohunt_marker()
+        self.cloud()
+        b = self.bl()
+        cap = b.capture()                             # found in cloud
+        self.fc.state["mode"] = dict(self.fc.state["mode"], mode="grbl")     # the run left it in grbl
+        b.enforce("post", captured=cap)
+        self.assertEqual(seen[0], ("/mode", {"controller": "cloud"}, True))
+        self.assertFalse(os.path.exists(baseline.NOHUNT_MARKER))
+
+    def test_a_standby_cloud_client_is_started_without_the_hunt(self):
+        seen = self.nohunt_marker()
+        self.cloud()
+        b = self.bl()
+        cap = b.capture()
+        self.fc.state["mode"] = dict(self.fc.state["mode"], controller="standby")
+        b.enforce("post", captured=cap)
+        self.assertEqual(seen[0], ("/controller/start", {}, True))
+        self.assertFalse(os.path.exists(baseline.NOHUNT_MARKER))
+
     def test_grbl_mode_restores_the_controller_values_and_the_lamp(self):
         self._attr("cnc/step_freq", "10000")
         self._attr("pic/lid_led", "77")

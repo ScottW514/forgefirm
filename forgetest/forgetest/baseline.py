@@ -78,6 +78,15 @@ GRBL_CONTROLLER_SYSFS = ("cnc/motor_lock", "cnc/x_mode", "cnc/y_mode", "cnc/x_de
 # would leave the runtime in one mode and the boot in the other).
 UNPRESERVED_SETTINGS = ("controller_mode",)
 
+# A cloud client the baseline starts (the mode a test declares, the mode
+# or controller handed back after a run) comes up without the service's
+# connect-time hunt: the marker gfcloud reads first thing at start and
+# takes down (one start), so it is left in place once the start is
+# accepted and removed only when the start never happened. The service
+# keeps the head position it has; a test that homes or prints under the
+# service starts its own client with the hunt.
+NOHUNT_MARKER = os.environ.get("FORGETEST_NOHUNT_MARKER", "/run/gfcloud-nohunt")
+
 # Read-only readbacks with their idle values (no direct restore: the state
 # comes right through forgectrl - see restore_forgectrl - or is fatal).
 IDLE_READBACKS = [
@@ -260,6 +269,25 @@ class Baseline:
         self.log("WARNING - forgectrl did not settle within %d s (last /mode: %s)" % (timeout, last))
         return last
 
+    # -- a cloud client without the hunt ---------------------------------
+    def nohunt_on(self, want):
+        """The no-hunt marker before a start that brings the cloud client
+        up (a switch to cloud, a controller start in cloud mode)."""
+        if want != "cloud":
+            return
+        try:
+            with open(NOHUNT_MARKER, "w") as f:
+                f.write("forgetest baseline\n")
+        except OSError as e:
+            self.log("no-hunt marker not written (%s): the client will hunt" % e)
+
+    def nohunt_off(self):
+        """The marker the client never read: a start that was refused."""
+        try:
+            os.remove(NOHUNT_MARKER)
+        except OSError:
+            pass
+
     # -- the mode a test needs -------------------------------------------
     def switch_mode(self, want, timeout=SETTLE_S):
         """Put the machine in controller mode `want` through the supervisor
@@ -276,8 +304,10 @@ class Baseline:
             return True, "already in %s mode" % want
         self.log("switching to %s mode (found %s, controller %s)"
                  % (want, mode.get("mode"), mode.get("controller")))
+        self.nohunt_on(want)
         st, body = self.fc_post("/mode", data={"controller": want})
         if st != 200:
+            self.nohunt_off()
             return False, "POST /mode controller=%s -> %s %s" % (want, st, body)
         mode = self.wait_settled(timeout=timeout) or {}
         self.mode = mode.get("mode")
@@ -358,19 +388,28 @@ class Baseline:
         # declaring it is handed back through the switch.
         want = (captured or {}).get("mode") or mode.get("mode") or "grbl"
         if mode.get("mode") != want:
+            self.nohunt_on(want)
             st, body = self.fc_post("/mode", data={"controller": want})
+            if st != 200:
+                self.nohunt_off()
             mode = self.wait_settled() or mode
             self.mode = mode.get("mode")
             left.append(Leftover("mode", mode.get("mode"), want,
                                  "restored" if mode.get("mode") == want else "failed: %s %s" % (st, body)))
         if mode.get("controller") == "motion-fault":
+            self.nohunt_on(want)
             st, body = self.fc_post("/mode", data={"controller": want})
+            if st != 200:
+                self.nohunt_off()
             mode = self.wait_settled() or mode
             left.append(Leftover("controller", "motion-fault", "running",
                                  "restored" if mode.get("controller") == "running"
                                  else "failed: %s" % mode.get("controller")))
         elif mode.get("controller") == "standby":
+            self.nohunt_on(mode.get("mode"))
             st, body = self.fc_post("/controller/start")
+            if st != 200:
+                self.nohunt_off()
             mode = self.wait_settled() or mode
             left.append(Leftover("controller", "standby", "running",
                                  "restored" if mode.get("controller") == "running"

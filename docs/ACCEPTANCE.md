@@ -171,6 +171,23 @@ bench, or one whose `/data` has been wiped, starts from a full campaign.
    latch, so they stay `live`. The offline client is left running; the
    next test that needs the service restarts it (`enter_cloud` does), as
    does a mode switch or a controller restart.
+   **The service's connect-time hunt is paid only where it is the
+   subject.** A cloud client the tool starts for anything else (the real
+   client back after the emulator, a mode the runner switches to or hands
+   back, a controller it restarts) comes up under the `/run/gfcloud-nohunt`
+   marker: its first settings report is the reconnect form, and the
+   service keeps the head position it has instead of homing. The hunt
+   tests (`cloud.mode-switch`, `cloud.service-protocol`) get theirs, and
+   so does the one real print: `enter_cloud` reuses a running session
+   only when that client has hunted the machine itself (never the
+   emulator's, never a no-hunt start), otherwise it restarts the client
+   with the hunt, because a print placed on a head position the service
+   only believes can run the gantry into a rail. The same holds outside
+   the tool: a machine left in cloud mode by a campaign may not have
+   hunted since GRBL mode moved the head, so open and close the lid (the
+   service re-hunts) or restart the controller before printing from the
+   app. Every marker is one start: the client that reads it takes it
+   down.
 4. Or hand the whole list to a queue. **Run what is left** offers two:
    **Unattended** takes every `auto` test the campaign does not already
    count as satisfied, and needs nobody in the room; **Operator and live**

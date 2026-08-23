@@ -429,6 +429,13 @@ JOB_DIR = "/tmp/forgetest"          # the jobs the offline tests write (tmpfs)
 EMULATE_MARK = "EMULATE: the emulator"
 EMULATE_MARKER = "/run/gfcloud-emulate"
 EMULATOR_WORK = "/tmp/gfcloud-emulate"
+# No connect-time hunt (gfcloud --no-hunt, or the marker at start): the
+# first settings report in the reconnect form, the service keeps the head
+# position it has. For a restart between tests that do not home; the
+# homing tests and the one real print get their hunt.
+NOHUNT_MARK = "NO-HUNT:"
+NOHUNT_MARKER = "/run/gfcloud-nohunt"
+HUNT_DONE = "hunt ["
 WS_MARKS = ("RX-EVENT: ready", "RX-EVENT: closed", "RECONNECTING", "CLOSING", OFFLINE_MARK)
 ACTIVITY_MARKS = ("start motion", "start return home", "starting run", "starting z homing cycle")
 LOG_TAIL_BYTES = 4 << 20
@@ -596,6 +603,24 @@ def session_live(pid):
     return last == "RX-EVENT: ready", "%s: last websocket state %s" % (where, last)
 
 
+def session_hunted(pid):
+    """The running cloud client (gfcloud[pid]) has homed the machine under
+    the service: a hunt of its own finished (the connect-time one, or a
+    later re-hunt), and it is not the emulator. A client started without
+    the hunt, or one whose lines have left the log tail, has not - the
+    service may hold a head position the machine no longer has."""
+    tag = "gfcloud[%s]" % pid
+    hunted = False
+    for ln in log_tail(GFCLOUD_LOG):
+        if tag not in ln:
+            continue
+        if EMULATE_MARK in ln:
+            return False
+        if HUNT_DONE in ln and "finished with event" in ln and COMPLETED in ln:
+            hunted = True
+    return hunted
+
+
 def client_offline(pid):
     """The running cloud client is the offline service."""
     live, detail = session_live(pid)
@@ -637,16 +662,20 @@ def wait_session(ctx, offset, timeout=120):
     return session
 
 
-def fresh_cloud_connect(ctx):
-    """A NEW cloud client with a fresh service session (its connect-time
-    hunt follows): in cloud mode the controller is restarted through the
-    supervisor's stop/start lever; in GRBL mode the mode is switched (and
-    the change declared - the machine stays in cloud mode). Returns the log
-    offset from before the connect, so the caller sees the whole session."""
+def fresh_cloud_connect(ctx, hunt=True):
+    """A NEW cloud client with a fresh service session: in cloud mode the
+    controller is restarted through the supervisor's stop/start lever; in
+    GRBL mode the mode is switched (and the change declared - the machine
+    stays in cloud mode). Its connect-time hunt follows unless hunt is
+    False (the no-hunt marker, for a start where the service already
+    knows the head). Returns the log offset from before the connect, so
+    the caller sees the whole session."""
     fc = ctx.forgectrl
     st, m = fc.get("/mode")
     ctx.check(st == 200 and isinstance(m, dict), "GET /mode -> %s", st)
     offset = log_size(GFCLOUD_LOG)
+    if not hunt:
+        marker_on(ctx, NOHUNT_MARKER)
     if m.get("mode") == "cloud":
         ctx.log("cloud mode: restarting the cloud client for a fresh connect (was pid %s)", m.get("pid"))
         st, body = fc.post("/controller/stop")
@@ -672,25 +701,35 @@ def fresh_cloud_connect(ctx):
 
 
 def enter_cloud(ctx):
-    """Cloud mode with a live service session and a quiet machine. An
-    existing cloud session is reused; from GRBL mode the switch is made
-    once (its connect-time hunt is waited out) and the machine stays in
-    cloud mode. Returns the log offset where the test's own window begins."""
+    """Cloud mode with a live service session, the machine homed under
+    it, and quiet. An existing cloud session is reused when the client
+    has hunted the machine itself (never the emulator's session, never a
+    no-hunt start: the service would be holding a head position the
+    machine may not have, and what follows is the one real print); from
+    GRBL mode the switch is made once (its connect-time hunt is waited
+    out) and the machine stays in cloud mode. Returns the log offset
+    where the test's own window begins."""
     fc = ctx.forgectrl
     st, m = fc.get("/mode")
     ctx.check(st == 200 and isinstance(m, dict), "GET /mode -> %s", st)
     offline_marker_off(ctx)
     live = detail = None
+    hunted = False
     if m.get("mode") == "cloud" and m.get("controller") == "running":
         live, detail = session_live(m.get("pid"))
         ctx.check(live or "offline" in detail,
                   "cloud mode is up (pid %s) but the client has no live service session (%s) - "
                   "check credentials and network, or restart the controller", m.get("pid"), detail)
-    if live:
-        ctx.log("cloud mode already up (pid %s), service session live - reusing it", m.get("pid"))
+        hunted = live and session_hunted(m.get("pid"))
+    if live and hunted:
+        ctx.log("cloud mode already up (pid %s), service session live and the machine hunted "
+                "under it - reusing it", m.get("pid"))
         offset = log_size(GFCLOUD_LOG)
     else:
-        if detail:
+        if live:
+            ctx.log("the running client (pid %s) never hunted the machine under the service: "
+                    "restarting it with the hunt", m.get("pid"))
+        elif detail:
             ctx.log("the running client is the offline service: restarting it with the service")
         offset = fresh_cloud_connect(ctx)
         hunt = wait_action_finished(ctx, offset, "hunt", HUNT_TIMEOUT_S)
@@ -702,9 +741,20 @@ def enter_cloud(ctx):
     return log_size(GFCLOUD_LOG)
 
 
+def marker_on(ctx, path):
+    """A one-start marker for the next cloud client: the client that reads
+    it takes it down. Written before the start; offline_marker_off is the
+    belt-and-braces removal once the client's own line is in."""
+    with open(path, "w") as f:
+        f.write("forgetest %s\n" % ctx.test.id)
+
+
 def offline_marker_off(ctx):
-    """No client started from here on comes up offline, or as the emulator."""
-    for path, what in ((OFFLINE_MARKER, "offline"), (EMULATE_MARKER, "emulate")):
+    """No client started from here on comes up offline, as the emulator,
+    or without its hunt. The client takes a marker it read down itself;
+    this catches one it never read (a start that failed)."""
+    for path, what in ((OFFLINE_MARKER, "offline"), (EMULATE_MARKER, "emulate"),
+                       (NOHUNT_MARKER, "no-hunt")):
         try:
             os.remove(path)
             ctx.log("%s marker removed", what)
@@ -712,20 +762,23 @@ def offline_marker_off(ctx):
             pass
 
 
-def restart_client(ctx, marker=None, who=""):
+def restart_client(ctx, marker=None, who="", hunt=True):
     """The cloud client started fresh - restarted in cloud mode, switched to
     from GRBL mode (the change declared) - under `marker` if one is given,
-    which stays in place until the client has read it (the caller waits
-    for the client's own line and takes the marker down; the supervisor
-    reports the client running seconds before Python has finished
-    importing). Returns the log offset from before the start."""
+    and under the no-hunt marker when hunt is False. A marker stays in
+    place until the client has read it (the client takes it down; the
+    caller waits for the client's own line and takes it down as well if
+    the start failed - the supervisor reports the client running seconds
+    before Python has finished importing). Returns the log offset from
+    before the start."""
     fc = ctx.forgectrl
     st, m = fc.get("/mode")
     ctx.check(st == 200 and isinstance(m, dict), "GET /mode -> %s", st)
     offset = log_size(GFCLOUD_LOG)
     if marker:
-        with open(marker, "w") as f:
-            f.write("forgetest %s\n" % ctx.test.id)
+        marker_on(ctx, marker)
+    if not hunt:
+        marker_on(ctx, NOHUNT_MARKER)
     if m.get("mode") == "cloud":
         ctx.log("cloud mode: restarting the client%s (was pid %s)", who, m.get("pid"))
         st, body = fc.post("/controller/stop")
@@ -766,17 +819,22 @@ def enter_emulator(ctx):
 
 
 def leave_emulator(ctx):
-    """The real client back, its session waited for and its connect-time
-    hunt waited out, so the machine is what the next test expects."""
+    """The real client back without its connect-time hunt (nothing moved
+    while the emulator had the session, and a test that prints hunts
+    first regardless), its session waited for, so the machine is what
+    the next test expects."""
     offline_marker_off(ctx)
-    offset = restart_client(ctx, who=" with the machine")
+    offset = restart_client(ctx, who=" with the machine, no hunt", hunt=False)
+    try:
+        got = wait_log(ctx, offset, [NOHUNT_MARK], 60)
+        ctx.check(got[NOHUNT_MARK], "the real client did not come up without the hunt within 60 s")
+    finally:
+        offline_marker_off(ctx)
     session = wait_session(ctx, offset)
     ctx.check(session_established(session), "the real client did not establish its session after the emulator")
-    hunt = wait_action_finished(ctx, offset, "hunt", HUNT_TIMEOUT_S)
-    ctx.check(hunt, "the real client's connect-time hunt did not finish within %d s", HUNT_TIMEOUT_S)
     ctx.check(wait_quiet(ctx, offset), "the service was still moving the head %d s after the real "
               "client came back", QUIET_TIMEOUT_S)
-    ctx.log("the machine is back under the real client")
+    ctx.log("the machine is back under the real client, no hunt")
 
 
 def enter_offline(ctx):

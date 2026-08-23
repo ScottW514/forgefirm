@@ -171,9 +171,10 @@ class CloudSuiteTests(unittest.TestCase):
         cloud.Offline = FakeOffline
         cloud.OFFLINE_MARKER = os.path.join(self.tmp, "offline-marker")
         cloud.JOB_DIR = os.path.join(self.tmp, "jobs")
-        self.saved_emu = (cloud.EMULATE_MARKER, cloud.EMULATOR_WORK)
+        self.saved_emu = (cloud.EMULATE_MARKER, cloud.EMULATOR_WORK, cloud.NOHUNT_MARKER)
         cloud.EMULATE_MARKER = os.path.join(self.tmp, "emulate-marker")
         cloud.EMULATOR_WORK = os.path.join(self.tmp, "emu-work")
+        cloud.NOHUNT_MARKER = os.path.join(self.tmp, "nohunt-marker")
         FakeOffline.sent = []
         FakeOffline.on_send = None
         self.engine_line = EFFECTIVE_LINE      # what the engine logs at the print; None = nothing
@@ -192,7 +193,7 @@ class CloudSuiteTests(unittest.TestCase):
         (cloud.GFCLOUD_LOG, cloud.FORGECTRL_LOG, cloud.QUIET_S, cloud.QUIET_TIMEOUT_S,
          cloud.HUNT_TIMEOUT_S, cloud.GFHOME_LOG, cloud.Offline, cloud.OFFLINE_MARKER,
          cloud.JOB_DIR) = self.saved
-        (cloud.EMULATE_MARKER, cloud.EMULATOR_WORK) = self.saved_emu
+        (cloud.EMULATE_MARKER, cloud.EMULATOR_WORK, cloud.NOHUNT_MARKER) = self.saved_emu
         os.environ.pop("GF_SYSFS_ROOT", None)
         os.environ.pop("GF_LEDS_ROOT", None)
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -223,6 +224,12 @@ class CloudSuiteTests(unittest.TestCase):
 
     def lid(self, closed):
         self.fc.state["status"]["switches"]["lid"] = bool(closed)
+
+    def hunted(self, pid):
+        """The running client homed the machine under the service (a test
+        that prints reuses only such a session)."""
+        self.append(["2026-08-17T09:41:20.000000+00:00 gfcloud[%d] INFO basemachine:_finish_action hunt "
+                     "[1578200001]: finished with event \":completed\"" % pid])
 
     def in_offline(self, pid=3100):
         """Cloud mode with the offline service already up (its mark is the
@@ -283,11 +290,12 @@ class CloudSuiteTests(unittest.TestCase):
                  "47848 byte body",
                  "2026-08-22T23:51:02.000000+00:00 gfcloud[4100] INFO basemachine:_finish_action print [1578300003]: "
                  "finished with event \":completed\""]
-    REAL_BACK = ["2026-08-22T23:52:02.000000+00:00 gfcloud[4200] INFO authentication:authenticate_machine SUCCESS",
+    REAL_BACK = ["2026-08-22T23:52:01.000000+00:00 gfcloud[4200] INFO ffmachine:inhibit_connect_hunt NO-HUNT: the "
+                 "first settings report in the reconnect form; the service keeps its head position, no "
+                 "connect-time hunt",
+                 "2026-08-22T23:52:02.000000+00:00 gfcloud[4200] INFO authentication:authenticate_machine SUCCESS",
                  "2026-08-22T23:52:03.000000+00:00 gfcloud[4200] INFO websocket:ws_connect ESTABLISHED",
-                 "2026-08-22T23:52:03.500000+00:00 gfcloud[4200] INFO websocket:_on_open RX-EVENT: ready",
-                 "2026-08-22T23:52:15.000000+00:00 gfcloud[4200] INFO basemachine:_finish_action hunt [1578300010]: "
-                 "finished with event \":completed\""]
+                 "2026-08-22T23:52:03.500000+00:00 gfcloud[4200] INFO websocket:_on_open RX-EVENT: ready"]
 
     def emulator_setup(self, print_lines=None, info=True):
         self.in_cloud(pid=2278)
@@ -298,7 +306,7 @@ class CloudSuiteTests(unittest.TestCase):
             if path == "/controller/stop":
                 self.fc.state["mode"] = dict(self.fc.state["mode"], controller="standby", pid=0)
             elif path == "/controller/start":
-                starts.append(os.path.exists(cloud.EMULATE_MARKER))
+                starts.append((os.path.exists(cloud.EMULATE_MARKER), os.path.exists(cloud.NOHUNT_MARKER)))
                 if len(starts) == 1:
                     self.fc.state["mode"] = dict(self.fc.state["mode"], controller="running", pid=self.EMU_PID)
                     self.append(self.EMU_START, delay=0.2)
@@ -320,8 +328,11 @@ class CloudSuiteTests(unittest.TestCase):
         starts, hooks = self.emulator_setup()
         run = self.run_test(cloud.service_protocol, hooks=hooks, test_id="cloud.service-protocol")
         ev = run.evidence
-        self.assertEqual(starts, [True, False])            # emulator under the marker, the real client without
+        # the emulator under its marker with the hunt; the real client back without the hunt
+        self.assertEqual(starts, [(True, False), (False, True)])
         self.assertFalse(os.path.exists(cloud.EMULATE_MARKER))
+        self.assertFalse(os.path.exists(cloud.NOHUNT_MARKER))
+        self.assertTrue(any("no hunt" in l for l in run.lines), run.lines[-5:])
         self.assertEqual([p for p, _ in self.fc.posts],
                          ["/controller/stop", "/controller/start", "/controller/stop", "/controller/start"])
         self.assertIn(":completed", ev["hunt"])
@@ -336,7 +347,25 @@ class CloudSuiteTests(unittest.TestCase):
         failed = [l.replace(':completed"', ':failed"') for l in self.EMU_PRINT]
         starts, hooks = self.emulator_setup(print_lines=failed)
         self.assertFails(cloud.service_protocol, "did not complete", hooks=hooks)
-        self.assertEqual(starts, [True, False])            # the real client came back regardless
+        self.assertEqual(starts, [(True, False), (False, True)])   # the real client came back regardless
+
+    def test_markers_the_client_consumed_are_not_missed(self):
+        # gfcloud takes a marker it read down itself; the suite's own removal is then a no-op
+        starts, hooks = self.emulator_setup()
+        on_post = self.fc.on_post
+
+        def consuming(path, form):
+            r = on_post(path, form)
+            if path == "/controller/start":
+                for p in (cloud.EMULATE_MARKER, cloud.NOHUNT_MARKER):
+                    if os.path.exists(p):
+                        os.remove(p)
+            return r
+        self.fc.on_post = consuming
+        run = self.run_test(cloud.service_protocol, hooks=hooks, test_id="cloud.service-protocol")
+        self.assertEqual(starts, [(True, False), (False, True)])
+        self.assertTrue(any("PASS: session, hunt" in l for l in run.lines), run.lines[-5:])
+        self.assertFalse(any("marker removed" in l for l in run.lines), run.lines)
 
     def test_the_emulators_session_is_not_the_machines(self):
         self.append(self.EMU_START + ["2026-08-22T23:50:07.000000+00:00 gfcloud[4100] INFO websocket:_on_open "
@@ -451,6 +480,50 @@ class CloudSuiteTests(unittest.TestCase):
         self.assertTrue(any("reusing it" in l for l in run.lines), run.lines)
         self.assertEqual(self.fc.posts, [])
         self.assertEqual(run.baseline_captured["mode"], "cloud")
+
+    NOHUNT_CLIENT = ["2026-08-22T23:52:01.000000+00:00 gfcloud[4200] INFO ffmachine:inhibit_connect_hunt NO-HUNT: the "
+                     "first settings report in the reconnect form; the service keeps its head position, no "
+                     "connect-time hunt",
+                     "2026-08-22T23:52:02.000000+00:00 gfcloud[4200] INFO authentication:authenticate_machine SUCCESS",
+                     "2026-08-22T23:52:03.000000+00:00 gfcloud[4200] INFO websocket:ws_connect ESTABLISHED",
+                     "2026-08-22T23:52:03.500000+00:00 gfcloud[4200] INFO websocket:_on_open RX-EVENT: ready"]
+
+    def test_session_hunted_is_the_clients_own_hunt(self):
+        self.append(fixture("huntlid"))
+        self.assertTrue(cloud.session_hunted(2278))           # its connect-time hunt completed
+        self.assertFalse(cloud.session_hunted(9999))          # no lines: unknown is not hunted
+        self.append(self.NOHUNT_CLIENT)
+        self.assertTrue(cloud.session_live(4200)[0])
+        self.assertFalse(cloud.session_hunted(4200))          # live, never hunted
+        self.append(self.EMU_START)
+        self.assertFalse(cloud.session_hunted(4100))          # the emulator's hunt is not the machine's
+        # a later re-hunt (the lid closed) makes a no-hunt client hunted
+        self.append(["2026-08-22T23:55:00.000000+00:00 gfcloud[4200] INFO basemachine:_finish_action hunt [1578300020]: "
+                     "finished with event \":completed\""])
+        self.assertTrue(cloud.session_hunted(4200))
+
+    def test_enter_cloud_restarts_a_live_session_that_never_hunted_with_the_hunt(self):
+        # the real print must not ride a head position the service only believes
+        self.in_cloud(pid=4200)
+        self.append(fixture("huntlid") + self.NOHUNT_CLIENT)
+        lines = fixture("huntlid")
+        _, post = cut(lines, "gfuiservice:__init__ INITIALIZED")
+        starts = []
+
+        def on_post(path, form):
+            if path == "/controller/stop":
+                self.fc.state["mode"] = dict(self.fc.state["mode"], controller="standby", pid=0)
+            elif path == "/controller/start":
+                starts.append(os.path.exists(cloud.NOHUNT_MARKER))
+                self.fc.state["mode"] = dict(self.fc.state["mode"], controller="running", pid=2278)
+                self.append(post, delay=0.2)
+            return None
+        self.fc.on_post = on_post
+        run = self.run_test(lambda ctx: cloud.enter_cloud(ctx))
+        self.assertEqual([p for p, _ in self.fc.posts], ["/controller/stop", "/controller/start"])
+        self.assertEqual(starts, [False])                     # with the hunt: no marker
+        self.assertTrue(any("never hunted" in l for l in run.lines), run.lines)
+        self.assertTrue(any("connect-time hunt" in l and ":completed" in l for l in run.lines), run.lines)
 
     def test_enter_cloud_refuses_a_dead_session(self):
         self.in_cloud(pid=1927)                 # the client that shut down in the excerpt
@@ -610,6 +683,7 @@ class CloudSuiteTests(unittest.TestCase):
 
     def test_pause_resume_passes_on_the_machines_lines(self):
         self.in_cloud(pid=1522)
+        self.hunted(1522)
         self.append(["2026-08-17T09:41:00.000000+00:00 gfcloud[1522] INFO authentication:authenticate_machine SUCCESS",
                      "2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready",
                      "2026-08-17T09:41:00.900000+00:00 gfcloud[1522] INFO websocket:ws_connect ESTABLISHED"])
@@ -636,6 +710,7 @@ class CloudSuiteTests(unittest.TestCase):
     def test_pause_resume_fails_when_the_client_names_no_header_limits(self):
         self.client_limits = False
         self.in_cloud(pid=1522)
+        self.hunted(1522)
         self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
         hooks = self.replay_print("pause", "the press pauses the print", "current state: MachineState.IDLE")
         self.fc.state["cool"]["armed"] = True
@@ -644,6 +719,7 @@ class CloudSuiteTests(unittest.TestCase):
     def test_pause_resume_fails_when_the_engine_resolves_against_no_header(self):
         self.engine_line = EFFECTIVE_LINE.replace("header 33.0", "header none 0.0")
         self.in_cloud(pid=1522)
+        self.hunted(1522)
         self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
         hooks = self.replay_print("pause", "the press pauses the print", "current state: MachineState.IDLE")
         self.fc.state["cool"]["armed"] = True
@@ -651,6 +727,7 @@ class CloudSuiteTests(unittest.TestCase):
 
     def test_pause_resume_fails_when_the_print_is_cancelled_instead(self):
         self.in_cloud(pid=1522)
+        self.hunted(1522)
         self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
         lines = fixture("pause")
         lines = [l.replace('print [1576550507]: finished with event ":completed"',
@@ -665,6 +742,7 @@ class CloudSuiteTests(unittest.TestCase):
         """The second press was seen but the retraced restart never logged
         (the app's resume is its own line now): the failure names that."""
         self.in_cloud(pid=1522)
+        self.hunted(1522)
         self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
         lines = [l for l in fixture("pause") if "resuming (laser lead" not in l]
         pre, rest = cut(lines, "current state: MachineState.RUNNING")
@@ -676,6 +754,7 @@ class CloudSuiteTests(unittest.TestCase):
 
     def test_pause_resume_fails_when_the_kernel_refuses_the_resume(self):
         self.in_cloud(pid=1522)
+        self.hunted(1522)
         self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
         lines = [l.replace("machine:_resume_retraced resuming (laser lead 1950 ticks)",
                            "machine:_resume_retraced resume refused ([Errno 22] Invalid argument); cancelling")
@@ -706,6 +785,7 @@ class CloudSuiteTests(unittest.TestCase):
 
     def test_pause_resume_fails_without_the_pause_line(self):
         self.in_cloud(pid=1522)
+        self.hunted(1522)
         self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
         lines = [l for l in fixture("pause") if "button pressed mid-run" not in l]
         pre, rest = cut(lines, "current state: MachineState.RUNNING")
