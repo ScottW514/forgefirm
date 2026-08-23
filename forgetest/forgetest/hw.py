@@ -26,13 +26,28 @@ class HwError(Exception):
 
 # ------------------------------------------------------------ forgectrl
 
+# The supervisor's levers answer only when the switch is done: a mode
+# switch waits for the old controller to exit, the new one to start (a
+# pending liveness probe first) and its first job-state report (up to
+# 15 s; the emulator's comes with its start, a real client's with its
+# machine); a stop waits for the child to go. They get their own timeout,
+# above the daemon's own deadlines, so a slow but honest switch is never
+# read as a dead daemon.
+SLOW_PATHS = ("/mode", "/controller/start", "/controller/stop")
+SLOW_TIMEOUT_S = 120.0
+
+
 class Forgectrl:
     """Thin client for the machine-services daemon."""
 
-    def __init__(self, base=None, token=None, timeout=10.0):
+    def __init__(self, base=None, token=None, timeout=10.0, slow_timeout=SLOW_TIMEOUT_S):
         self.base = (base or os.environ.get("FORGECTRL_URL") or "http://127.0.0.1:8080").rstrip("/")
         self.timeout = timeout
+        self.slow_timeout = slow_timeout
         self._token = token
+
+    def timeout_for(self, method, path):
+        return self.slow_timeout if method == "POST" and path in SLOW_PATHS else self.timeout
 
     @property
     def token(self):
@@ -71,7 +86,7 @@ class Forgectrl:
             hdrs.setdefault("X-ForgeFIRM-Token", self.token)
         req = urllib.request.Request(url, data=body, method=method, headers=hdrs)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(req, timeout=self.timeout_for(method, path)) as resp:
                 status = resp.status
                 content = resp.read()
                 ctype = resp.headers.get("Content-Type", "")
