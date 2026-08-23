@@ -253,9 +253,9 @@ during the run is those steps, taken in turn, in one of four forms:
   manages: the wording is the action's own, the test adds its context,
   the machine's reading proves it done, and the result's
   `evidence.actions` records each one with who performed it. This is the
-  seam a bench actuator plugs into: a runner `fixture` covering a channel
-  performs the action instead of the notice, and a test reads the same
-  either way;
+  seam the bench actuator plugs into (below): a `fixture` covering a
+  channel performs the action instead of the notice, and a test reads
+  the same either way;
 - a **confirm** is a yes/no the evidence cannot answer. One is left in
   the catalog: the mark `laser.emission-witness` leaves on the scrap, the
   once-per-campaign calibration of the sensor witnesses (the head's beam
@@ -263,6 +263,42 @@ during the run is those steps, taken in turn, in one of four forms:
   own display in `cloud.pause-resume`. The head accelerometer stands in
   for "did the gantry move", the button LEDs for "is the button dark",
   the lid lamp toggled between two snapshots for "is the camera live".
+
+### The bench actuator
+
+`forgefixture` (`fixture/`, its own README) is an ESP32-S3 on the bench
+network driving three relays at the machine's connectors: a normally
+closed contact in the lid-switch loop, another in the interlock loop, a
+normally open contact across the button input that is only ever pulsed.
+Unpowered, unplugged or rebooting, it leaves a stock machine. The tool
+finds it through `/data/forgetest/fixture.json` (bench-local, mode
+0600: the hostname, the API key, an optional `ip` override, the
+`channels` wired, `arm_press`), resolves `<hostname>.local` itself (the
+image carries no mDNS resolver), and probes it before every run and at
+most every 30 s otherwise. What holds:
+
+- **Every action is still proven by the machine.** The fixture does not
+  read the switches; `ctx.act` asks it and then waits for forgectrl's
+  reading exactly as it waits for an operator's hand. An action the box
+  fails to perform falls back to the operator's notice, and the record
+  says so (`evidence.actions[].by`, `fixture_error`).
+- **An operator test the fixture can run alone runs unattended.** A test
+  declares its actions and, with `hands=(...)`, whatever else it asks of
+  a person ("app" for a job in the Glowforge app). An `operator` test
+  whose actions the fixture covers and whose `hands` are empty is routed
+  into the unattended queue and out of the attended one; its Ready gates
+  pass (the fixture performs the timed step), and a prompt it raises
+  anyway is a FAIL naming the undeclared step, never a wait for nobody.
+  `live` never moves: the fire watch and the acknowledgment are a
+  person's.
+- **The button channel needs the jumper.** With the fixture's enable
+  jumper out the button is not covered, and tests that press it stay
+  attended. The arm press of a live test stays a person's unless the
+  bench config says `arm_press: true`: then, and only with the jumper in,
+  the fixture presses when the button lights, recorded as its own.
+- **What the box still holds after a run is released** and recorded
+  (`evidence.fixture.released`), before the baseline's post pass, so a
+  lid left open by a failed test never reaches the next one.
 
 ### Every run starts from, and leaves, the fresh-boot idle state
 

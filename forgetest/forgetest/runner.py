@@ -49,6 +49,7 @@ import traceback
 from . import artifact as _artifact
 from . import baseline as _baseline
 from . import campaign as _campaign
+from . import fixture as _fixture
 from . import catalog as _catalog
 from . import hw
 from .log import now_ts, data_dir
@@ -64,6 +65,11 @@ BATCH_GROUPS = {
     "unattended": ("auto",),
     "attended": ("operator", "live"),
 }
+
+# A bench actuator (fixture.py) moves an operator test whose actions it
+# covers into the unattended queue. The probe that decides is one GET;
+# it is repeated at most this often, and before every run.
+FIXTURE_PROBE_S = 30.0
 
 
 class Aborted(Exception):
@@ -124,6 +130,7 @@ class Run:
         self.prompt = None        # {"id","question","options"}
         self.notice = None        # {"id","text"}: a standing instruction, no button
         self.answers = []
+        self.unattended = False   # a fixture-run test: no prompt can be answered
         self.evidence = {}
         self.baseline_captured = None   # preserved state the post pass hands back
         self.aborted = threading.Event()
@@ -156,6 +163,9 @@ class Run:
 
     # -- prompt channel -----------------------------------------------
     def ask(self, question, options):
+        if self.unattended:
+            raise Failed("the test asked a person (%r) while running unattended with the fixture: "
+                         "declare the step in hands=... so the test stays in the attended queue" % question)
         with self._cv:
             self._prompt_seq += 1
             pid = "p%d" % self._prompt_seq
@@ -258,7 +268,12 @@ class Context:
     def ready(self, text):
         """Pre-announce a timed step: what happens when the operator
         clicks Ready and what they do during it. Returns on the click;
-        the test then starts the thing and watches the machine."""
+        the test then starts the thing and watches the machine. With the
+        fixture performing the step (the run is unattended) there is
+        nobody to announce it to: the gate passes at once, logged."""
+        if self.run.unattended:
+            self.log("READY (fixture performs the step): %s", text)
+            return
         ans = self.prompt(text, ("Ready", "Cannot"))
         if ans != "Ready":
             raise Failed("operator could not: %s" % text)
@@ -320,7 +335,15 @@ class Context:
         if fixture is not None and fixture.covers(channel):
             self.log("ACT %s %s (fixture)", channel, state)
             rec["by"] = "fixture"
-            fixture.act(channel, state)
+            try:
+                fixture.act(channel, state)
+            except _fixture.FixtureError as e:
+                # the box did not do it: the operator is asked instead,
+                # and the record says so
+                self.log("ACT %s %s: fixture failed (%s) - asking the operator", channel, state, e)
+                rec["by"] = "operator"
+                rec["fixture_error"] = str(e)
+                self.notice(wording)
         else:
             self.notice(wording)
         try:
@@ -336,6 +359,43 @@ class Context:
             return None
         self.log("ACT %s %s: done after %.1f s", channel, state, dt)
         return dt
+
+    def arm_press(self, text="The button lights white: press it to arm. The machine fires after your press."):
+        """The arm cue of a live test. A person's press by default: a
+        standing notice until the caller clears it. The fixture presses
+        only where the bench opted in (arm_press in its config) and its
+        button channel is enabled: a thread waits for the button to light
+        (the job may still be on its way to the arm wait) and presses
+        once, recorded as the fixture's; if the button never lights or
+        the press fails, the notice goes up for a person. Returns True
+        when the fixture has been asked."""
+        fixture = getattr(self.runner, "fixture", None) if self.runner is not None else None
+        rec = {"channel": "button", "state": "arm", "by": "operator", "ts": now_ts()}
+        self.evidence.setdefault("actions", []).append(rec)
+        if not (fixture is not None and fixture.arm_press and fixture.covers("button")):
+            self.notice(text)
+            return False
+        self.log("ARM: the fixture presses when the button lights (the bench's arm_press opt-in)")
+
+        def press():
+            lit = self.wait_for(hw.button_lit, 60)
+            if lit is None:
+                self.log("ARM: the button never lit within 60 s - asking the operator")
+                self.notice(text)
+                return
+            try:
+                fixture.act("button", "press")
+            except _fixture.FixtureError as e:
+                self.log("ARM press: fixture failed (%s) - asking the operator", e)
+                rec["fixture_error"] = str(e)
+                self.notice(text)
+                return
+            rec["by"] = "fixture"
+            rec["took_s"] = round(lit, 2)
+            self.log("ARM press by the fixture, button lit after %.1f s", lit)
+
+        threading.Thread(target=press, daemon=True, name="forgetest-arm-press").start()
+        return True
 
     # -- hardware ------------------------------------------------------
     @property
@@ -473,7 +533,8 @@ class Runner:
         self.current = None
         self.last = None
         self.batch = None
-        self.fixture = None       # the bench actuator, when one is configured (none yet)
+        self.fixture = None       # the bench actuator, when one is up (fixture.py)
+        self._fixture_probed = 0.0
         self.boot_ref = None
         self.recover()
         threading.Thread(target=self._take_boot_reference, daemon=True,
@@ -491,6 +552,47 @@ class Runner:
         r = self.current
         if r is not None and not r.finished:
             r.log(msg)
+
+    # -- the bench actuator ------------------------------------------------
+    def probe_fixture(self, force=False):
+        """The fixture, up and answering, or None; re-probed at most every
+        FIXTURE_PROBE_S unless forced (before a run). A probe that finds
+        it gone, or a config that appeared, changes the queues' routing
+        from then on."""
+        now = time.time()
+        if not force and now - self._fixture_probed < FIXTURE_PROBE_S:
+            return self.fixture
+        self._fixture_probed = now
+        had = self.fixture
+        fx = _fixture.probe(self._note if had is None else (lambda m: None))
+        if fx is None and had is not None:
+            self._note("fixture: %s no longer answers - running without it" % had.hostname)
+        self.fixture = fx
+        return fx
+
+    def fixture_channels(self):
+        """The channels the fixture covers right now (the button only
+        with its enable jumper in)."""
+        fx = self.probe_fixture()
+        if fx is None:
+            return ()
+        return tuple(c for c in fx.channels if fx.covers(c))
+
+    def fixture_release(self, run):
+        """After a run: any channel the fixture still holds energized is
+        released and recorded, like any other leftover."""
+        fx = self.fixture
+        if fx is None:
+            return
+        try:
+            held = fx.energized(fx.status())
+            if held:
+                fx.release()
+                run.log("fixture: released %s left energized" % ", ".join(held))
+            run.evidence.setdefault("fixture", {})["released"] = held
+        except _fixture.FixtureError as e:
+            run.log("fixture: release check failed: %s" % e)
+            run.evidence.setdefault("fixture", {})["release_error"] = str(e)
 
     # -- startup recovery ------------------------------------------------
     def recover(self):
@@ -532,6 +634,8 @@ class Runner:
         # what each queue would run if started now, so the page can label
         # its buttons with the work rather than a bare verb
         st["batch_available"] = {g: self.batch_selection(g, st) for g in BATCH_GROUPS}
+        fx = self.fixture
+        st["fixture"] = fx.summary() if fx is not None else None
         return st, records
 
     def busy(self):
@@ -605,6 +709,16 @@ class Runner:
             self.last = self.current
             self.current = run
         run.log("start %s (%s, %s) in campaign %s" % (t.id, t.kind, t.hardware, campaign["id"]))
+        fx = self.probe_fixture(force=True)
+        if fx is not None:
+            run.log("fixture: %s at %s covers %s" % (fx.hostname, fx._ip, ", ".join(self.fixture_channels())))
+            run.evidence["fixture"] = {"hostname": fx.hostname, "ip": fx._ip,
+                                       "channels": list(self.fixture_channels())}
+            # nobody is expected in the room for a test the fixture runs
+            # in the unattended queue: a prompt there is a defect, not a wait
+            if batch is not None and batch.get("group") == "unattended" and t.kind != "auto":
+                run.unattended = True
+                run.log("fixture: running unattended (no prompt can be answered)")
         if missing:
             run.log("prerequisites overridden by the operator - not satisfied: %s" % ", ".join(missing))
             run.evidence["prerequisites"] = {"overridden": True, "missing": missing, "ts": now_ts()}
@@ -633,8 +747,13 @@ class Runner:
         if state is None:
             state, _ = self.state()
         tests = self.tests()
+        # an operator test the fixture can run alone goes to the
+        # unattended queue and leaves the attended one
+        channels = self.fixture_channels()
+        routed = set(t.id for t in tests if channels and t.fixture_runnable(channels))
         want = [t.id for t in tests
-                if t.kind in kinds and not state["tests"][t.id]["satisfied"]]
+                if ((t.kind in kinds and t.id not in routed) or (group == "unattended" and t.id in routed))
+                and not state["tests"][t.id]["satisfied"]]
         return _catalog.order_by_requires(tests, want)
 
     def start_batch(self, group, ack_live=False, ignore_requires=False):
@@ -775,6 +894,7 @@ class Runner:
         except Exception as e:  # noqa: BLE001 - an erroring test is a failed test
             result, message = _campaign.ERROR, "%s: %s" % (type(e).__name__, e)
             run.log(traceback.format_exc().rstrip())
+        self.fixture_release(run)
         try:
             self._baseline_post(run, captured)
         except Exception as e:  # noqa: BLE001 - never lose the result over the cleanup

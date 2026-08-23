@@ -641,6 +641,20 @@ until `releases/v<version>/acceptance.json` is committed.
 
 ## Hardware facts bank (measured)
 
+- **The bench actuator's wiring** (`fixture/README.md` for the box itself).
+  Three 3.3 V optocoupler relay modules, high-level trigger, coils from the
+  machine's 3.3 V (about 100 mA each), inputs from the ESP32-S3 DevKitC-1's
+  GPIO 4 (lid), 5 (interlock), 6 (button), the button's enable jumper on
+  GPIO 7 to GND. The lid contact (NC) goes in series with the lid-switch
+  loop at J4.12/13; the button contact (NO) across the front button input
+  at J5 (BTN and its 12 V); the interlock contact (NC) in the remote
+  interlock loop, which SAFETY.md places on J8 and the sister project's
+  connector map on J6 (J8 being Y1's coils there): **to be settled at the
+  bench before the harness is made.** The DevKit and the machine share a
+  ground through the modules, so the DevKit is powered from a USB wall
+  adapter. The interposer harness itself is bench-local and is not
+  described in any repository.
+
 - **The factory's envelope, decoded** (firmware 2.6.0-2228, the 23 captured
   headers, this board's own factory logs). The pulse header is the job's
   operating envelope and the factory refuses to cut without it: 29 tags are
@@ -1169,8 +1183,16 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     `/run/gfcloud-nohunt` (`gfcloud --no-hunt`, the first settings report in
     the reconnect form), while the two homing tests and the one real print
     get theirs, the print by never reusing a session that has not hunted
-    the machine itself (the contract's cloud split in ACCEPTANCE.md). A bench
-    actuator for the lid, interlock and button is planned, not started. Catalog
+    the machine itself (the contract's cloud split in ACCEPTANCE.md). The
+    coverage maps follow the split (a sign-in change re-requires the
+    protocol test and the print, a feeder change the offline tests and the
+    print, a doc edit nothing), and the bench actuator `forgefixture`
+    (`fixture/`: ESP32-S3, three relays, the `ctx.act` seam, an operator
+    test it covers routed into the unattended queue) is written and
+    host-proven (the firmware builds in the pinned ESP-IDF container, the
+    policy and the tool's client have host tests) and **owed its bench
+    proof**: the harness at the machine's connectors, then a campaign with
+    it up. Catalog
     gaps left from the tool's own plan: `cooling.confirm-escalate` and
     `cooling.fire-gate-blocks-arm` are not ported (both need the pump switched
     by hand mid-run, so they are bench-tab material first), and whether

@@ -40,7 +40,7 @@ REGISTRY = {}
 class Test:
     def __init__(self, id, title, subsystem, kind, hardware, covers, requires,
                  always, est_min, steps, description, fn, mode=None, actions=(),
-                 precheck=None):
+                 precheck=None, hands=()):
         self.id = id
         self.title = title
         self.subsystem = subsystem
@@ -53,6 +53,7 @@ class Test:
         self.est_min = est_min
         self.steps = tuple(steps)
         self.actions = tuple(actions)
+        self.hands = tuple(hands)
         self.precheck = precheck
         self.description = description or (fn.__doc__ or "").strip()
         self.fn = fn
@@ -102,8 +103,19 @@ class Test:
         d = self.definition()
         d.update({"title": self.title, "est_min": self.est_min, "mode": self.mode,
                   "steps": list(self.steps), "actions": list(self.actions),
-                  "precheck": bool(self.precheck), "description": self.description})
+                  "hands": list(self.hands), "precheck": bool(self.precheck),
+                  "description": self.description})
         return d
+
+    def fixture_runnable(self, channels):
+        """Whether a bench actuator covering `channels` lets this test
+        run with nobody in the room: an operator test whose every action
+        is a covered channel and which asks a person for nothing else. A
+        live test never qualifies (the arm press and the fire watch are
+        a person's); an auto test needs no fixture."""
+        if self.kind != "operator" or self.hands or not self.actions:
+            return False
+        return all(a in channels for a in self.actions)
 
     def cannot_start(self):
         """The reason the test cannot start on the machine as it is, or
@@ -174,7 +186,7 @@ def implementation_sha(path, test_id):
 
 def test(id, *, title, subsystem, kind="auto", hardware="api", mode=None, covers=(),
          requires=(), always=False, est_min=1, steps=(), description="", actions=(),
-         precheck=None):
+         precheck=None, hands=()):
     """`mode` names the controller mode the test needs live when it starts
     ("grbl" or "cloud"); the runner switches the machine there before the
     test and leaves it there, so a queue crosses modes only where a test
@@ -183,9 +195,13 @@ def test(id, *, title, subsystem, kind="auto", hardware="api", mode=None, covers
     which also waits for the service session).
 
     `actions` names the machine actions (ACTIONS) the test performs
-    through Context.act; an `auto` test declares none. `precheck` is a
-    callable returning a reason string when the machine cannot run the
-    test as it is (None when it can)."""
+    through Context.act; an `auto` test declares none. `hands` names what
+    the test asks of a person beyond those actions ("app" for a job in
+    the Glowforge app, "scrap", "mark" for an eye on the result...): an
+    operator test with none, whose actions a bench actuator covers, runs
+    unattended when one is up. `precheck` is a callable returning a
+    reason string when the machine cannot run the test as it is (None
+    when it can)."""
     if not _ID_RX.match(id):
         raise ValueError("test id %r must look like subsystem.name" % id)
     if kind not in KINDS:
@@ -202,6 +218,8 @@ def test(id, *, title, subsystem, kind="auto", hardware="api", mode=None, covers
             raise ValueError("test %s: action %r" % (id, a))
     if actions and kind == "auto":
         raise ValueError("test %s: an auto test asks for no machine actions" % id)
+    if hands and kind == "auto":
+        raise ValueError("test %s: an auto test asks nothing of a person" % id)
     if precheck is not None and not callable(precheck):
         raise ValueError("test %s: precheck must be callable" % id)
 
@@ -210,7 +228,7 @@ def test(id, *, title, subsystem, kind="auto", hardware="api", mode=None, covers
             raise ValueError("duplicate test id %r" % id)
         REGISTRY[id] = Test(id, title, subsystem, kind, hardware, covers, requires,
                             always, est_min, steps, description, fn, mode=mode,
-                            actions=actions, precheck=precheck)
+                            actions=actions, precheck=precheck, hands=hands)
         return fn
     return deco
 

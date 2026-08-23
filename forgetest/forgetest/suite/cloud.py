@@ -385,7 +385,7 @@ def mode_switch(ctx):
                                        "machine's identity",
       subsystem="cloud", kind="operator", est_min=5,
       covers=_SERVICE_LAYER,
-      requires=["forgectrl.auth"],
+      requires=["forgectrl.auth"], hands=["app"],
       steps=["Cloud credentials configured; the machine on the network; the app open in a browser "
              "(anyone can drive it, at the machine or not: nothing here moves, arms, or fires).",
              "When told, set up any small job in the app and press Print; the emulator runs it at "

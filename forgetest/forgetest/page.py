@@ -134,10 +134,11 @@ pre#log{background:#1d1e26;color:#d7dae0;font-family:ui-monospace,Consolas,monos
      <button class='pri' id='q-attended' onclick='startBatch("attended")'>Operator and live</button>
      <button class='danger' id='q-stop' onclick='stopBatch()' disabled>Stop the queue</button>
     </div>
-    <div id='qstate'></div><div id='qmsg'></div>
+    <div id='qstate'></div><div id='qmsg'></div><div id='fixture' class='hint'></div>
     <p class='hint'>Each queue takes every test of its kind that the campaign does not
      already count as satisfied, runs them one at a time in prerequisite order, and stops
-     on the first result that is not a PASS. The unattended queue needs nobody in the room.
+     on the first result that is not a PASS. The unattended queue needs nobody in the room;
+     with the bench fixture up, the operator tests it can perform by itself run there too.
      The other one does: it prompts, and it fires the laser. Stop-the-queue cancels what is
      still waiting and lets the run in progress finish; Abort ends that one too.</p>
    </div>
@@ -259,7 +260,15 @@ function render(){if(!state||!catalog)return;
    getting on. Built from the state, so a reload picks the queue back up
    exactly where it is - the queue lives in the runner, not in this tab. */
 var QUEUES=[['unattended','Unattended'],['attended','Operator and live']];
+function renderFixture(){var f=state.fixture,e=$('fixture');if(!e)return;
+ if(!f){setHtml(e,'');return}
+ var ch=(f.channels||[]).filter(function(c){return c!=='button'||f.button_enabled});
+ setHtml(e,'Bench fixture <b>'+esc(f.hostname)+'</b> at '+esc(f.ip||'?')+' (v'+esc(f.version||'?')+') covers <b>'+
+  (ch.length?esc(ch.join(', ')):'nothing')+'</b>'+
+  ((f.channels||[]).indexOf('button')>=0&&!f.button_enabled?' (button disabled: enable jumper out)':'')+
+  '; arm press: '+(f.arm_press?'<b>the fixture</b>':'the operator'))}
 function renderQueue(){var av=state.batch_available||{},b=state.batch,busy=isBusy();
+ renderFixture();
  QUEUES.forEach(function(p){var e=$('q-'+p[0]);if(!e)return;
   var ids=av[p[0]]||[];
   setText(e,ids.length?(p[1]+' ('+ids.length+')'):(p[1]+' (none left)'));

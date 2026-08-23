@@ -153,7 +153,7 @@ def arm_and_fire(ctx, g, room="40 mm +X and +Y", job=None, timeout=240):
     button was never pressed."""
     ctx.ready(ARM_CUE % room)
     stream(g, job or MARK_JOB)
-    ctx.notice("The button lights white: press it to arm. The machine fires after your press.")
+    ctx.arm_press()
     t0 = time.time()
     while time.time() - t0 < timeout:
         ctx.checkpoint()
@@ -355,7 +355,7 @@ def emission_witness(ctx):
         job = ["G91", "G21", "M4", "S400",
                "G1 X20 F600", "G1 Y20 F600", "G1 X-20 F600", "G1 Y-20 F600",
                "M5", "G90", "M2"]
-        ctx.notice("The button lights white: press it to arm. The machine fires after your press.")
+        ctx.arm_press()
         try:
             samples = run_and_sample(ctx, g, job)
         finally:
