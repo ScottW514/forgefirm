@@ -13,8 +13,71 @@ from .. import hw
 from .. import puls
 from ..baseline import read_position, read_program_total
 
-_CLOUD_COVERS = [("forgefirm-app", "**"), ("python3-gfhardware", "**"), ("python3-gfutilities", "**"),
-                 ("forgectrl", "src/super.c"), ("forgectrl", "src/main.c")]
+# Coverage maps of the cloud tests, by what each proves. Globs anchor at
+# the repository root; forgefirm-app and python3-gfhardware are two
+# recipes over the one repository (the same file list under both names),
+# so app paths are named under forgefirm-app and library paths under
+# python3-gfhardware. The one real print keeps the coarse maps: it is
+# the integration and the floor the coverage lint needs, so whatever
+# the finer maps leave out still re-requires it.
+_SUPERVISOR = [("forgectrl", "src/super.c"), ("forgectrl", "src/main.c")]
+_CLOUD_ALL = [("forgefirm-app", "**"), ("python3-gfhardware", "**"), ("python3-gfutilities", "**")] + _SUPERVISOR
+
+# The cloud client's common ground: its entry, the machine glue, the
+# config it starts from, the library's package and identity, the
+# cooling reporter every controller runs, and gfutilities' core.
+_CLIENT = [("forgefirm-app", "forgefirm-app/gfcloud.py"),
+           ("forgefirm-app", "forgefirm-app/ffmachine.py"),
+           ("forgefirm-app", "forgefirm-app/gfhome.conf.sample"),
+           ("python3-gfhardware", "gfhardware/__init__.py"),
+           ("python3-gfhardware", "gfhardware/_common.py"),
+           ("python3-gfhardware", "gfhardware/id.py"),
+           ("python3-gfhardware", "gfhardware/coolsvc.py"),
+           ("python3-gfutilities", "gfutilities/__init__.py"),
+           ("python3-gfutilities", "gfutilities/_common.py"),
+           ("python3-gfutilities", "gfutilities/configuration.py"),
+           ("python3-gfutilities", "gfutilities/device/__init__.py"),
+           ("python3-gfutilities", "gfutilities/device/basemachine.py"),
+           ("python3-gfutilities", "gfutilities/device/settings.py"),
+           ("python3-gfutilities", "gfutilities/service/__init__.py"),
+           ("python3-gfutilities", "gfutilities/service/dispatch.py"),
+           ("python3-gfutilities", "gfutilities/service/websocket.py")]
+
+# The web session: sign-in, the firmware check, the service loop.
+_WEB_SESSION = [("python3-gfutilities", "gfutilities/service/authentication.py"),
+                ("python3-gfutilities", "gfutilities/service/gfuiservice.py")]
+
+# The service protocol, answered by the emulator: the web session, the
+# emulator and its fixtures, no hardware behind it.
+_SERVICE_LAYER = _CLIENT + _WEB_SESSION + [
+    ("python3-gfutilities", "gfutilities/device/emulator.py"),
+    ("python3-gfutilities", "examples/**")] + _SUPERVISOR
+
+# The machine's print behavior under the offline service: the run loop
+# and the hardware it drives, the offline dispatch, the pulse path. Not
+# the web session, not the emulator, not the cameras.
+_MACHINE_RUN = _CLIENT + [
+    ("python3-gfhardware", "gfhardware/machine.py"),
+    ("python3-gfhardware", "gfhardware/feeder.py"),
+    ("python3-gfhardware", "gfhardware/cnc.py"),
+    ("python3-gfhardware", "gfhardware/switches.py"),
+    ("python3-gfhardware", "gfhardware/input/**"),
+    ("python3-gfhardware", "gfhardware/src/evdev.c"),
+    ("python3-gfhardware", "gfhardware/z_axis.py"),
+    ("python3-gfhardware", "gfhardware/leds.py"),
+    ("python3-gfhardware", "gfhardware/cooling.py"),
+    ("python3-gfutilities", "gfutilities/service/offline.py"),
+    ("python3-gfutilities", "gfutilities/puls/**")] + _SUPERVISOR
+
+# The service and the machine on the homing path: the real session, the
+# hunt with its captures and motions, the web-service homing from GRBL
+# mode (gfhome). The whole hardware library, since a hunt drives the
+# cameras, the lens, the switches and the feeder. Not the offline
+# service, not the emulator.
+_HOMING_PATH = _CLIENT + _WEB_SESSION + [
+    ("forgefirm-app", "forgefirm-app/**"),
+    ("python3-gfhardware", "gfhardware/**"),
+    ("python3-gfutilities", "gfutilities/puls/**")] + _SUPERVISOR
 
 GF_LATEST = "/data/forgefirm/gf-latest.json"
 GFCLOUD_LOG = "/data/log/forgefirm/gfcloud/gfcloud.log"
@@ -180,8 +243,8 @@ def gfhome_homing(ctx, ev, g):
 @test("cloud.mode-switch", title="Controller mode switch grbl -> cloud -> grbl, the connect-time hunt "
                                  "with the lid open, and the web-service homing",
       subsystem="cloud", kind="operator", mode="grbl", est_min=10,
-      covers=_CLOUD_COVERS + [("forgectrl", "src/cool.*"), ("forgectrl", "src/airflow.*"),
-                              ("grblhal-glowforge", "src/**")],
+      covers=_HOMING_PATH + [("forgectrl", "src/cool.*"), ("forgectrl", "src/airflow.*"),
+                             ("grblhal-glowforge", "src/**")],
       requires=["forgectrl.auth", "motion.pacing"], actions=["lid"],
       precheck=homing_mode_is_gfcloud,
       steps=["Bed clear; cloud credentials configured and homing_mode = gfcloud; the machine on "
@@ -321,16 +384,7 @@ def mode_switch(ctx):
 @test("cloud.service-protocol", title="The service protocol, answered by the emulator in this "
                                        "machine's identity",
       subsystem="cloud", kind="operator", est_min=5,
-      covers=[("python3-gfutilities", "gfutilities/service/**"),
-              ("python3-gfutilities", "gfutilities/device/basemachine.py"),
-              ("python3-gfutilities", "gfutilities/device/emulator.py"),
-              ("python3-gfutilities", "gfutilities/device/settings.py"),
-              ("python3-gfutilities", "gfutilities/configuration.py"),
-              ("python3-gfutilities", "gfutilities/_common.py"),
-              ("python3-gfutilities", "gfutilities/__init__.py"),
-              ("python3-gfutilities", "examples/**"),
-              ("forgefirm-app", "gfcloud.py"), ("forgefirm-app", "ffmachine.py"),
-              ("forgectrl", "src/super.c")],
+      covers=_SERVICE_LAYER,
       requires=["forgectrl.auth"],
       steps=["Cloud credentials configured; the machine on the network; the app open in a browser "
              "(anyone can drive it, at the machine or not: nothing here moves, arms, or fires).",
@@ -1047,7 +1101,7 @@ def judge_abort_tail(ctx, ev, offset, tag, fin):
 @test("cloud.lid-interlock-abort", title="Lid and interlock each abort a cloud print; the park ignores "
                                          "an open lid",
       subsystem="cloud", kind="live", est_min=11,
-      covers=_CLOUD_COVERS + [("forgectrl", "src/super.c")],
+      covers=_MACHINE_RUN,
       requires=["laser.emission-witness"], actions=["button", "lid", "interlock"],
       steps=[OFFLINE_STEP, ARM_STEP, LID_STEP,
              "The head needs 40 mm of free +X and +Y travel. The test runs TWO prints.",
@@ -1156,7 +1210,7 @@ def lid_interlock_abort_body(ctx, ev, off, job, offset):
 
 @test("cloud.lid-during-button-wait", title="Lid open at the cloud button prompt cancels the print",
       subsystem="cloud", kind="operator", est_min=6,
-      covers=_CLOUD_COVERS, requires=[], actions=["lid"],
+      covers=_MACHINE_RUN, requires=[], actions=["lid"],
       steps=[OFFLINE_STEP, LID_STEP,
              "When the button lights white, do NOT press it - open the lid, and close it when told. "
              "Nothing moves and nothing fires."],
@@ -1216,7 +1270,7 @@ def lid_during_button_wait_body(ctx, ev, off, job, offset):
 
 @test("cloud.pause-resume", title="Button pauses and resumes a cloud print (factory backtrack + lead)",
       subsystem="cloud", kind="live", est_min=8,
-      covers=_CLOUD_COVERS + [("forgectrl", "src/main.c")],
+      covers=_CLOUD_ALL,
       requires=["laser.emission-witness"], actions=["button"],
       steps=[CLOUD_STEP, "The app open; scrap on the bed and a small engrave/score job (about 60 s) ready.",
              "Print from the app and press the button when it lights; a few seconds into the run "
@@ -1327,7 +1381,7 @@ def pause_resume(ctx):
 
 @test("cloud.oversize-stream", title="A print longer than the ring is fed while it plays",
       subsystem="cloud", kind="live", est_min=12,
-      covers=_CLOUD_COVERS,
+      covers=_MACHINE_RUN,
       requires=["cloud.lid-interlock-abort", "cloud.pause-resume"], actions=["button"],
       steps=[OFFLINE_STEP, ARM_STEP,
              "The head needs 40 mm of free +X and +Y travel. The job is an hour of squares, "
@@ -1449,7 +1503,7 @@ def oversize_stream_body(ctx, ev, off, job, offset, before):
 
 @test("cloud.paused-lid-cancel", title="A paused cloud print is cancelled by the lid",
       subsystem="cloud", kind="live", est_min=6,
-      covers=_CLOUD_COVERS, requires=["cloud.pause-resume", "cloud.lid-interlock-abort"],
+      covers=_MACHINE_RUN, requires=["cloud.pause-resume", "cloud.lid-interlock-abort"],
       actions=["button", "lid"],
       steps=[OFFLINE_STEP, ARM_STEP, LID_STEP,
              "The head needs 40 mm of free +X and +Y travel.",
