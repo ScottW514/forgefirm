@@ -212,7 +212,9 @@ def settings_bounds(ctx):
       covers=[("forgectrl", "src/ui.*"), ("forgectrl", "src/ui/**"), ("forgectrl", "src/status.*"),
               ("forgectrl", "src/cam.c"), ("forgectrl", "src/main.c")],
       description="The panel page is served, /status carries the machine telemetry the panel and "
-                  "the acceptance tool read, and /cam/status answers.")
+                  "the acceptance tool read (including the sys block: CPU busy percent over the "
+                  "interval since the previous read, memory used percent), and /cam/status "
+                  "answers.")
 def panel_serves(ctx):
     fc = ctx.forgectrl
     ev = ctx.evidence
@@ -234,6 +236,19 @@ def panel_serves(ctx):
     ctx.log("/status state=%s switches=%s", s.get("state"), s.get("switches"))
     for key in ("lid", "button", "interlock_ok", "head", "hv_enable"):
         ctx.check(key in (s.get("switches") or {}), "/status switches lacks %r", key)
+
+    # SoC utilization rides /status next to the temperatures. The CPU
+    # number is a delta over the interval since the previous read, so
+    # the read above primes it; after a beat both percents must be
+    # numbers in range.
+    ctx.sleep(1)
+    sys_ = ctx.forgectrl.status().get("sys") or {}
+    ev["sys"] = sys_
+    ctx.log("/status sys=%s", sys_)
+    ctx.check(isinstance(sys_.get("cpu_pct"), (int, float)) and 0.0 <= sys_["cpu_pct"] <= 100.0,
+              "/status sys.cpu_pct is not a percent: %s", sys_)
+    ctx.check(isinstance(sys_.get("mem_pct"), (int, float)) and 0.0 < sys_["mem_pct"] < 100.0,
+              "/status sys.mem_pct is not a percent: %s", sys_)
 
     st, cam = fc.get("/cam/status")
     ev["cam_status"] = st
