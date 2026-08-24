@@ -14,11 +14,11 @@ IMAGE_INSTALL += " \
   htop \
 "
 
-# The release recipe removes nano from the shared base list (bench
-# convenience, 8.7 MB with libmagic). A removal applies after every append,
-# so the dev image re-sets the removal list to keep nano instead of adding
-# it back.
-IMAGE_INSTALL:remove = "gfui-client"
+# The release recipe trims nano from the shared base list (bench
+# convenience, 8.7 MB with libmagic); the dev image keeps it. Removal specs
+# accumulate and apply after every append, so the variable inside the
+# release recipe's spec is what gets blanked here.
+FORGEFIRM_RELEASE_TRIM = ""
 
 # debug-tweaks (passwordless root, root SSH login) belongs ONLY to the dev
 # image - never the release image. It lives here, not in the shared kas
