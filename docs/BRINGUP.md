@@ -1446,29 +1446,32 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     are established. A pause on contact, on the factory's shape, would be
     the first use.
 
-20. **Video pipeline offload — bench validation.** Code-complete and
-    host-proven (CI: `mp4mux_test`; catalog: `camera.h264-stream`), not yet
-    run on hardware: the GC880 GLES2 demosaic (`src/gpu_debayer.c`,
-    dlopen'd Mesa, capture dmabuf in, encoder dmabuf out), the CODA960
-    H.264 stream (`/cam/h264`, fragmented MP4, panel MSE player,
-    ~1.5 Mbit/s vs MJPEG's ~9), and the CSI hardware frame skip behind
-    `FORGECTRL_STREAM_FPS`. Falls back to the NEON path wherever a piece
-    is missing, so the existing stream is not at risk. To settle on the
-    bench, in order: (1) the image builds with Mesa etnaviv inside the
-    200 MiB slot cap (distro `PACKAGECONFIG:pn-mesa`, image adds
-    `libegl-mesa libgles2-mesa libgbm mesa-megadriver`); (2) surfaceless
-    EGL comes up and dmabuf import works both directions (the open logs
-    say exactly which probe refused); (3) `FORGECTRL_GPU_CHECK` reports a
-    max delta of a couple of counts against the scalar demosaic;
-    (4) `GL_MAX_TEXTURE_SIZE` covers 1944 rows (5 MP single-tile; the
-    8 MP tiling path can only be exercised on an HD machine or by
-    forcing tiles); (5) coda H.264 rate control and picture quality at
-    1296x972p15, and the measured CPU with a panel H.264 viewer vs the
-    41 % MJPEG baseline; (6) the stream-during-jog coexistence drill
-    rerun with the GPU path active. Switches to strip a suspect layer:
-    `FORGECTRL_NO_GPU`, `FORGECTRL_NO_H264`, `FORGECTRL_NO_HW_SKIP`,
-    plus the existing `FORGECTRL_NO_VPU` / `FORGECTRL_NO_NEON` /
-    `FORGECTRL_NO_CACHED_BUFS`.
+20. **Video pipeline offload — bench validation.** First hardware session
+    done (2026-08-24, dev image 20260824122014, drill binaries; fixes in
+    forgectrl 6614833). Proven: Mesa etnaviv fits the release slot
+    (~5 MiB margin); surfaceless EGL and dmabuf import both directions;
+    `GL_MAX_TEXTURE_SIZE` 8192 (no tiling even at 8 MP); the full path
+    GPU render → IPU stride-fix crop (`src/ipu_copy.c`, the render
+    engine's 64-byte rows and the CODA's round_up(width,16) stride never
+    meet, so the IPU crops between them, 14 ms, no CPU touch) → VPU
+    encode, `convert: "gpu"`, image correct to within 2 counts of the
+    scalar demosaic; `/cam/h264` serving valid fragmented MP4 on
+    hardware (avc1.424020, ~480 kbit/s on a static bed). Remaining, in
+    order: (a) **GPU render time, 140 ms/frame** (~6 fps ceiling; the
+    core runs its full 528 MHz, suspicion is the pre-HALTI
+    linear-texture sampling path - decompose per-pass, consider a tiled
+    shadow copy or fewer chroma taps); (b) the **bottom output row**
+    differs from the CPU demosaic (1296 samples, max delta 134; suspect
+    the IC's last-line behavior); (c) browser MSE playback of the panel's
+    H.264 view; (d) measured CPU with an H.264 viewer vs the 41 % MJPEG
+    baseline; (e) CSI hardware frame-skip exercise; (f) the
+    stream-during-jog coexistence drill with the GPU path active;
+    (g) `camera.h264-stream` and the full campaign on an image carrying
+    the fixes. Switches to strip a suspect layer: `FORGECTRL_NO_GPU`,
+    `FORGECTRL_NO_H264`, `FORGECTRL_NO_HW_SKIP`, plus the existing
+    `FORGECTRL_NO_VPU` / `FORGECTRL_NO_NEON` /
+    `FORGECTRL_NO_CACHED_BUFS`; `FORGECTRL_GPU_CHECK` tightens the
+    stream-stats cadence and logs the render-versus-copy split.
 
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the

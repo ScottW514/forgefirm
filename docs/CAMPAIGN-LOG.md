@@ -3630,6 +3630,45 @@ on the bed, and the two together by one real print. Still open from that
 plan: the bench actuator for the lid, interlock and button, and the
 finer coverage maps.
 
+## 2026-08-24: the GPU demosaic's first light, and what the probes caught
+
+Dev image 20260824122014 (the first with Mesa etnaviv; release ext4
+204,140,544 bytes, ~5 MiB under the slot cap) flashed by the operator;
+the drill ran forgectrl builds from `/tmp` against the running image,
+each iteration probed over the stream, `FORGECTRL_GPU_CHECK`, and frame
+captures diffed against the CPU demosaic on the host.
+
+Five faults found and fixed in one session, each named by a probe log
+line or the compare (forgectrl 6614833):
+
+1. `eglChooseConfig` returned nothing: EGL_SURFACE_TYPE defaults to
+   WINDOW_BIT and the surfaceless platform has no window configs. Ask
+   for surface type 0.
+2. Every fourth output byte was 255: the render engine writes an
+   XRGB8888 surface's undefined X byte as opaque. Render ARGB8888.
+3. The raw import failed etnaviv's stride check (width padded to 16
+   texels): 2592 bytes is 1296 GR88 texels exactly, not 656 padded
+   XRGB ones. Import GR88, one texel per Bayer pair.
+4. The GPU cannot write the CODA's buffers at all: 64-byte render rows
+   versus round_up(width,16) strides never meet at these widths. New
+   `ipu_copy` module: render into the IPU CSC/scaler's wider source
+   (stride align(w,128)) and let the IPU crop into each encoder over
+   dmabuf. 14 ms a copy, no CPU touch.
+5. The chroma mirror used a quarter-width plane where the plane is
+   half-width: the right half of both chroma planes clamped to
+   column 0. The three-frame diff-by-transform analysis on the host
+   named both this and fault 2.
+
+End state on the bench: `convert: "gpu"` serving MJPEG, the GPU/CPU
+compare clean to 2 counts except the bottom row (1296 samples, max
+delta 134, unexplained); `/cam/h264` delivering valid fragmented MP4
+from the CODA BIT processor (avc1.424020, ~480 kbit/s on the static
+bed). Open, measured: the render costs 140 ms a frame against the IPU's
+14 (GPU at its full 528 MHz - the suspicion is pre-HALTI linear-texture
+sampling), so the GPU path holds ~6 fps until that is run down. The
+`getenv` implicit-declaration fix in debayer.c rode along. Bench left
+clean; stock service restored.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
