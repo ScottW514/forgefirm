@@ -1560,11 +1560,12 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     quiet way) and the last stray dmesg line is gone. The missing GUA is a
     network matter, diagnosed (CAMPAIGN-LOG 2026-08-24, "the second DHCPv6
     responder"): the firewall advertises an address, but an access point on
-    the bench VLAN still runs its own RA and DHCPv6 server, its Advertise
-    arrives first with nothing to give, and busybox's `udhcpc6` stays with
-    the first Advertise it sees. Disabling RA and DHCPv6 on that access
-    point (as on the other two) is the fix; nothing on the board changes.
-    Then the item-16 drill and the campaign.
+    the bench VLAN still ran its own RA and DHCPv6 server, its Advertise
+    arrived first with nothing to give, and busybox's `udhcpc6` stays with
+    the first Advertise it sees. With that access point's RA and DHCPv6
+    disabled (as on the other two) the board took the firewall's lease, and
+    every service answered on the global address from another VLAN: IPv6 is
+    on end to end. Left: the item-16 drill and the campaign.
 
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the

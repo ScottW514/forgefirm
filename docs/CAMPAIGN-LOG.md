@@ -3872,6 +3872,13 @@ NDP-Proxy disabled, which is the setting that belongs on all three. The
 ULA the board carried all along was that access point's. Nothing on the
 board needs to change; the network side owns the fix.
 
+With RA and DHCPv6 disabled on that access point, the next Solicit took
+the firewall's lease: a global address on wlan0 (a /128 with the lease
+as its lifetime, renewed on schedule), sshd, grblHAL TCP:23, forgectrl
+and forgetest all answered on it from a host on a different VLAN, and
+the board reached the IPv6 WAN gateway. IPv6 is on end to end; the
+stale ULA ages out with its own lifetime.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
