@@ -1474,10 +1474,18 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     measured **13.8 fps single-viewer at ~14 % CPU** (fence stall
     7-9 ms of the 64 ms render, so it is fully hidden), **9.8 fps with
     MJPEG and H.264 served at once** (stall 0), luma still bit-clean.
-    Remaining: (a) browser MSE playback of the panel's H.264 view;
-    (b) the stream-during-jog coexistence drill with the GPU path
-    active; (c) `camera.h264-stream` and the full campaign on an image
-    carrying the fixes. Switches to strip a suspect layer: `FORGECTRL_NO_GPU`,
+    Fourth session (2026-08-24 night, forgectrl d97cb35): MSE playback
+    in Chrome found the fragments carrying raw boot-clock timestamps
+    and the panel's live-edge seek overshooting the one-frame buffered
+    window; each viewer's fragments are now zero-based, the seek clamps
+    into the newest range, and a paused element is kicked back into
+    play. Verified live: the panel's H.264 view plays at 1296x972 with
+    no MJPEG fallback, and with that view plus an MJPEG viewer running,
+    a jog out and back completed at its commanded feed with the step
+    ring's underrun counter unmoved and the planner buffer full - the
+    GPU stream path and motion coexist. Remaining: the full acceptance
+    campaign (platform change: Mesa in the image) on an image carrying
+    d97cb35, which also covers `camera.h264-stream`. Switches to strip a suspect layer: `FORGECTRL_NO_GPU`,
     `FORGECTRL_NO_H264`, `FORGECTRL_NO_HW_SKIP`, plus the existing
     `FORGECTRL_NO_VPU` / `FORGECTRL_NO_NEON` /
     `FORGECTRL_NO_CACHED_BUFS`; diagnostics under `FORGECTRL_GPU_CHECK`

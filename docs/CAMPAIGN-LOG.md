@@ -3718,6 +3718,39 @@ two encodes per frame, 33 ms, all still off-CPU). Luma stays bit-clean
 against the CPU demosaic; H.264 fragments now carry the delivered
 frame's timestamps. Bench left clean; stock service restored.
 
+## 2026-08-24: the browser plays it, and the head moves under it
+
+Fourth session, on dev 20260824140057 (the shipped image runs the
+pipelined GPU path stock: convert gpu, 13.6 fps, before any drill
+binary). Chrome driven against the panel found what byte-level checks
+could not:
+
+- The video element buffered data at t=801 s while playback sat at
+  zero: the fragments carried the raw 90 kHz boot clock. Each viewer's
+  fragments are now zero-based (the mux context subtracts the first
+  frame's clock).
+- The live-edge chaser's fixed 0.2 s back-off overshot the one-frame
+  buffered window into a gap and the element stalled at readyState 0;
+  the seek now clamps inside the newest buffered range, and a paused
+  element is kicked back into play after a seek.
+
+With the fixes (forgectrl d97cb35, drill from /tmp): the panel's Live
+button plays H.264 over MSE at 1296x972, timeline from zero, no MJPEG
+fallback, verified by script and by eye in Chrome.
+
+Coexistence, with the H.264 view live in the browser AND an MJPEG
+viewer attached: a jog out (+X 5 mm F600) and back completed at its
+commanded feed (mid-status Jog, MPos 3.619, FS 600; end Idle at
+origin), the step ring's underrun counter read 0 before and 0 after,
+and the planner buffer never left 99-100. The GPU stream path and
+motion coexist. The laser latch stayed locked and emission dark
+throughout; no armed anything.
+
+What remains of the video offload: the full acceptance campaign on an
+image carrying d97cb35 (a platform change: Mesa joined the image), and
+first light of all of it on an 8 MP machine when one exists. Bench
+left clean; stock service restored.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
