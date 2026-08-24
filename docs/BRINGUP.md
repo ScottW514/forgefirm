@@ -1496,6 +1496,33 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     compare) plus `FORGECTRL_GPU_PASSES` (limit the draws) and the
     frame-wait column in the stream stats.
 
+21. **Kernel trim: bench validation.** The kernel is built for this board
+    alone: `glowforge.cfg` names the driver set and turns off what the
+    multi-board defconfig adds, and `glowforge.conf` names the modules and
+    firmware the rootfs carries. Built into image 20260824164619, not yet
+    flashed: zImage 4.8 MB (was 9.1 MB), 31 kernel-module packages (was 254),
+    no SDMA, EPDC or Quad-VPU firmware, ARMv7-only code, no virtual console
+    (`USE_VT = "0"`), and no `dmas` on ecspi2, so the pulse ring is the SDMA's
+    only client. New on the same image: pstore/ramoops in the 1 MiB the
+    bootloader holds back at the top of DRAM (`/sys/fs/pstore` mounts from
+    fstab), the hung-task and soft-lockup detectors behind the panic
+    notifier, `PANIC_TIMEOUT=10` in Kconfig, and `evbug` gone from the kernel
+    log. Bench-validated on that image (CAMPAIGN-LOG 2026-08-24): every node
+    binds and nothing defers, the panic sysctls read as configured,
+    `/sys/fs/pstore` mounts with ramoops registered, `/dev/dri/renderD128`
+    is present and both cameras stream through the GPU demosaic, Wi-Fi
+    associates with `regulatory.db` loaded, the switches sit on `event0`,
+    31 modules load and no DMA channel is held by anyone. Two cosmetic dmesg
+    lines came with it: spi-imx reports the absent DMA channel at ERR level
+    and runs PIO, and `consoleblank=0` (uEnv) is an unknown parameter without
+    a virtual console. The crash record is proven: a forced `sysrq-c`
+    panicked, rebooted on the timeout, and the next boot read back
+    `dmesg-ramoops-0` and `console-ramoops-0` with no ECC errors (the
+    first boot's header-init lines did not repeat). Still owed: a GRBL job
+    on the image, then the acceptance campaign (platform change). The `spi_device_id` table for
+    `glowforge,pic` (kernel-module-glowforge) is not in this image; it lands
+    with the module's next pin bump.
+
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the
 underrun itself alarms and unlinks the anchor). Not in the acceptance catalog

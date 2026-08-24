@@ -3751,6 +3751,63 @@ image carrying d97cb35 (a platform change: Mesa joined the image), and
 first light of all of it on an 8 MP machine when one exists. Bench
 left clean; stock service restored.
 
+## 2026-08-24: the kernel built for one board
+
+A read-only review of the running kernel (config, dmesg, bindings,
+module tree, image manifests) found the multi-board defconfig doing
+what multi-board defconfigs do: USB, Ethernet, CAN, Bluetooth, SATA,
+PCIe, NAND, audio, a display stack, touchscreens, ten other i.MX SoCs
+and 153 DVB modules, none with a node in the device tree or a driver
+bound. Two real defects sat among them: `evbug` autoloading for the
+switch block and logging every lid and button transition to the
+kernel log, and the fragment's hung-task and soft-lockup panic lines
+silently dropped because their detectors were off, so only
+`PANIC_ON_OOPS` stood behind the laser-safing notifier. No crash
+record existed either: `panic=10` rebooted and the reason left with
+it.
+
+The fragment was rewritten as the board's driver set plus the
+defconfig's leftovers turned off, and the machine conf names the
+modules and firmware the rootfs carries. The first configure pass
+taught what the defconfig never says: `PM`, the regulator core and
+`EXT4_FS` only ever arrived by selection from suspend, the PMICs and
+ext3, so they are pinned by name now. Built into dev 20260824164619:
+zImage 9.13 MB to 4.76 MB, kernel-module packages 254 to 31,
+`/lib/firmware` down to the WL18xx set and the DualLite VPU blob,
+ARMv7-only code, no virtual console, ramoops in the 1 MiB the factory
+bootloader already holds back at the top of DRAM, and ecspi2 without
+`dmas`, so the pulse ring is the SDMA's only client (the ROM scripts
+stay; the RAM firmware never loaded and no client here needs it).
+
+On the bench, fresh boot of that image: every node binds and nothing
+defers; `hung_task_panic` and `softlockup_panic` read 1, `panic` 10;
+`/sys/fs/pstore` mounts and ramoops registers at 0x2ff00000 with ECC
+(the ten "uncorrectable error in header" lines are the never-written
+region's first initialization, expected once); `/dev/dri/renderD128`
+present and both cameras streamed through the GPU demosaic
+(`gpu: GLES2 debayer up` for lid and head, GPU interrupts 0 to 135,
+snapshot 200 OK); Wi-Fi associated with the regulatory database
+loaded; the switches on `event0`; 31 modules loaded, `evbug` gone; no
+DMA channel held by anyone. MemTotal rose by 9.4 MB. Two new dmesg
+lines, both cosmetic: spi-imx reports the absent DMA channel at ERR
+level and continues in PIO (the PIC probes and reads), and
+`consoleblank=0` is now an unknown parameter without a virtual
+console. `cannot start cut; no data enqueued` at 31 s is not new (47
+earlier occurrences in the kernel log).
+
+The crash record, proven the direct way: `echo c > /proc/sysrq-trigger`
+panicked the kernel, the ten-second timeout rebooted it, and the next
+boot logged no header errors and mounted `/sys/fs/pstore` holding
+`dmesg-ramoops-0` (24 KB, "Panic#1 Part1", the kmsg buffer from
+"Booting Linux" to the panic) and `console-ramoops-0` (23 KB, ending
+"sysrq: Trigger a crash / Kernel panic - not syncing / Rebooting in
+10 seconds.. / ECC: No errors detected"). A panic now leaves its
+reason where the next boot can read it.
+
+Still owed: a GRBL job on the image, the acceptance campaign (platform
+change), and the `spi_device_id` table for `glowforge,pic`, which
+rides the module's next pin bump. Bench left clean.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
