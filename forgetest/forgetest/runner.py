@@ -338,11 +338,16 @@ class Context:
             try:
                 fixture.act(channel, state)
             except _fixture.FixtureError as e:
+                rec["fixture_error"] = str(e)
+                if self.run.unattended:
+                    # nobody is in the room to do it instead: the run ends
+                    # here, as the harness's failure, not the machine's
+                    self.log("ACT %s %s: fixture failed (%s) - unattended, nobody to ask", channel, state, e)
+                    raise
                 # the box did not do it: the operator is asked instead,
                 # and the record says so
                 self.log("ACT %s %s: fixture failed (%s) - asking the operator", channel, state, e)
                 rec["by"] = "operator"
-                rec["fixture_error"] = str(e)
                 self.notice(wording)
         else:
             self.notice(wording)
@@ -900,6 +905,10 @@ class Runner:
             result, message = _campaign.ABORTED, str(e) or "aborted"
         except Failed as e:
             result, message = _campaign.FAIL, str(e)
+        except _fixture.FixtureError as e:
+            # the bench actuator could not perform a step: the test was
+            # not judged, and the machine is not the one at fault
+            result, message = _campaign.ERROR, "the fixture could not perform a step: %s" % e
         except Exception as e:  # noqa: BLE001 - an erroring test is a failed test
             result, message = _campaign.ERROR, "%s: %s" % (type(e).__name__, e)
             run.log(traceback.format_exc().rstrip())

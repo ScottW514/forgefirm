@@ -184,6 +184,8 @@ class FakeGrbl:
         self.mpos = [0.0, 0.0, 0.0]
         self.sent = []
         self.extra = b""            # text pushed to the client on the next poll
+        self.reset_to = None        # the state a soft reset (^X) lands in, when set
+        self.on_command = None      # called with every command line received
         self._sock = _socket.socket()
         self._sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
         self._sock.bind(("127.0.0.1", 0))
@@ -228,10 +230,16 @@ class FakeGrbl:
                         buf = buf[1:]
                         out += ("<%s|MPos:%.3f,%.3f,%.3f|FS:0,0>\r\n" % (self.state, *self.mpos)).encode()
                     elif buf[0] in (0x18, 0x85, 0x7E, 0x21):
+                        if buf[0] == 0x18:
+                            self.sent.append("^X")
+                            if self.reset_to:
+                                self.state = self.reset_to
                         buf = buf[1:]
                     elif b"\n" in buf:
                         line, buf = buf.split(b"\n", 1)
                         self.sent.append(line.strip().decode("utf-8", "replace"))
+                        if self.on_command:
+                            self.on_command(self.sent[-1])
                         out += b"ok\r\n"
                     else:
                         break

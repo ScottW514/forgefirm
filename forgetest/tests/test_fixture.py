@@ -37,6 +37,7 @@ class FakeFixture:
         self.state = {"lid": "closed", "interlock": "closed", "button": "idle"}
         self.button_enabled = button_enabled
         self.calls = []
+        self.presses = 0            # presses the device performed
         srv = self
 
         class H(BaseHTTPRequestHandler):
@@ -54,7 +55,8 @@ class FakeFixture:
             def _state(self):
                 return {"device": "forgefixture", "hostname": "forgefixture", "version": "1.0.0",
                         "idf": "v5.5.5", "uptime_s": 12, "channels": dict(srv.state),
-                        "button_enabled": srv.button_enabled, "button_pulsing": False,
+                        "button_enabled": srv.button_enabled,
+                        "button_pulsing": srv.state["button"] == "pressed",
                         "wifi": {"connected": True, "ip": "127.0.0.1", "rssi": -50}}
 
             def _auth(self):
@@ -84,7 +86,10 @@ class FakeFixture:
                 if self.path == "/button":
                     if not srv.button_enabled:
                         return self._json(409, {"error": "button disabled: the enable jumper is out"})
+                    if srv.state["button"] == "pressed":
+                        return self._json(409, {"error": "a button pulse is in progress"})
                     srv.state["button"] = "pressed"
+                    srv.presses += 1
                     threading.Timer(0.05, lambda: srv.state.__setitem__("button", "idle")).start()
                     s = self._state()
                     s["pulse_ms"] = 200
@@ -216,6 +221,37 @@ class ClientTests(unittest.TestCase):
         with self.assertRaises(fx.FixtureError) as cm:
             f.act("button", "press")
         self.assertIn("jumper", str(cm.exception))
+
+    def test_two_presses_are_spaced_so_the_controller_sees_the_release(self):
+        f = self.client()
+        f.status()
+        t0 = time.time()
+        f.act("button", "press")
+        f.act("button", "press")
+        took = time.time() - t0
+        posts = [c for c in self.dev.calls if c[:2] == ("POST", "/button")]
+        self.assertEqual(len(posts), 2)                             # no 409 round trip was needed
+        self.assertEqual(self.dev.presses, 2)
+        # the second waited for the first pulse (200 ms as reported) and the gap
+        self.assertGreaterEqual(took, 0.2 + fx.BUTTON_GAP_S - 0.05)
+
+    def test_a_pulse_in_progress_is_waited_out_then_retried(self):
+        f = self.client()
+        f.status()
+        self.dev.state["button"] = "pressed"                        # a press this client did not time
+        threading.Timer(0.3, lambda: self.dev.state.__setitem__("button", "idle")).start()
+        f.act("button", "press")
+        posts = [c for c in self.dev.calls if c[:2] == ("POST", "/button")]
+        self.assertEqual(len(posts), 2)                             # the 409, then the press
+        self.assertEqual(self.dev.presses, 1)
+
+    def test_a_pulse_that_never_ends_is_the_fixtures_error(self):
+        f = self.client()
+        f.status()
+        self.dev.state["button"] = "pressed"
+        with self.assertRaises(fx.FixtureError) as cm:
+            f.act("button", "press")
+        self.assertIn("in progress", str(cm.exception))
 
     def test_a_wrong_key_is_refused(self):
         f = self.client(key="wrong")
@@ -425,6 +461,22 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(rec["by"], "operator")
         self.assertIn("the box is off", rec["fixture_error"])
         self.assertTrue(seen and "lid" in seen[0].lower())
+
+    def test_a_failing_box_in_an_unattended_run_ends_the_test_as_an_error(self):
+        # nobody is in the room: the run must not wait ACT_TIMEOUT_S for a
+        # hand that is not there; it ends at once, as the harness's error
+        self.stub.fail = True
+        t0 = time.time()
+        b, order = self.run_queue("unattended")
+        results = {x["test"]: x["result"] for x in b["done"]}
+        self.assertEqual(results["r.lid"], "ERROR")
+        self.assertLess(time.time() - t0, 20)
+        rec = self.last_result("r.lid")
+        self.assertIn("the fixture could not perform a step", rec["message"])
+        self.assertIn("the box is off", rec["message"])
+        act = rec["evidence"]["actions"][0]
+        self.assertEqual((act["by"], act["fixture_error"]), ("fixture", "the box is off"))
+        self.assertFalse(any("asking the operator" in l for l in rec["log"]), rec["log"])
 
     def test_what_the_box_still_holds_is_released_after_a_run(self):
         def holds(ctx):

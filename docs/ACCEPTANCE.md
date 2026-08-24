@@ -281,7 +281,11 @@ most every 30 s otherwise. What holds:
   read the switches; `ctx.act` asks it and then waits for forgectrl's
   reading exactly as it waits for an operator's hand. An action the box
   fails to perform falls back to the operator's notice, and the record
-  says so (`evidence.actions[].by`, `fixture_error`).
+  says so (`evidence.actions[].by`, `fixture_error`); in an unattended
+  run there is nobody to fall back to, and the test ends ERROR naming
+  the refusal. Two button presses are spaced by the tool (the last
+  pulse's end plus 300 ms), so the controller sees the release between
+  them and not one long press.
 - **An operator test the fixture can run alone runs unattended.** A test
   declares its actions and, with `hands=(...)`, whatever else it asks of
   a person ("app" for a job in the Glowforge app). An `operator` test

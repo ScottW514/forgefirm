@@ -119,6 +119,33 @@ class BaselineTests(unittest.TestCase):
         self.assertTrue(items["position"].action.startswith("unrestorable"), items["position"].action)
         self.assertEqual(items["position"].found, [1000, 0, 0])
 
+    def test_a_held_controller_is_reset_before_the_return_jog(self):
+        # a pause test that failed while held leaves the controller in
+        # Hold, which refuses a jog: the baseline resets out of it first
+        import helpers
+        fc = helpers.FakeForgectrl().start()
+        dev = helpers.FakeGrbl().start()
+        try:
+            dev.state = "Hold:0"
+            dev.reset_to = "Idle"
+            dev.on_command = lambda line: self._pos(0, 0, 0) if line.startswith("$J=") else None
+            b = self.bl()
+            cap = b.capture()
+            self._pos(221, 0, 0)                        # 4.144 mm into the held move
+            left = b.enforce("post", captured=cap)
+            items = {x.item: x for x in left}
+            self.assertTrue(items["position"].action.startswith("restored"), items["position"].action)
+            self.assertEqual(dev.sent[0], "^X")
+            jogs = [l for l in dev.sent if l.startswith("$J=")]
+            self.assertEqual(len(jogs), 1)
+            self.assertIn("X-4.144", jogs[0])
+            self.assertTrue(any("reset out of Hold:0" in l for l in self.lines), self.lines)
+        finally:
+            dev.stop()
+            fc.stop()
+            for k in ("GRBL_HOST", "GRBL_PORT"):
+                os.environ.pop(k, None)
+
     def _pos_bytes(self, x, y, z, processed, total):
         with open(self.sysfs + "cnc/position", "wb") as f:
             f.write(struct.pack("<3i2I", x, y, z, processed, total))

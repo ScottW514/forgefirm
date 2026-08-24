@@ -98,7 +98,9 @@ to arm the laser for a live test; by default that press is a person's.
 The file is mode 0600 and bench-local. With the fixture up, an
 `operator` test whose actions it covers runs in the unattended queue;
 `live` tests keep their kind and their acknowledgment, and every action
-records who performed it.
+records who performed it. Presses are spaced by the tool: the next one
+waits for the last pulse to end plus a 300 ms release, so the machine
+sees two presses and not one long one.
 
 ## What keeps it safe
 

@@ -33,6 +33,8 @@ CHANNELS = ("lid", "interlock", "button")
 MDNS_GROUP = "224.0.0.251"
 MDNS_PORT = 5353
 RESOLVE_TTL_S = 300.0           # a resolved address is trusted this long
+BUTTON_GAP_S = 0.3              # the release between two presses: long enough for the controller to see it
+PULSE_WAIT_S = 1.5              # a pulse in progress ends within the firmware's 500 ms clamp
 
 
 class FixtureError(Exception):
@@ -226,6 +228,7 @@ class Fixture:
         self._resolved_at = time.time() if self.ip_override else 0.0
         self._lock = threading.Lock()
         self.last_state = None
+        self._pulse_end = 0.0       # when this client's last press ends (its pulse_ms)
 
     # -- address -------------------------------------------------------
     def address(self, refresh=False):
@@ -293,7 +296,7 @@ class Fixture:
         if channel == "button":
             if state != "press":
                 raise FixtureError("the button is only ever pressed")
-            st, body = self._request("POST", "/button", {})
+            st, body = self._press()
         else:
             if state not in ("open", "close"):
                 raise FixtureError("%s: unknown state %r" % (channel, state))
@@ -303,6 +306,30 @@ class Fixture:
                                                               body.get("error") or body))
         self.last_state = body
         return body
+
+    def _press(self):
+        """One press, spaced from the last one. The controller detects
+        the button's rising edge, so a press must follow a release it has
+        seen: the next press waits for the last pulse to end (the
+        fixture's own pulse_ms) plus BUTTON_GAP_S. A 409 for a pulse in
+        progress (a press this client did not time) is waited out once
+        against the fixture's state, then retried."""
+        wait = self._pulse_end + BUTTON_GAP_S - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        st, body = self._request("POST", "/button", {})
+        if st == 409 and "in progress" in str(body.get("error", "")):
+            deadline = time.time() + PULSE_WAIT_S
+            while time.time() < deadline:
+                time.sleep(0.1)
+                s, b = self._request("GET", "/")
+                if s == 200 and not b.get("button_pulsing"):
+                    break
+            time.sleep(BUTTON_GAP_S)
+            st, body = self._request("POST", "/button", {})
+        if st == 200:
+            self._pulse_end = time.time() + float(body.get("pulse_ms") or 500) / 1000.0
+        return st, body
 
     def release(self):
         st, body = self._request("POST", "/release", {})

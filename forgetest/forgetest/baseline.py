@@ -550,6 +550,19 @@ class Baseline:
         try:
             with hw.Grbl() as g:
                 rep = g.status_report()
+                if rep["state"].startswith(("Hold", "Door")):
+                    # a job left held (a pause test that failed there) refuses
+                    # a jog: the soft reset ends it where it stopped, position
+                    # kept, and hands the controller back
+                    held = rep["state"]
+                    g.realtime(0x18)
+                    deadline = time.time() + 5
+                    while time.time() < deadline:
+                        rep = g.status_report()
+                        if not rep["state"].startswith(("Hold", "Door")):
+                            break
+                        time.sleep(0.2)
+                    self.log("controller reset out of %s: now %s" % (held, rep["state"]))
                 if rep["state"].startswith("Alarm"):
                     g.command("$X")
                 g.command("$J=G91X%.3fY%.3fF1200" % (-dx, -dy))
