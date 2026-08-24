@@ -1,6 +1,6 @@
 """forgetest daemon entry point.
 
-  python3 -m forgetest [--port 8090] [--host 0.0.0.0] [--manifest PATH]
+  python3 -m forgetest [--port 8090] [--host ::] [--manifest PATH]
 
 Environment: FORGETEST_DATA (state directory, default /data/forgetest),
 FORGETEST_MANIFEST, FORGETEST_BENCH_DIR, FORGETEST_MARKER, and the hw.py
@@ -24,7 +24,7 @@ from .runner import Runner, configure_journal
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="forgetest")
     ap.add_argument("--port", type=int, default=int(os.environ.get("FORGETEST_PORT") or 8090))
-    ap.add_argument("--host", default=os.environ.get("FORGETEST_HOST") or "0.0.0.0")
+    ap.add_argument("--host", default=os.environ.get("FORGETEST_HOST") or "::")
     ap.add_argument("--manifest", default=None)
     ap.add_argument("--version", action="version", version="forgetest %s" % VERSION)
     args = ap.parse_args(argv)

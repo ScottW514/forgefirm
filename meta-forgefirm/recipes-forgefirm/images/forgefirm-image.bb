@@ -10,8 +10,10 @@ DESCRIPTION = "OpenGlow/ForgeFIRM image for Glowforge"
 # (gfui-client connects to Glowforge's servers). Removing it here (override
 # only; the shared glowforge-image base is untouched) also sidesteps its
 # do_package failure. Its role is filled locally by forgectrl and the
-# controllers below.
-IMAGE_INSTALL:remove = "gfui-client"
+# controllers below. nano is a bench convenience (the dev image keeps it);
+# on the release rootfs it costs 8.7 MB, most of it libmagic and its
+# database, which nothing else here uses.
+IMAGE_INSTALL:remove = "gfui-client nano"
 
 # grblhal-glowforge: the grblHAL motion controller (Grbl over TCP:23).
 # forgectrl: the ForgeFIRM machine-services daemon (HTTP :8080): controller

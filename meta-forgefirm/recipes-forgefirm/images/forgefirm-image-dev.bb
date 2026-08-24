@@ -12,6 +12,7 @@ IMAGE_INSTALL += " \
   forgetest \
   python3-gfutilities-emulator \
   htop \
+  nano \
 "
 
 # debug-tweaks (passwordless root, root SSH login) belongs ONLY to the dev

@@ -38,6 +38,7 @@ import re
 import secrets
 import sys
 import urllib.parse
+import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import artifact as _artifact
@@ -327,9 +328,15 @@ class Handler(BaseHTTPRequestHandler):
             self._deny(500, "%s: %s" % (type(e).__name__, e))
 
 
-def make_server(app, host="0.0.0.0", port=8090):
+def make_server(app, host="::", port=8090):
     handler = type("ForgetestHandler", (Handler,), {"app": app})
     ThreadingHTTPServer.allow_reuse_address = True
-    srv = ThreadingHTTPServer((host, port), handler)
+    # An IPv6 bind address (the default "::") gives one dual-stack socket
+    # that serves IPv4 clients too; a dotted address keeps the IPv4 family.
+    server_cls = ThreadingHTTPServer
+    if ":" in host:
+        server_cls = type("ForgetestServer6", (ThreadingHTTPServer,),
+                          {"address_family": socket.AF_INET6})
+    srv = server_cls((host, port), handler)
     srv.daemon_threads = True
     return srv

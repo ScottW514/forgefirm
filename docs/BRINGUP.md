@@ -1271,6 +1271,14 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     modes, 4.1× and 16.4× fewer bytes); frame rate only spaces the stalls out,
     and the existing `FORGECTRL_STREAM_FPS` cap skips demosaic and encode but
     still dequeues every frame. Shares the bench slot with item 8.
+
+    To re-measure on the next image before spending more on it: the kernel
+    is now UP (no SMP locking) with the performance governor as the only
+    governor (no 396 MHz idle floor, no ondemand sampling delay), and the
+    video offload's hardware frame skip halves the dequeues the cache
+    maintenance rides on. The same drill (a GRBL job with the stream live,
+    the run's `clamped` count and `min margin`) decides whether the camera
+    gate is still owed or the item closes.
 17. **Laser power model: dose by FIRE-bit density.** grblHAL maps S onto the
     analog PWM duty (`$30`/`$31` → `$35`/`$36`, written raw into PWMSAR against
     the 127-count period). `$35` now ships at 16, the measured lasing
@@ -1528,10 +1536,26 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     a virtual console. The crash record is proven: a forced `sysrq-c`
     panicked, rebooted on the timeout, and the next boot read back
     `dmesg-ramoops-0` and `console-ramoops-0` with no ECC errors (the
-    first boot's header-init lines did not repeat). Still owed: a GRBL job
-    on the image, then the acceptance campaign (platform change). The `spi_device_id` table for
-    `glowforge,pic` (kernel-module-glowforge) is not in this image; it lands
-    with the module's next pin bump.
+    first boot's header-init lines did not repeat). The `spi_device_id`
+    table for `glowforge,pic` is pinned into the next build (its boot
+    warning goes with it). Still owed: a GRBL job on the image, then the
+    acceptance campaign (platform change).
+
+    A second round rides the next image, host-proven and unflashed: the
+    kernel is UP (`SMP` off) with performance as its only cpufreq governor;
+    spi-imx no longer logs the absent DMA channel (patch 0014) and the
+    module no longer logs a run request on an empty ring (grblHAL treats it
+    as the ordinary race it is); `consoleblank=0` is gone from the boot
+    arguments; only `wl18xx-fw-4.bin` and `wl18xx-conf.bin` ship for the
+    WL1805 (the current factory image's set); IPv6 is on end to end
+    (distro feature, `udhcpc6` from the `wlan0 inet6` stanza, forgectrl,
+    grblHAL's TCP:23 and forgetest listening dual-stack); the log export
+    carries `/sys/fs/pstore`; and the release rootfs drops nano/libmagic,
+    the udev hardware database and urllib3's pyOpenSSL chain (~22 MB).
+    Owed on the bench: boot (dmesg without the three lines), a GUA on
+    wlan0 with each port answered over IPv6, `scaling_governor` reading
+    performance, Wi-Fi up without the NVS warning, an export that contains
+    the sysrq record, then the item-16 drill and the campaign.
 
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the
