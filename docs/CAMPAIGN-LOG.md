@@ -3852,6 +3852,26 @@ when records exist, and after the cold boot there were none. Memory
 Owed: the NVS line (patch 0015, next build), the item-16 drill on this
 kernel, the campaign. Bench left clean.
 
+## 2026-08-24: the second DHCPv6 responder
+
+Dev 20260824201945 (patch 0015 in): the NVS loader line is gone; the
+rest of the second round holds. The missing GUA was not the firewall's
+doing. Its DHCPv6 server was enabled, in Managed RA mode, with a pool on
+the delegated /64, and a packet capture on the bench VLAN showed it
+answering the board's Solicit with an address 1.3 ms later. The board's
+Request went to a different server-ID (a UUID) with `NoAddrsAvail`
+echoed back. A raw sniff on the board's own link named the other party:
+one of the VLAN's three OpenWrt access points still ran its LAN-side
+defaults, RA in server mode (its own ULA prefix with SLAAC, M and O
+flags, itself as DNS) and a DHCPv6 server with nothing to hand out. Its
+unicast Advertise beat the firewall's, and busybox's `udhcpc6` keeps the
+first Advertise it sees and keeps Requesting from that server, which is
+where the "IA_NA option is too short" line came from (an IA_NA carrying
+only a status code). The other two access points have RA, DHCPv6 and
+NDP-Proxy disabled, which is the setting that belongs on all three. The
+ULA the board carried all along was that access point's. Nothing on the
+board needs to change; the network side owns the fix.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
