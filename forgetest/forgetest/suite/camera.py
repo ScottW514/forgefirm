@@ -6,7 +6,7 @@ from ..baseline import LID_LAMP_ATTR
 _CAM_COVERS = [("forgectrl", "src/cam.*"), ("forgectrl", "src/camhealth.*"),
                ("forgectrl", "src/debayer.*"), ("forgectrl", "src/vpu_jpeg.*"),
                ("forgectrl", "src/vpu_h264.*"), ("forgectrl", "src/mp4mux.*"),
-               ("forgectrl", "src/gpu_debayer.*"),
+               ("forgectrl", "src/gpu_debayer.*"), ("forgectrl", "src/ipu_copy.*"),
                ("forgectrl", "src/main.c"),
                ("python3-gfhardware", "gfhardware/src/**"), ("python3-gfhardware", "gfhardware/cam*")]
 
