@@ -95,8 +95,9 @@ The control board is common to Glowforge Basic, Plus, and Pro. The 5 MP
 (OV5648) camera modules are fully supported and hardware-validated. The 8 MP
 (OV8856) modules found in "HD" units have a complete capture path — the kernel
 patches, device tree and sensor-aware capture profile they need are all in the
-build — but it has never run on an 8 MP machine, so treat it as untested; see
-the camera note in [kas/README.md](kas/README.md).
+build, but it has never run on an 8 MP machine, so treat it as untested; see
+`docs/BRINGUP.md` (Next work, cameras) and the headers of kernel patches
+0011-0013 in `meta-glowforge-bsp`.
 
 ## Safety
 

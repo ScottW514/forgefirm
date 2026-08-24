@@ -10,7 +10,7 @@ DESCRIPTION = "OpenGlow/ForgeFIRM image for Glowforge"
 # (gfui-client connects to Glowforge's servers). Removing it here (override
 # only; the shared glowforge-image base is untouched) also sidesteps its
 # do_package failure. Its role is filled locally by forgectrl and the
-# controllers below (kas/README.md backlog #6).
+# controllers below.
 IMAGE_INSTALL:remove = "gfui-client"
 
 # grblhal-glowforge: the grblHAL motion controller (Grbl over TCP:23).
@@ -46,7 +46,7 @@ IMAGE_INSTALL:append = " libegl-mesa libgles2-mesa libgbm mesa-megadriver"
 IMAGE_INSTALL:append = " firmware-imx-lic"
 
 # The release rootfs must fit a 200 MiB factory eMMC slot (409600 blocks).
-# Sizing: content + 40 MiB working space, hard-capped at the slot size —
+# Sizing: content + 40 MiB working space, hard-capped at the slot size:
 # the build fails rather than emit an unflashable image. The raw ext4 is
 # deployed alongside the wic; scripts/mkfw.sh packs it into the signed
 # .fw release artifact.

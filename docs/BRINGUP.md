@@ -788,7 +788,15 @@ until `releases/v<version>/acceptance.json` is committed.
   counters (`sdma_context`
   sc0/1/2 = X/Y/Z steps, sc3 = bytes) match grblHAL exactly. Underrun proof:
   100 kHz × 120 s under full load, 150 ms queue, 0.2 ms worst write latency,
-  zero underruns.
+  zero underruns. Real time: the kernel runs `CONFIG_PREEMPT=y` (the factory
+  behavior; `imx_v6_v7_defconfig` alone gives `PREEMPT_VOLUNTARY`).
+  PREEMPT_RT is not selectable on arm32 6.12 (no `ARCH_SUPPORTS_RT`) and is
+  not needed: the ring drains at 1 byte per EPIT tick, at most 200 KB/s even at
+  the 200 kHz ceiling, so the feeder's bounded queue depth of ~150 ms (a few
+  KB in flight) rides out worst-case scheduling latency with orders of
+  magnitude to spare. Bounded queue depth plus `SCHED_FIFO` for the feeder is
+  the design; RT is worth revisiting only if the underrun bench ever
+  contradicts this arithmetic.
 - Byte layout and stream rules: see the UAPI.md feeder contract
   (authoritative).
 - **Z**: bit 6 SET = lens UP = +Z (hardware-verified). Home = hall trigger at
@@ -1070,7 +1078,8 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
    answer whether the 2-lane RAW8 full-resolution mode locks the D-PHY at
    720 Mbps/lane and what exposure/gain the sensor wants; the details, the
    reachable-mode reasoning and the factory fallback configuration are in
-   `kas/README.md` §2. Also unapplied: the factory's **per-unit lens-shading
+   the headers of kernel patches 0011-0013 (`meta-glowforge-bsp`,
+   `recipes-kernel/linux/`). Also unapplied: the factory's **per-unit lens-shading
    calibration**, an OmniVision LENC register file the factory pushes into the
    sensor at every stream start (`load_cam_regs.sh` → a `regs` sysfs attribute
    its driver adds; OV8858 `0x58xx` addresses remapped to the OV8856's
@@ -1204,7 +1213,8 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     Tools that genuinely need a second host (LAN flood, remote auth probes)
     stay host-side by design, and the registry marks them so.
 13. **Publish.** The kas flip and the first GitHub release, per
-    `kas/README.md`, once ready to publish. Repoint the core submodule to
+    `kas/README.md` ("Pins, pushes, and the release flow"), once ready to
+    publish. Repoint the core submodule to
     upstream if the `step_us_min` sizing fix merges.
 14. **Update system Phase 5 — recovery refresh.** The remaining phase of
     `docs/UPDATE-SYSTEM.md` (a refreshed recovery image in boot0); Phases 0–4
