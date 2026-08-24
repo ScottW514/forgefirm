@@ -1483,9 +1483,12 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     no MJPEG fallback, and with that view plus an MJPEG viewer running,
     a jog out and back completed at its commanded feed with the step
     ring's underrun counter unmoved and the planner buffer full - the
-    GPU stream path and motion coexist. Remaining: the full acceptance
-    campaign (platform change: Mesa in the image) on an image carrying
-    d97cb35, which also covers `camera.h264-stream`. Switches to strip a suspect layer: `FORGECTRL_NO_GPU`,
+    GPU stream path and motion coexist. Bench validation of the video
+    offload is complete. The acceptance campaign is not tracked here:
+    it rides the release flow as always (item 12; Mesa joining the
+    image makes the next one full, and `camera.h264-stream` rides in
+    it). The one piece of video work that needs hardware this bench
+    does not have is 8 MP first light (item 6). Switches to strip a suspect layer: `FORGECTRL_NO_GPU`,
     `FORGECTRL_NO_H264`, `FORGECTRL_NO_HW_SKIP`, plus the existing
     `FORGECTRL_NO_VPU` / `FORGECTRL_NO_NEON` /
     `FORGECTRL_NO_CACHED_BUFS`; diagnostics under `FORGECTRL_GPU_CHECK`
