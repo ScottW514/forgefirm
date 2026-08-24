@@ -188,16 +188,20 @@ class PageTests(unittest.TestCase):
         # the queue controls are static markup: a poll relabels them and
         # flips disabled, it never replaces the node
         for bid in ("q-unattended", "q-attended", "q-stop"):
-            self.assertIn("id='%s'" % bid, html)
+            self.assertIn('id="%s"' % bid, html)
             self.assertNotIn("id='" + bid + "-", html)
+            self.assertNotIn('id="' + bid + "-", html)
         self.assertIn("function renderQueue()", html)
+        # the help popovers sit on static markup only: a rebuilt row or
+        # tool entry would orphan one
+        self.assertNotIn("data-help", html[html.index("function buildGroups("):])
 
     def test_every_group_is_built_on_the_same_grid(self):
         """The subsystems are separate tables. Left to size themselves
         from their own content no two line up, which is what made the
         page look busy, so they share one colgroup and a fixed layout."""
         html = page.render("0" * 32)
-        self.assertIn("#groups table{table-layout:fixed", html)
+        self.assertRegex(html, r"#groups table\s*\{\s*table-layout:\s*fixed")
         # one colgroup definition, emitted into every group's table
         self.assertEqual(html.count('var COLS="<colgroup>'), 1)
         self.assertEqual(html.count('<table>"+COLS+"'), 1,
@@ -210,7 +214,7 @@ class PageTests(unittest.TestCase):
                          "a column per header, the action column included")
         # every fixed column carries a width, or the grid is only a wish
         for cls in re.findall(r"<col class='(\w)'", colgroup):
-            self.assertRegex(html, r"#groups col\.%s\{width:\d+px\}" % cls)
+            self.assertRegex(html, r"#groups col\.%s\s*\{\s*width:\s*\d+px" % cls)
 
     def test_details_and_the_requires_note_stay_out_of_the_columns(self):
         """Both are long enough to stretch a cell. In a column they would
@@ -223,16 +227,24 @@ class PageTests(unittest.TestCase):
         # message; the action cell carries the button and nothing else
         self.assertIn("<td><div id='st-\"+d+\"'></div><div id='unmet-\"+d+"
                       "\"'></div><div id='note-\"+d+\"'></div></td>", html)
-        self.assertIn("<td><button class='pri' id='btn-\"+d+\"' "
+        self.assertIn("<td><button class='btn btn-sm btn-primary' id='btn-\"+d+\"' "
                       "onclick='startTest(\\\"\"+d+\"\\\")'>Start</button></td>", html)
 
     def test_page_is_self_contained_ascii(self):
         html = page.render("0" * 32)
         self.assertNotIn("__TOKEN__", html)
-        html.encode("ascii")   # no stray typography in an embedded page
+        # our own sources stay ASCII (no stray typography in an embedded
+        # page); the vendored Bootstrap carries its own glyphs
+        for name in ("index.html",) + page.CSS_FILES + page.JS_FILES:
+            if name.startswith("vendor/"):
+                continue
+            page.read_ui(name).encode("ascii")
         stray = sorted(set(hex(ord(c)) for c in html if ord(c) < 32 and c != "\n"))
         self.assertEqual(stray, [], "control characters in the page source")
-        for remote in ("http://", "https://", "//cdn"):
+        # nothing fetched from anywhere: the documentation links open a
+        # site, they are not assets
+        for remote in ("<link ", "<script src=", "@import", "url(http", "url(//",
+                       'src="http', "src='http", "//cdn"):
             self.assertNotIn(remote, html)
 
 

@@ -1,0 +1,130 @@
+<!--
+  index.html - forgetest: the acceptance page
+  Copyright (c) 2026 Scott Wiederhold <s.e.wiederhold@gmail.com>
+  SPDX-License-Identifier: MIT
+
+  Served at "/" as one self-contained page: page.py inlines every
+  stylesheet and script linked below, in order, in place of its
+  link/script tag. No external assets. Bootstrap (vendor/) is the UI
+  library; theme.css is the OpenGlow theme forgectrl's panel uses, byte
+  for byte, in a light and a dark variant selected by the data-bs-theme
+  attribute the head script sets before first paint; page.css is this
+  page's own layout. Design notes are at the top of app.js.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>ForgeFIRM acceptance</title>
+    <script>
+      (function () {
+        var t = 'light';
+        try {
+          var s = localStorage.getItem('ff_theme');
+          if (s === 'light' || s === 'dark') t = s;
+          else if (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches)
+            t = 'dark';
+        } catch (e) {}
+        document.documentElement.setAttribute('data-bs-theme', t);
+      })();
+    </script>
+    <link rel="stylesheet" href="vendor/bootstrap.min.css" />
+    <link rel="stylesheet" href="theme.css" />
+    <link rel="stylesheet" href="page.css" />
+  </head>
+  <body>
+    <header>
+      <div class="hrow">
+        <span class="appname">ForgeFIRM acceptance</span><span class="sub" id="hdrsub"></span
+        ><span class="ver" id="hdrver"></span
+        ><button id="themebtn" type="button" onclick="cycleTheme()" title="Theme">Theme</button>
+      </div>
+    </header>
+    <nav>
+      <div class="nrow">
+        <a id="tab-acceptance" class="on" onclick='showTab("acceptance")'>Release acceptance</a
+        ><a id="tab-bench" onclick='showTab("bench")'>Bench diagnostics</a>
+      </div>
+    </nav>
+    <main>
+      <div id="left">
+        <div id="pane-acceptance">
+          <div class="card">
+            <h2>Campaign<button class="hlp" data-help="campaign" type="button">?</button></h2>
+            <div class="banner">
+              <div class="auth" id="auth">?</div>
+              <div class="info" id="banner"></div>
+            </div>
+            <div id="invnote"></div>
+            <div class="card queue">
+              <h2>Run what is left<button class="hlp" data-help="queues" type="button">?</button></h2>
+              <div class="actions">
+                <button class="btn btn-sm btn-primary" id="q-unattended" onclick='startBatch("unattended")'>Unattended</button>
+                <button class="btn btn-sm btn-primary" id="q-attended" onclick='startBatch("attended")'>Operator and live</button>
+                <button class="btn btn-sm btn-danger" id="q-stop" onclick="stopBatch()" disabled>Stop the queue</button>
+              </div>
+              <div id="qstate"></div>
+              <div id="qmsg"></div>
+              <div id="fixture" class="hint"></div>
+            </div>
+            <div class="actions" style="margin-top: 10px">
+              <button class="btn btn-sm btn-primary" id="exportbtn" onclick="doExport()">Export release artifact</button>
+              <a class="btn btn-sm btn-outline-secondary" id="dljson" href="/export/acceptance.json" style="display: none">acceptance.json</a>
+              <a class="btn btn-sm btn-outline-secondary" id="dlmd" href="/export/acceptance.md" style="display: none">acceptance.md</a>
+              <a class="btn btn-sm btn-outline-secondary" href="/log">Raw log</a>
+              <a class="btn btn-sm btn-outline-secondary" href="/journal">Runner journal</a>
+              <button class="btn btn-sm btn-outline-secondary" onclick="toggleInv()">Invalidate all&hellip;</button>
+              <button class="btn btn-sm btn-outline-secondary" onclick="doReset()">Reset campaign</button>
+              <button class="hlp" data-help="actions" type="button">?</button>
+            </div>
+            <div id="invform" style="display: none">
+              <input type="text" class="form-control form-control-sm" id="invreason" placeholder="reason (required): what changed on the bench" />
+              <button class="btn btn-sm btn-danger" onclick="doInvalidate()">Invalidate all results</button>
+            </div>
+            <div id="actmsg"></div>
+            <div class="switch">
+              <input class="form-check-input" type="checkbox" id="ignreq" onchange="setIgnoreReq(this.checked)" />
+              <label for="ignreq">Ignore prerequisites: start any test on its own, whatever its <i>requires</i> list says</label>
+              <span id="ignreqon"></span>
+              <button class="hlp" data-help="ignore" type="button">?</button>
+            </div>
+          </div>
+          <div id="groups"></div>
+        </div>
+        <div id="pane-bench" style="display: none">
+          <div class="card">
+            <h2>Bench diagnostics<button class="hlp" data-help="bench" type="button">?</button></h2>
+            <p class="hint">
+              The bench tools (scripts/bench), run on the board with their output in the Run
+              pane. Runs here never enter a campaign; live tools need the operator
+              acknowledgment, and takeover tools stop forgectrl for the duration.
+            </p>
+            <div id="benchmsg"></div>
+          </div>
+          <div id="tools"></div>
+        </div>
+      </div>
+      <div id="right">
+        <div class="card">
+          <h2 id="runtitle">Run</h2>
+          <div id="runhead" class="info">idle</div>
+          <div id="steps" style="display: none"></div>
+          <div id="notice" style="display: none"></div>
+          <div id="prompt" style="display: none">
+            <div class="q" id="promptq"></div>
+            <div class="actions" id="promptb"></div>
+          </div>
+          <pre id="log"></pre>
+          <div class="actions">
+            <button class="btn btn-sm btn-danger" id="abortbtn" onclick="doAbort()" disabled>Abort</button
+            ><span class="hint" id="runfoot"></span>
+          </div>
+        </div>
+      </div>
+    </main>
+    <script src="vendor/bootstrap.bundle.min.js"></script>
+    <script src="help.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

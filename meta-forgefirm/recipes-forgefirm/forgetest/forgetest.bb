@@ -36,6 +36,14 @@ do_install() {
         install -Dm 0644 ${WORKDIR}/forgetest/forgetest/$f \
             ${D}${PYTHON_SITEPACKAGES_DIR}/forgetest/$f
     done
+    # the page's sources (ui/), gzipped: page.py inflates them once at
+    # first request, and bytes here are bytes on the ext4 rootfs
+    for f in $(cd ${WORKDIR}/forgetest/forgetest/ui && find . -type f); do
+        install -d ${D}${PYTHON_SITEPACKAGES_DIR}/forgetest/ui/$(dirname $f)
+        gzip -9 -n -c ${WORKDIR}/forgetest/forgetest/ui/$f \
+            > ${D}${PYTHON_SITEPACKAGES_DIR}/forgetest/ui/$f.gz
+        chmod 0644 ${D}${PYTHON_SITEPACKAGES_DIR}/forgetest/ui/$f.gz
+    done
     # the bench scripts the #bench tab drives
     install -d ${D}${datadir}/forgetest/bench
     for f in ${WORKDIR}/scripts/bench/*.py; do

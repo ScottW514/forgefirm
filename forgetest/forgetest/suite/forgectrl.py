@@ -227,6 +227,11 @@ def panel_serves(ctx):
     ctx.check(fc.token and fc.token in text, "the panel does not embed the bearer token")
     ctx.check("<link " not in text and "<script src=" not in text,
               "the panel references an external asset (the build did not bundle src/ui/)")
+    # The daemon stores the page gzipped and inflates it once at first
+    # request; what it serves is the plain page with the theme attribute
+    # the head script sets and the one save bar every settings tab shares.
+    ctx.check("data-bs-theme" in text, "the panel lacks the theme attribute (inflate failed?)")
+    ctx.check('id="savebar"' in text, "the panel lacks the save bar")
 
     s = fc.status()
     for key in ("state", "switches", "coolant", "fans"):

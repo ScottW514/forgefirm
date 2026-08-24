@@ -6,6 +6,8 @@
 #    suites replayed on the machine's own log lines, and the check that
 #    every log phrase the cloud suite greps for is one the pinned cloud
 #    app can log (it reads the app sources from the manifest cache)
+#  - shared UI files: theme.css and the vendored Bootstrap the page
+#    carries are byte-identical to forgectrl's at its pinned revision
 #  - coverage lint: every source path of every component pinned by the
 #    recipes must be selected by some catalog test's coverage globs (the
 #    tree manifest is generated from the pins with git - no Yocto build);
@@ -53,6 +55,10 @@ jobs:
       - name: Unit tests
         working-directory: forgefirm/forgetest
         run: python -m unittest discover -s tests -v
+
+      - name: Shared UI files match forgectrl at its pinned revision
+        working-directory: forgefirm
+        run: python scripts/check-ui-vendor.py
 
       - name: Coverage lint (enforced)
         working-directory: forgefirm/forgetest

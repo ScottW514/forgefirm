@@ -1,0 +1,427 @@
+/*
+ * page.css - forgetest: the acceptance page's own styles
+ * Copyright (c) 2026 Scott Wiederhold <s.e.wiederhold@gmail.com>
+ * SPDX-License-Identifier: MIT
+ *
+ * Everything specific to this page, on the tokens theme.css defines
+ * (theme.css is the same file forgectrl's panel uses, so the two look like
+ * one product and follow the same light and dark themes). This page is a
+ * wide two-pane layout, so the 900 px column theme.css gives the panel is
+ * lifted here.
+ */
+.hrow,
+.nrow,
+main {
+  max-width: none;
+}
+.hrow .appname {
+  border-left: 0;
+  padding-left: 0;
+}
+.hrow .sub {
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 12.5px;
+}
+.hrow .ver {
+  margin-left: auto;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12.5px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+nav a {
+  cursor: pointer;
+}
+main {
+  display: flex;
+  gap: 14px;
+  padding: 12px 16px;
+  align-items: flex-start;
+}
+#left {
+  flex: 1 1 640px;
+  min-width: 0;
+}
+#right {
+  flex: 0 0 420px;
+  position: sticky;
+  top: 10px;
+}
+@media (max-width: 1000px) {
+  main {
+    flex-direction: column;
+  }
+  #right {
+    position: static;
+    flex: 1 1 auto;
+    width: 100%;
+  }
+  /* A run in progress is what the operator is watching: on a phone the
+     run pane goes to the top for its duration. */
+  main.running #right {
+    order: -1;
+  }
+}
+.card {
+  margin: 0 0 12px;
+}
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: center;
+  background: none;
+  border: 0;
+  color: inherit;
+  padding: 0;
+  margin: 0;
+  font-size: inherit;
+}
+.auth {
+  font-size: 19px;
+  font-weight: 700;
+  padding: 6px 14px;
+  border-radius: 6px;
+  color: #fff;
+  background: var(--og-red);
+}
+.auth.yes {
+  background: var(--og-ok);
+}
+.info {
+  color: var(--og-dim);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.info b {
+  color: var(--og-txt);
+  font-weight: 600;
+}
+.mono {
+  font-size: 12px;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th {
+  font-size: 11.5px;
+  color: var(--og-dim);
+  text-align: left;
+  font-weight: 600;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--og-line);
+}
+td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--og-line);
+  vertical-align: top;
+}
+tr:last-child td {
+  border-bottom: 0;
+}
+/* One grid for every subsystem. The groups are separate tables, so
+   left to themselves each sizes its own columns from its own content
+   and no two line up. Fixed widths put them all on the same rails. */
+#groups .grp {
+  overflow-x: auto;
+}
+#groups table {
+  table-layout: fixed;
+  min-width: 700px;
+}
+#groups col.k {
+  width: 132px;
+}
+#groups col.s {
+  width: 250px;
+}
+#groups col.l {
+  width: 210px;
+}
+#groups col.a {
+  width: 96px;
+}
+/* Why a test stands where it does reads as one block under Status; a
+   requires list of three test ids would otherwise wrap into a ragged
+   stack under the Start button and drag the columns out of line. */
+#groups .req {
+  overflow-wrap: break-word;
+}
+/* The details sit in a full-width row of their own: inside the Test
+   cell they would have to be read through a column, and opening one
+   would push that group's grid out of step with the rest. */
+#groups td {
+  border-bottom: 0;
+}
+#groups tr.detrow td {
+  padding: 0 8px;
+  border-bottom: 1px solid var(--og-line);
+}
+#groups tr.detrow:last-child td {
+  border-bottom: 0;
+}
+#groups .details {
+  margin: 2px 0 8px;
+}
+#groups .details .dsc {
+  margin-bottom: 6px;
+}
+.tid {
+  color: var(--og-dim);
+  font-size: 11.5px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+.tag {
+  display: inline-block;
+  font-size: 10.5px;
+  padding: 2px 6px;
+  border-radius: 9px;
+  margin-right: 4px;
+  background: var(--og-line-soft);
+  color: var(--og-txt);
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+}
+.tag.live {
+  background: var(--og-bad-bg);
+  color: var(--og-red);
+}
+.tag.operator {
+  background: var(--og-note-bg);
+  color: var(--og-note-txt);
+}
+.tag.takeover {
+  background: var(--og-line-soft);
+  color: var(--og-title);
+}
+.tag.mode {
+  background: var(--og-line-soft);
+  color: var(--og-ok);
+}
+.tag.core {
+  background: var(--og-navy);
+  color: #fff;
+}
+.tag.queued {
+  background: var(--og-line-soft);
+  color: var(--og-action);
+}
+.st {
+  font-weight: 600;
+}
+.st.pass {
+  color: var(--og-ok);
+}
+.st.inherited {
+  color: var(--og-title);
+}
+.st.fail,
+.st.error {
+  color: var(--og-red);
+}
+.st.stale,
+.st.aborted {
+  color: var(--og-warn);
+}
+.st.none {
+  color: var(--og-dim);
+}
+.st.running {
+  color: var(--og-action);
+}
+.req {
+  font-size: 11.5px;
+  color: var(--og-warn);
+}
+.req.over {
+  color: var(--og-dim);
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.actions .hint {
+  margin: 0;
+}
+pre#log {
+  background: var(--og-term-bg);
+  color: var(--og-term-txt);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+  padding: 10px;
+  border-radius: 4px;
+  height: 380px;
+  overflow: auto;
+  margin: 8px 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+#prompt {
+  background: var(--og-note-bg);
+  border: 1px solid var(--og-note-line);
+  color: var(--og-note-txt);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 8px 0;
+}
+#prompt .q {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+#notice {
+  background: var(--og-line-soft);
+  border: 1px solid var(--og-action);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  font-weight: 600;
+}
+#steps {
+  background: var(--og-line-soft);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 8px 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+#steps .sh {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+#steps .sub {
+  color: var(--og-dim);
+  margin: 6px 0 2px;
+}
+#steps ol {
+  margin: 2px 0 4px 20px;
+}
+#steps .auto {
+  color: var(--og-dim);
+  font-style: italic;
+}
+.tsel {
+  cursor: pointer;
+}
+.tsel:hover {
+  text-decoration: underline;
+}
+.details {
+  display: none;
+  background: var(--og-line-soft);
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  margin-top: 6px;
+}
+.details.on {
+  display: block;
+}
+.msg {
+  margin: 6px 0;
+}
+.err {
+  color: var(--og-red);
+  font-size: 12.5px;
+  margin: 6px 0;
+}
+.switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+  font-size: 13px;
+}
+.switch input {
+  margin: 0;
+}
+.switch .on {
+  color: var(--og-warn);
+  font-weight: 600;
+}
+.grp {
+  margin-top: 6px;
+}
+.queue {
+  background: var(--og-line-soft);
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  box-shadow: none;
+}
+.queue h2 {
+  margin-bottom: 8px;
+}
+.qline {
+  font-size: 12.5px;
+  color: var(--og-dim);
+  line-height: 1.7;
+  margin-top: 8px;
+}
+.qline b {
+  color: var(--og-txt);
+}
+.qbar {
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--og-line);
+  margin: 6px 0;
+}
+.qbar i {
+  display: block;
+}
+.qbar i.ok {
+  background: var(--og-ok);
+}
+.qbar i.bad {
+  background: var(--og-red);
+}
+.qbar i.skip {
+  background: var(--og-warn);
+}
+.qbar i.now {
+  background: var(--og-action);
+}
+.tool {
+  border-bottom: 1px solid var(--og-line);
+  padding: 8px 0;
+}
+.tool:last-child {
+  border-bottom: 0;
+}
+.tool .argrow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 6px 0;
+  align-items: center;
+}
+.tool .argrow label {
+  font-size: 12px;
+  color: var(--og-dim);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tool .argrow input,
+.tool .argrow select {
+  width: auto;
+  display: inline-block;
+}
+.tool .argrow input {
+  width: 90px;
+}
+#invform {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 8px;
+}
+#invform input {
+  flex: 1 1 320px;
+}

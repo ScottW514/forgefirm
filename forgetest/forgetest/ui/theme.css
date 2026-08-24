@@ -1,0 +1,691 @@
+/*
+ * theme.css - forgectrl: the OpenGlow theme on top of Bootstrap
+ * Copyright (c) 2026 Scott Wiederhold <s.e.wiederhold@gmail.com>
+ * SPDX-License-Identifier: MIT
+ *
+ * Every color the panel uses is a token here, defined once for the light
+ * theme and once more for the dark one; Bootstrap's own component
+ * variables are pointed at the tokens, so the stock components follow the
+ * theme without a Sass build. The visual identity is OpenGlow's
+ * (community.openglow.org): navy header with the starburst wordmark, blue
+ * actions, laser red reserved for the brand accent and fault states. The
+ * header keeps its navy in both themes; the log viewers stay dark in both
+ * because they are terminals.
+ *
+ * Density: the panel is a machine control surface read at a glance, so
+ * everything runs a size tighter than Bootstrap's defaults (13.5 px body,
+ * small controls, compact cards).
+ */
+:root,
+[data-bs-theme='light'] {
+  --og-navy: #2b2b5e;
+  --og-red: #e8262a;
+  --og-action: #0088cc;
+  --og-action-hover: #0077b3;
+  --og-ok: #3d854d;
+  --og-warn: #c7760a;
+  --og-dim: #767a82;
+  --og-bg: #f0f1f4;
+  --og-card: #ffffff;
+  --og-line: #dde0e6;
+  --og-line-soft: #eceef1;
+  --og-txt: #222222;
+  --og-field-bg: #ffffff;
+  --og-field-line: #c9cdd4;
+  --og-placeholder: #a6aab2;
+  --og-note-bg: #fdf3e3;
+  --og-note-line: #eccb90;
+  --og-note-txt: #7a5a12;
+  --og-warn-bg: #fff6e6;
+  --og-warn-txt: #7a4a06;
+  --og-bad-bg: #fdeeee;
+  --og-bad-txt: #7a1f1f;
+  --og-safety-bg: #fdeaea;
+  --og-safety-txt: #8a1518;
+  --og-cam-bg: #e8e9ec;
+  --og-term-bg: #23252b;
+  --og-term-txt: #cfd3da;
+  --og-title: var(--og-navy);
+  --og-nav-on: var(--og-navy);
+}
+[data-bs-theme='dark'] {
+  --og-navy: #2b2b5e;
+  --og-red: #f05a5e;
+  --og-action: #2ea3e0;
+  --og-action-hover: #46b3ec;
+  --og-ok: #5fb374;
+  --og-warn: #e09a3a;
+  --og-dim: #9296a2;
+  --og-bg: #15161c;
+  --og-card: #1e2028;
+  --og-line: #32353f;
+  --og-line-soft: #2a2d36;
+  --og-txt: #d9dce3;
+  --og-field-bg: #14151b;
+  --og-field-line: #3d404b;
+  --og-placeholder: #6b6f7a;
+  --og-note-bg: #2e2717;
+  --og-note-line: #6a5323;
+  --og-note-txt: #e3c584;
+  --og-warn-bg: #2f2415;
+  --og-warn-txt: #eab86a;
+  --og-bad-bg: #331c1e;
+  --og-bad-txt: #f0a3a6;
+  --og-safety-bg: #361a1c;
+  --og-safety-txt: #f3a7aa;
+  --og-cam-bg: #2a2d36;
+  --og-term-bg: #0f1014;
+  --og-term-txt: #cfd3da;
+  --og-title: #b9bcd8;
+  --og-nav-on: #e6e8f5;
+}
+
+/* ---- Bootstrap variables pointed at the tokens ---------------------- */
+:root,
+[data-bs-theme='light'],
+[data-bs-theme='dark'] {
+  --bs-body-bg: var(--og-bg);
+  --bs-body-color: var(--og-txt);
+  --bs-body-font-size: 13.5px;
+  --bs-body-font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --bs-border-color: var(--og-line);
+  --bs-secondary-color: var(--og-dim);
+  --bs-link-color: var(--og-action);
+  --bs-link-hover-color: var(--og-action-hover);
+  --bs-link-color-rgb: 0, 136, 204;
+  --bs-link-hover-color-rgb: 0, 119, 179;
+  --bs-primary: var(--og-action);
+  --bs-danger: var(--og-red);
+  --bs-success: var(--og-ok);
+  --bs-warning: var(--og-warn);
+  --bs-font-monospace: ui-monospace, Consolas, monospace;
+}
+.btn-primary {
+  --bs-btn-bg: var(--og-action);
+  --bs-btn-border-color: var(--og-action);
+  --bs-btn-hover-bg: var(--og-action-hover);
+  --bs-btn-hover-border-color: var(--og-action-hover);
+  --bs-btn-active-bg: var(--og-action-hover);
+  --bs-btn-active-border-color: var(--og-action-hover);
+  --bs-btn-disabled-bg: var(--og-action);
+  --bs-btn-disabled-border-color: var(--og-action);
+  --bs-btn-font-weight: 600;
+}
+.btn-outline-secondary {
+  --bs-btn-color: var(--og-txt);
+  --bs-btn-border-color: var(--og-field-line);
+  --bs-btn-bg: var(--og-field-bg);
+  --bs-btn-hover-color: var(--og-txt);
+  --bs-btn-hover-bg: var(--og-field-bg);
+  --bs-btn-hover-border-color: var(--og-nav-on);
+  --bs-btn-active-color: var(--og-txt);
+  --bs-btn-active-bg: var(--og-line-soft);
+  --bs-btn-active-border-color: var(--og-nav-on);
+  --bs-btn-disabled-color: var(--og-txt);
+  --bs-btn-disabled-bg: var(--og-field-bg);
+  --bs-btn-disabled-border-color: var(--og-field-line);
+}
+.btn-danger {
+  --bs-btn-bg: var(--og-red);
+  --bs-btn-border-color: var(--og-red);
+  --bs-btn-font-weight: 600;
+}
+.btn:disabled,
+.btn.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.form-control,
+.form-select {
+  --bs-body-bg: var(--og-field-bg);
+  --bs-border-color: var(--og-field-line);
+  color: var(--og-txt);
+}
+.form-control:focus,
+.form-select:focus {
+  border-color: var(--og-action);
+  box-shadow: 0 0 0 0.15rem rgba(0, 136, 204, 0.2);
+}
+.form-control::placeholder {
+  color: var(--og-placeholder);
+}
+.form-control.dirty,
+.form-select.dirty {
+  border-color: var(--og-warn);
+}
+.card {
+  --bs-card-bg: var(--og-card);
+  --bs-card-border-color: var(--og-line);
+  --bs-card-border-radius: 8px;
+  padding: 12px 14px;
+  margin: 12px 0;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.popover {
+  --bs-popover-max-width: 400px;
+  --bs-popover-font-size: 12.5px;
+  --bs-popover-bg: var(--og-card);
+  --bs-popover-border-color: var(--og-line);
+  --bs-popover-body-color: var(--og-txt);
+  --bs-popover-header-bg: var(--og-line-soft);
+  --bs-popover-header-color: var(--og-title);
+  --bs-popover-header-font-size: 12px;
+}
+.popover-header {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+.popover-body p {
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+.popover-body p:last-child {
+  margin-bottom: 0;
+}
+.popover-body .doclink {
+  display: inline-block;
+  margin-top: 6px;
+  font-weight: 600;
+}
+.modal {
+  --bs-modal-bg: var(--og-card);
+  --bs-modal-border-color: var(--og-line);
+}
+.toast {
+  --bs-toast-bg: var(--og-card);
+  --bs-toast-border-color: var(--og-line);
+  --bs-toast-color: var(--og-txt);
+  --bs-toast-font-size: 13px;
+}
+.toast.t-ok {
+  border-left: 4px solid var(--og-ok);
+}
+.toast.t-bad {
+  border-left: 4px solid var(--og-red);
+}
+
+/* ---- Chrome: header, tabs, footer ---------------------------------- */
+body {
+  margin: 0;
+}
+body.has-savebar {
+  padding-bottom: 64px;
+}
+header {
+  background: var(--og-navy);
+}
+.hrow {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.appname {
+  color: #fff;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  border-left: 1px solid rgba(255, 255, 255, 0.25);
+  padding-left: 14px;
+}
+#host {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12.5px;
+  margin-left: auto;
+}
+#themebtn {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 5px;
+  padding: 3px 9px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#themebtn:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.6);
+}
+nav {
+  background: var(--og-card);
+  border-bottom: 1px solid var(--og-line);
+}
+.nrow {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 0 20px;
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+nav a {
+  padding: 9px 13px;
+  color: var(--og-dim);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+}
+nav a.on {
+  color: var(--og-nav-on);
+  font-weight: 600;
+  border-color: var(--og-red);
+}
+nav a:hover {
+  color: var(--og-nav-on);
+}
+main {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 4px 20px 12px;
+}
+section {
+  display: none;
+}
+section.on {
+  display: block;
+}
+footer {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 6px 20px 28px;
+  color: var(--og-dim);
+  font-size: 12.5px;
+  text-align: center;
+}
+footer a {
+  text-decoration: none;
+}
+
+/* ---- Cards and settings rows --------------------------------------- */
+.card h2 {
+  font-size: 12px;
+  margin: 0 0 8px;
+  color: var(--og-title);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.9px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.card h3 {
+  font-size: 11.5px;
+  margin: 12px 0 4px;
+  color: var(--og-dim);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.card h3:first-of-type {
+  margin-top: 6px;
+}
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 24px;
+}
+.frow {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 6px 10px;
+  align-items: center;
+  margin: 5px 0;
+}
+.frow label {
+  color: var(--og-txt);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.frow .u {
+  color: var(--og-dim);
+  font-size: 11.5px;
+  margin-left: 2px;
+}
+.hint {
+  color: var(--og-dim);
+  font-size: 12.5px;
+  line-height: 1.5;
+  margin: 8px 0 0;
+}
+.btns {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.msg {
+  font-size: 12.5px;
+  color: var(--og-action);
+}
+.mono {
+  font-family: ui-monospace, Consolas, monospace;
+}
+.brk {
+  word-break: break-all;
+}
+/* The help button: a small ring that opens the field's popover. */
+.hlp {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--og-dim);
+  background: transparent;
+  color: var(--og-dim);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: middle;
+  letter-spacing: 0;
+  text-transform: none;
+  flex: 0 0 auto;
+}
+.hlp:hover,
+.hlp[aria-describedby] {
+  color: var(--og-action);
+  border-color: var(--og-action);
+}
+
+/* ---- Status widgets ------------------------------------------------ */
+.kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 2px;
+  border-bottom: 1px solid var(--og-line-soft);
+  font-size: 13px;
+}
+.kv:last-child {
+  border-bottom: none;
+}
+.kv > span:first-child {
+  color: var(--og-dim);
+}
+.kv .btn {
+  margin-left: 6px;
+}
+.b-ok {
+  color: var(--og-ok);
+  font-weight: 600;
+}
+.b-run {
+  color: var(--og-action);
+  font-weight: 600;
+}
+.b-bad {
+  color: var(--og-red);
+  font-weight: 600;
+}
+.b-dim {
+  color: var(--og-dim);
+}
+.b-warn {
+  color: var(--og-warn);
+  font-weight: 600;
+}
+.bigpass {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--og-ok);
+}
+.bigfail {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--og-red);
+}
+.seg {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.segbtn {
+  padding: 7px 20px;
+  border-radius: 6px;
+  background: var(--og-field-bg);
+  color: var(--og-txt);
+  border: 1px solid var(--og-field-line);
+  font: inherit;
+  cursor: pointer;
+}
+.segbtn:hover {
+  border-color: var(--og-nav-on);
+}
+.segbtn.segon {
+  background: var(--og-navy);
+  border-color: var(--og-navy);
+  color: #fff;
+  font-weight: 600;
+}
+.segbtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+#cam,
+#camvid {
+  width: 100%;
+  max-width: 520px;
+  border-radius: 6px;
+  border: 1px solid var(--og-line);
+  display: block;
+  margin: 0 auto;
+  background: var(--og-cam-bg);
+  min-height: 60px;
+}
+.camwrap {
+  text-align: center;
+}
+.camctl {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+.btn.on {
+  background: var(--og-navy);
+  border-color: var(--og-navy);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* ---- Banners ------------------------------------------------------- */
+.banner {
+  background: var(--og-warn-bg);
+  border: 1px solid var(--og-warn);
+  color: var(--og-warn-txt);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+.banner a {
+  color: inherit;
+  font-weight: 600;
+}
+.banner-bad {
+  border-color: var(--og-red);
+  background: var(--og-bad-bg);
+  color: var(--og-bad-txt);
+}
+.safety {
+  background: var(--og-safety-bg);
+  border: 1px solid var(--og-red);
+  color: var(--og-safety-txt);
+  border-radius: 8px;
+  padding: 7px 12px;
+  margin: 8px 0 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+#locknote,
+.note {
+  display: none;
+  background: var(--og-note-bg);
+  border: 1px solid var(--og-note-line);
+  color: var(--og-note-txt);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 10px 0;
+  font-size: 13px;
+}
+.note {
+  display: block;
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.gnotes {
+  font-size: 12.5px;
+  line-height: 1.5;
+  margin: 4px 0 6px;
+}
+.gnotes .gn-warn {
+  color: var(--og-warn);
+}
+.gnotes .gn-off {
+  color: var(--og-red);
+  font-weight: 600;
+}
+
+/* ---- Terminals: the diagnostic log and the log viewer -------------- */
+#diaglog,
+#logview {
+  background: var(--og-term-bg);
+  color: var(--og-term-txt);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  margin-top: 8px;
+}
+#diaglog {
+  line-height: 1.6;
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  display: none;
+}
+#logview {
+  line-height: 1.5;
+  height: 380px;
+  overflow: auto;
+  white-space: pre;
+}
+.logtbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.logtbl th {
+  text-align: left;
+  color: var(--og-dim);
+  font-weight: 600;
+  font-size: 11.5px;
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--og-line);
+}
+.logtbl td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--og-line-soft);
+}
+.logtbl select {
+  width: auto;
+  display: inline-block;
+}
+
+/* ---- The fuse identity dialog -------------------------------------- */
+#fusewrap {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 22, 30, 0.55);
+  z-index: 1050;
+  align-items: center;
+  justify-content: center;
+}
+#fusewrap.on {
+  display: flex;
+}
+.fusebox {
+  background: var(--og-card);
+  border: 1px solid var(--og-line);
+  border-radius: 10px;
+  padding: 16px 20px;
+  max-width: 560px;
+  width: 92%;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+}
+.fusebox h2 {
+  font-size: 12px;
+  margin: 0 0 8px;
+  color: var(--og-title);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.9px;
+}
+
+/* ---- The save bar -------------------------------------------------- */
+#savebar {
+  display: none;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1040;
+  background: var(--og-card);
+  border-top: 1px solid var(--og-line);
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.12);
+}
+#savebar.on {
+  display: block;
+}
+.sbrow {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 9px 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+#sb-count {
+  font-weight: 600;
+  color: var(--og-warn);
+}
+#sb-msg {
+  font-size: 12.5px;
+  color: var(--og-red);
+}
+
+@media (max-width: 620px) {
+  .frow {
+    grid-template-columns: 1fr;
+    gap: 2px 0;
+  }
+  .grid2 {
+    grid-template-columns: 1fr;
+  }
+  .hrow,
+  .nrow,
+  main,
+  .sbrow {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+}

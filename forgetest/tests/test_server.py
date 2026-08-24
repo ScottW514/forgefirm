@@ -152,6 +152,13 @@ class ServerTests(unittest.TestCase):
         st, d = self.call("GET", "/", token=False)
         self.assertEqual(st, 200)
         self.assertIn(self.token.encode(), d)
+        page = d.decode("utf-8")
+        # one self-contained response: nothing linked, the token once,
+        # the theme attribute the head script sets
+        self.assertEqual(page.count(self.token), 1)
+        self.assertNotIn("<link ", page)
+        self.assertNotIn("<script src=", page)
+        self.assertIn("data-bs-theme", page)
         st, d = self.call("GET", "/state", headers={"Host": "evil.example.net"})
         self.assertEqual(st, 403)
         st, d = self.call("GET", "/state", headers={"Origin": "http://evil.example.net"})

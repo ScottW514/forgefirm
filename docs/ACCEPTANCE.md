@@ -433,7 +433,8 @@ recorded in `/data/forgetest/bench.jsonl` and never enter a campaign.
       artifact.py                export + gate verification
       runner.py                  one run at a time, prompts, abort, takeover, queues
       baseline.py                the fresh-boot idle state around every run
-      server.py / page.py        HTTP API + the page (forgectrl's access rules)
+      server.py / page.py / ui/  HTTP API + the page (forgectrl's access rules;
+                                 Bootstrap and the OpenGlow theme shared with the panel)
       bench.py / coverage.py     bench registry + subprocess runner; the lint
       suite/                     the catalog, one module per subsystem
     forgetest/tests/             host unit tests (python3 -m unittest discover -s tests)
