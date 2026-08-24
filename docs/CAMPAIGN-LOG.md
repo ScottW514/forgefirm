@@ -3697,6 +3697,27 @@ Second session on the flashed fixes (dev 20260824131335, drills from
 
 Bench left clean; stock service restored.
 
+## 2026-08-24: the pipeline goes two frames deep
+
+Third session, on dev 20260824133616 (drills from /tmp, forgectrl
+deee6a1). The serialized loop (wait 26, render 64, IPU copy 14,
+encode 7) became a two-frame pipeline: a frame's render is kicked
+behind an EGL fence and the previous frame's finished render is
+cropped, encoded and published while it runs. ipu_copy keeps two
+source buffers so the rendering and the copying frame never share one;
+the rendering frame's capture buffer stays out of the queue until its
+fence clears, and every teardown, failure and frame-health queue cycle
+settles the in-flight state first.
+
+Measured: 13.8 fps single-viewer (from 9.2), fence stall 7-9 ms
+against the 64 ms render - the render is hidden behind the copies,
+the encodes and the frame wait. Daemon ~14 % CPU at that rate with a
+WiFi viewer attached (the NEON path: 15 fps at 41 %). MJPEG and H.264
+served together run 9.8 fps with the stall at zero (two IPU copies and
+two encodes per frame, 33 ms, all still off-CPU). Luma stays bit-clean
+against the CPU demosaic; H.264 fragments now carry the delivered
+frame's timestamps. Bench left clean; stock service restored.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

@@ -1466,15 +1466,18 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     artifact of the first session). The **CSI hardware frame skip is
     live-proven** with the GPU path (`FORGECTRL_STREAM_FPS=7` →
     `hw_fps_skip: true`, steady ~7 fps, daemon sampling 0.0 % in top):
-    that is the recommended low-CPU configuration today. Remaining:
-    (a) 15 fps on the GPU path needs the render overlapped with the
-    encode of the previous frame (double-buffered ipu_copy source,
-    deferred glFinish - the loop today serializes wait 26 + render 64 +
-    copy 14 + encode 7); (b) browser MSE playback of the panel's H.264
-    view; (c) measured CPU with an H.264 viewer; (d) the
-    stream-during-jog coexistence drill with the GPU path active;
-    (e) `camera.h264-stream` and the full campaign on an image carrying
-    the fixes. Switches to strip a suspect layer: `FORGECTRL_NO_GPU`,
+    that is the recommended low-CPU configuration today. Third session
+    (2026-08-24 night, forgectrl deee6a1): the render and the encode now
+    overlap - a frame renders behind an EGL fence while the previous
+    frame is IPU-cropped, encoded and published (two IPU source buffers;
+    the rendering frame's capture buffer held until its fence clears) -
+    measured **13.8 fps single-viewer at ~14 % CPU** (fence stall
+    7-9 ms of the 64 ms render, so it is fully hidden), **9.8 fps with
+    MJPEG and H.264 served at once** (stall 0), luma still bit-clean.
+    Remaining: (a) browser MSE playback of the panel's H.264 view;
+    (b) the stream-during-jog coexistence drill with the GPU path
+    active; (c) `camera.h264-stream` and the full campaign on an image
+    carrying the fixes. Switches to strip a suspect layer: `FORGECTRL_NO_GPU`,
     `FORGECTRL_NO_H264`, `FORGECTRL_NO_HW_SKIP`, plus the existing
     `FORGECTRL_NO_VPU` / `FORGECTRL_NO_NEON` /
     `FORGECTRL_NO_CACHED_BUFS`; diagnostics under `FORGECTRL_GPU_CHECK`
