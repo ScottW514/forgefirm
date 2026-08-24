@@ -1552,10 +1552,16 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     grblHAL's TCP:23 and forgetest listening dual-stack); the log export
     carries `/sys/fs/pstore`; and the release rootfs drops nano/libmagic,
     the udev hardware database and urllib3's pyOpenSSL chain (~22 MB).
-    Owed on the bench: boot (dmesg without the three lines), a GUA on
-    wlan0 with each port answered over IPv6, `scaling_governor` reading
-    performance, Wi-Fi up without the NVS warning, an export that contains
-    the sysrq record, then the item-16 drill and the campaign.
+    Bench-validated on dev 20260824200726 (CAMPAIGN-LOG 2026-08-24, second
+    round): the three lines are gone, the kernel is UP at 996 MHz on the
+    performance governor, Wi-Fi is up on the two-file firmware set, every
+    port answers over IPv6 on the board's ULA, the export runs. Two things
+    remain from it: the DHCPv6 server answers NoAddrsAvail and the GUA
+    prefix is not autonomous, so the board holds no GUA until the network
+    side hands one out (the client is running and asking); and with no NVS
+    on the rootfs the firmware loader logs the missing file at ERR level,
+    which patch 0015 (wlcore asks for the optional file the quiet way)
+    removes on the next build. Then the item-16 drill and the campaign.
 
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the

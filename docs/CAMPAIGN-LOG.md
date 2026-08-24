@@ -3808,6 +3808,50 @@ Still owed: a GRBL job on the image, the acceptance campaign (platform
 change), and the `spi_device_id` table for `glowforge,pic`, which
 rides the module's next pin bump. Bench left clean.
 
+## 2026-08-24: the second kernel round, on the bench
+
+Dev 20260824200726, cold boot after the flash (the pstore region came up
+empty and re-initialized its headers, as a power cycle must). The dmesg
+lines the round set out to remove are gone: no spi-imx "can't get the TX
+DMA channel", no `consoleblank` in the unknown-parameter list (only
+`board=`, which userspace reads), no "cannot start cut; no data enqueued"
+(grblHAL treats that run-on-empty-ring race as ordinary; the module now
+agrees), no `spi_device_id` warning (the pinned module carries the
+table), no "unconfigured mac address in nvs". One line took its place:
+with no NVS on the rootfs the firmware loader reports the missing file
+at ERR level; patch 0015 asks for the optional file the quiet way and
+rides the next build.
+
+The kernel is UP: `nproc` 1, no IPI rows, the TWD still the tick and the
+GPT the clocksource. The performance governor is the only one and the
+core reads 996 MHz. Wi-Fi associated on `wl18xx-fw-4.bin` with
+`wl18xx-conf.bin` beside it and nothing else in `ti-connectivity`; PG 2.2
+silicon, firmware 8.9.0.0.83, regulatory database loaded.
+
+IPv6: the kernel took the router advertisement (link-local, a ULA by
+SLAAC, the ULA and GUA prefix routes, the default route) and `udhcpc6`
+ran from the `wlan0 inet6` stanza. It got no address: the DHCPv6 server
+answered every Solicit with an IA_NA carrying only a status option (18
+bytes, which busybox reports as "IA_NA option is too short"), which is
+NoAddrsAvail; the GUA prefix is advertised on-link without the
+autonomous flag. So the board has a routable ULA and no GUA until the
+network hands one out; the client side is doing its part. Every service
+answered over IPv6 on the ULA from the board itself: sshd (banner),
+grblHAL TCP:23, forgectrl :8080 (200), forgetest :8090 (200);
+`netstat` shows all four on `:::`. This host sits on another IPv6 LAN,
+so cross-network reachability was not testable from here.
+
+The rootfs: nano and `file` present on the dev image, the udev hardware
+database gone, `cryptography` not importable while `urllib3` and
+`requests` import; `/lib/firmware` down to the WL18xx pair and the
+DualLite VPU blob. A sanitized log export ran (200, 1.9 MB) with the
+`system/` snapshot in place; the `system/pstore/` directory appears only
+when records exist, and after the cold boot there were none. Memory
+475 MB total, 325 MB available at idle in GRBL mode.
+
+Owed: the NVS line (patch 0015, next build), the item-16 drill on this
+kernel, the campaign. Bench left clean.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
