@@ -3669,6 +3669,34 @@ sampling), so the GPU path holds ~6 fps until that is run down. The
 `getenv` implicit-declaration fix in debayer.c rode along. Bench left
 clean; stock service restored.
 
+## 2026-08-24: the render run to ground, and the chroma box paid for
+
+Second session on the flashed fixes (dev 20260824131335, drills from
+/tmp, forgectrl 2d59d78). Findings by measurement:
+
+- The GPU has LINEAR_TEXTURE_SUPPORT (minor_features1 bit 22 read from
+  debugfs), so Mesa samples the imported buffers directly: no shadow
+  copy, and no risk of the seqno-gated shadow going stale under
+  external DMA - a hazard that was checked for and does not exist here.
+- FORGECTRL_GPU_PASSES decomposed the 140 ms render: 41 ms for luma,
+  49 ms per chroma pass. The chroma box filter (four superpixels, 32
+  dependent fetches per fragment) was the cost, sixteen times the
+  per-fragment price of the luma pass.
+- The chroma passes now point-sample the block's top-left superpixel:
+  render 64 ms, stream ~9 fps at ~7 % daemon CPU (NEON: 15 fps at
+  41 %). Luma stays bit-clean against the CPU path (max delta 1, zero
+  samples off by more than 2), and the first session's bottom-row
+  artifact went with the old chroma pass. Chroma against the box
+  reference reads mean 1.7 on the bench scene: detail, not error.
+- CSI hardware frame skip proven with the GPU path:
+  FORGECTRL_STREAM_FPS=7 programs keep-1-of-2 in the receiver,
+  hw_fps_skip true, steady ~7 fps, the daemon sampling 0.0 % in top.
+  The loop split at rest: wait 26, render 64, IPU copy 14, encode 7 -
+  15 fps needs the render overlapped with the previous frame's encode,
+  recorded as the item-20 remainder.
+
+Bench left clean; stock service restored.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

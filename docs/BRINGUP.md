@@ -1456,22 +1456,31 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     meet, so the IPU crops between them, 14 ms, no CPU touch) → VPU
     encode, `convert: "gpu"`, image correct to within 2 counts of the
     scalar demosaic; `/cam/h264` serving valid fragmented MP4 on
-    hardware (avc1.424020, ~480 kbit/s on a static bed). Remaining, in
-    order: (a) **GPU render time, 140 ms/frame** (~6 fps ceiling; the
-    core runs its full 528 MHz, suspicion is the pre-HALTI
-    linear-texture sampling path - decompose per-pass, consider a tiled
-    shadow copy or fewer chroma taps); (b) the **bottom output row**
-    differs from the CPU demosaic (1296 samples, max delta 134; suspect
-    the IC's last-line behavior); (c) browser MSE playback of the panel's
-    H.264 view; (d) measured CPU with an H.264 viewer vs the 41 % MJPEG
-    baseline; (e) CSI hardware frame-skip exercise; (f) the
+    hardware (avc1.424020, ~480 kbit/s on a static bed). Second session
+    (2026-08-24 evening, forgectrl 2d59d78): the render decomposed to
+    41 ms luma + 49 ms per chroma pass; the chroma passes now
+    point-sample instead of box-average (16x fewer per-fragment fetch
+    chains), taking the render to 64 ms - **~9 fps at ~7 % CPU**
+    against the NEON path's 15 fps at 41 % - with luma measured
+    bit-clean against the CPU path (which also retired the bottom-row
+    artifact of the first session). The **CSI hardware frame skip is
+    live-proven** with the GPU path (`FORGECTRL_STREAM_FPS=7` →
+    `hw_fps_skip: true`, steady ~7 fps, daemon sampling 0.0 % in top):
+    that is the recommended low-CPU configuration today. Remaining:
+    (a) 15 fps on the GPU path needs the render overlapped with the
+    encode of the previous frame (double-buffered ipu_copy source,
+    deferred glFinish - the loop today serializes wait 26 + render 64 +
+    copy 14 + encode 7); (b) browser MSE playback of the panel's H.264
+    view; (c) measured CPU with an H.264 viewer; (d) the
     stream-during-jog coexistence drill with the GPU path active;
-    (g) `camera.h264-stream` and the full campaign on an image carrying
+    (e) `camera.h264-stream` and the full campaign on an image carrying
     the fixes. Switches to strip a suspect layer: `FORGECTRL_NO_GPU`,
     `FORGECTRL_NO_H264`, `FORGECTRL_NO_HW_SKIP`, plus the existing
     `FORGECTRL_NO_VPU` / `FORGECTRL_NO_NEON` /
-    `FORGECTRL_NO_CACHED_BUFS`; `FORGECTRL_GPU_CHECK` tightens the
-    stream-stats cadence and logs the render-versus-copy split.
+    `FORGECTRL_NO_CACHED_BUFS`; diagnostics under `FORGECTRL_GPU_CHECK`
+    (tight stats cadence, render-versus-copy split, luma/chroma
+    compare) plus `FORGECTRL_GPU_PASSES` (limit the draws) and the
+    frame-wait column in the stream stats.
 
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the
