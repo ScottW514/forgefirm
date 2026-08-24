@@ -1,0 +1,65 @@
+The client address carries the whole peer sockaddr
+
+The request's client_address was allocated and copied as
+sizeof(struct sockaddr), 16 bytes. A dual-stack listener reports every
+peer as a sockaddr_in6 (28 bytes), so the address bytes a consumer needs
+to recognize ::1 or a v4-mapped ::ffff:127.0.0.1 lay beyond the copy.
+Allocate a sockaddr_storage and copy the length the family calls for,
+here and in ulfius_copy_request().
+
+Upstream-Status: Pending
+Signed-off-by: Scott Wiederhold <s.e.wiederhold@gmail.com>
+
+--- a/src/ulfius.c
++++ b/src/ulfius.c
+@@ -30,6 +30,7 @@
+ #endif
+ 
+ #include <ctype.h>
++#include <netinet/in.h>
+ #include <stdlib.h>
+ #include <string.h>
+ 
+@@ -515,12 +516,15 @@
+     con_info->max_post_param_size = ((struct _u_instance *)cls)->max_post_param_size;
+     con_info->request->http_protocol = o_strdup(version);
+     con_info->request->http_verb = o_strdup(method);
+-    con_info->request->client_address = o_malloc(sizeof(struct sockaddr));
++    con_info->request->client_address = o_malloc(sizeof(struct sockaddr_storage));
+     if (con_info->request->client_address == NULL || con_info->request->http_verb == NULL) {
+       y_log_message(Y_LOG_LEVEL_ERROR, "Ulfius - Error allocating client_address or http_verb");
+       return MHD_NO;
+     }
+-    memcpy(con_info->request->client_address, so_client, sizeof(struct sockaddr));
++    memset(con_info->request->client_address, 0, sizeof(struct sockaddr_storage));
++    memcpy(con_info->request->client_address, so_client,
++           so_client->sa_family == AF_INET6 ? sizeof(struct sockaddr_in6) :
++           so_client->sa_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr));
+     if (con_info->u_instance->check_utf8) {
+       MHD_get_connection_values (connection, MHD_HEADER_KIND, ulfius_fill_map_check_utf8, con_info->request->map_header);
+       MHD_get_connection_values (connection, MHD_GET_ARGUMENT_KIND, ulfius_fill_map_check_utf8, &con_info->map_url_initial);
+--- a/src/u_request.c
++++ b/src/u_request.c
+@@ -24,6 +24,7 @@
+  */
+ #include <ctype.h>
++#include <netinet/in.h>
+ #include <stdarg.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <u_private.h>
+@@ -400,9 +401,12 @@
+     dest->callback_position = source->callback_position;
+ 
+     if (source->client_address != NULL) {
+-      dest->client_address = o_malloc(sizeof(struct sockaddr));
++      dest->client_address = o_malloc(sizeof(struct sockaddr_storage));
+       if (dest->client_address != NULL) {
+-        memcpy(dest->client_address, source->client_address, sizeof(struct sockaddr));
++        memset(dest->client_address, 0, sizeof(struct sockaddr_storage));
++        memcpy(dest->client_address, source->client_address,
++               source->client_address->sa_family == AF_INET6 ? sizeof(struct sockaddr_in6) :
++               source->client_address->sa_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr));
+       } else {
+         y_log_message(Y_LOG_LEVEL_ERROR, "Ulfius - Error allocating resources for dest->client_address");
+         ret = U_ERROR_MEMORY;

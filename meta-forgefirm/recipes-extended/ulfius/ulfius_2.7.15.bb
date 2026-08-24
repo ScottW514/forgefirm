@@ -12,6 +12,12 @@ LIC_FILES_CHKSUM = "file://LICENSE;md5=40d2542b8c43a3ec2b7f5da31a697b88"
 SRC_URI = "git://github.com/babelouest/ulfius;protocol=https;branch=master"
 SRCREV = "a0603447d3ed63c0880db396b9c395fb4bf6b559"
 
+# The request's client_address is the whole peer sockaddr. Upstream copies
+# sizeof(struct sockaddr), 16 bytes, which truncates the sockaddr_in6 a
+# dual-stack listener reports for every peer; forgectrl's loopback-only
+# report channel reads the mapped address bytes that lie beyond it.
+SRC_URI += "file://0001-client_address-carries-the-whole-peer-sockaddr.patch"
+
 S = "${WORKDIR}/git"
 
 inherit cmake pkgconfig

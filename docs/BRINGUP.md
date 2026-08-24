@@ -1586,8 +1586,27 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     remove and on the probe unwind, the empty-ring run request logs at ERR
     level again (it was the only kernel-log trace of the fault), and
     `image.health` asserts the SDMA clock enable count directly. The ecspi2
-    `dmas` stay deleted. Left: build, flash, the item-16 drill and the
-    campaign.
+    `dmas` stay deleted. Bench-proven on dev 20260824215906: the clock count
+    reads 1, the probe reports MOTION OK, `cnc/free` reads the ring less its
+    gap, and the campaign ran every kernel, forgectrl, logs and motion test
+    green.
+
+    That campaign then stopped on `cooling.fans-quiet-after-motion`: M8
+    raised no fan duty because forgectrl had accepted no cooling report
+    from the controller at all (`report_age_s` -1). The dual-stack listener
+    of the second round reports every peer as a `sockaddr_in6`, and ulfius
+    2.7.15 copies the peer into `client_address` as `sizeof(struct
+    sockaddr)`, 16 bytes; the mapped-loopback bytes the check reads lie
+    beyond the copy, so `POST /cool/state` from 127.0.0.1 got `403 loopback
+    only` (fail-safe: the engine treats silence as a stand-down, so nothing
+    fired, but no run profile and no armed window either). The fix: the
+    image patches ulfius to allocate a `sockaddr_storage` and copy the
+    family's length (`meta-forgefirm/recipes-extended/ulfius`), the peer
+    check lives in `src/peer.c` with a host unit test (`auth_peer_test`,
+    including the truncated-copy case, which fails closed), and
+    `forgectrl.auth` asserts that the loopback peer is accepted as well as
+    that a LAN peer is refused. Left: build, flash, the item-16 drill and
+    the campaign.
 
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the

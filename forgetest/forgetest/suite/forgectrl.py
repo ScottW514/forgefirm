@@ -6,7 +6,7 @@ import time
 from ..catalog import test
 from .. import hw
 
-_COVERS_AUTH = [("forgectrl", "src/auth.*"), ("forgectrl", "src/main.c")]
+_COVERS_AUTH = [("forgectrl", "src/auth.*"), ("forgectrl", "src/peer.*"), ("forgectrl", "src/main.c")]
 
 
 def lan_ip():
@@ -29,7 +29,8 @@ def lan_ip():
       covers=_COVERS_AUTH,
       description="Every state-changing endpoint refuses an unauthenticated write; a non-literal "
                   "Host, a non-literal Origin and a cross-site Sec-Fetch-Site are refused; the "
-                  "cooling report channel refuses a non-loopback peer; the fuse view is two-factor "
+                  "cooling report channel accepts the loopback peer and refuses a non-loopback "
+                  "one; the fuse view is two-factor "
                   "(token and the physical button) and refused without either; "
                   "the flash and factory-restore chain is refused unauthenticated.")
 def auth(ctx):
@@ -93,7 +94,17 @@ def auth(ctx):
               "GET /fuse-identity with the token but no button -> %s %r (expected the two-factor refusal)",
               st, body)
 
-    # the cooling report channel: loopback only, even with a token
+    # the cooling report channel: the loopback peer is accepted. An idle
+    # report is what the controller sends every period; the engine is idle
+    # here, so it changes nothing. A dual-stack listener reports this peer
+    # as ::ffff:127.0.0.1, which the check must recognize in full.
+    st, body = fc.post("/cool/state", params={"mode": "idle", "armed": "0"})
+    ev["cool_state_from_loopback"] = st
+    ctx.log("POST /cool/state from loopback -> %s %s", st, body if isinstance(body, dict) else "")
+    ctx.check(st == 200, "/cool/state refused the loopback peer (%s %r): the controller's "
+              "reports never reach the engine", st, body)
+
+    # ...and a non-loopback peer is refused, even with a token
     ip = lan_ip()
     ev["lan_ip"] = ip
     ctx.check(ip, "cannot determine the board's LAN address")

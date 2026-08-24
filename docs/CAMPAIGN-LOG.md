@@ -3934,6 +3934,47 @@ tests and the 270 forgetest tests pass. Owed: the image, then on the
 bench `clk_enable_count` reading 1, `MOTION OK` from the probe,
 `cnc/free` at 33521664 idle, a GRBL job, and the campaign.
 
+## 2026-08-24: the clocks proven, and the listener that heard nobody
+
+Dev 20260824215906, built with the SDMA clock fix, on the bench: `sdma`
+`clk_enable_count` 1, the supervisor's probe `MOTION OK` (p2p x=3390
+y=1720), `/mode` verified, `cnc/free` 33521664 at idle, position 0.
+Campaign `c-20260824223050-0356` (36 unattended, the fixture in the loop):
+`image.health` passed in seconds with its new clock assertion, and every
+kernel, forgectrl, logs and motion test passed, `motion.liveness-probe`
+and `motion.button-hold-resume` among them. `cooling.flow-verify` passed.
+`cooling.fans-quiet-after-motion` failed: `M8 did not raise the fan duty
+off idle`.
+
+The engine had heard nothing. `/cool/status` showed `report_age_s` -1 for
+the controller the supervisor had just respawned, and a hand-sent
+`POST /cool/state?mode=idle` from 127.0.0.1 answered `403 loopback only`.
+The listener is dual-stack since the second kernel round (`:::8080`), so
+every peer arrives as a `sockaddr_in6`, the IPv4 client as
+`::ffff:127.0.0.1`. forgectrl's check handles that spelling; ulfius 2.7.15
+does not hand it over: `src/ulfius.c` allocates and copies
+`client_address` as `sizeof(struct sockaddr)`, 16 bytes, which holds the
+family, the port, the flow label and eight address bytes. The mapped
+prefix and the 127 sit at bytes 10 to 12 of the address, past the copy,
+in heap the check should never have read. Every report since dev
+20260824200726 was refused the same way; nothing ran the cooling tests on
+those images until now. The direction was safe: the engine treats silence
+as a stand-down, so no run profile, no armed window, no fire.
+
+The fix and its proof so far: the image carries a ulfius patch (a
+`sockaddr_storage` allocation, a copy of the family's length, in the
+dispatcher and in `ulfius_copy_request`); the recipe builds it clean under
+ulfius's own `-Werror -Wconversion`. The peer check moved into
+`forgectrl/src/peer.c` unchanged in meaning, with `tests/auth_peer_test.c`
+in CI: 127/8, `::1` and mapped 127/8 pass; LAN addresses in both families,
+a mapped LAN address, link-local, unspecified, `AF_UNIX`, NULL and a
+`::ffff:127.0.0.1` cut to sixteen bytes are refused. forgectrl cross-builds
+under `-Werror`. `forgectrl.auth` now asserts the loopback acceptance
+(200) next to the LAN refusal (403), so a listener that truncates the
+peer fails the catalog on the first forgectrl test rather than the first
+cooling one. Owed: the image, the loopback report accepted on the bench,
+the campaign.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
