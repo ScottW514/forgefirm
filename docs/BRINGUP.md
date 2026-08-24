@@ -48,12 +48,14 @@ hardware-validated.**
   modes (cancel-and-return on a lid or interlock open, button pause/resume),
   bench-validated 2026-08-17.
 - **Releases are gated by the acceptance tool** (`forgetest`, dev image only):
-  a 44-test catalog, domain-scoped inheritance, an always-required safety core,
-  and a release gate that reads the exported artifact. The latest full
-  campaign, on dev image `20260822204234`, satisfied 43 of 43 from nothing and
+  a 45-test catalog, domain-scoped inheritance, an always-required safety core,
+  a bench actuator that works the lid, the interlock and the button so most of
+  the operator's part runs unattended, and a release gate that reads the
+  exported artifact. The latest full campaign, on dev image `20260824230512`,
+  satisfied 45 of 45 from nothing in 27 minutes (36 tests unattended) and
   authorizes a release; **no release is cut yet.**
 
-Current bench state: dev image `20260821181036`, the board resting on the SD
+Current bench state: dev image `20260824230512`, the board resting on the SD
 dev image (eMMC slot 1 = factory 2024, slot 2 = ForgeFIRM v0.1.0, archives in
 `/data/forgefirm/archive`).
 
@@ -484,10 +486,13 @@ bounce copy; daemon ~41 % CPU with one viewer. Full-res snapshot 2.4 s warm /
 copy, needed on a kernel without the `allow_cache_hints` patch — detected via
 the `MMAP_CACHE_HINTS` capability bit), `FORGECTRL_NO_NEON` (scalar convert,
 bit-identical), `FORGECTRL_NO_VPU` (libjpeg; also the snapshot path).
-Newer and **not yet bench-run** (Next work item 20): the GC880 GPU demosaic,
-the `/cam/h264` CODA960 H.264 stream, and CSI hardware frame skip, with
-`FORGECTRL_NO_GPU` / `FORGECTRL_NO_H264` / `FORGECTRL_NO_HW_SKIP` to strip
-them individually; all fall back to the measured paths above.
+The default path is newer and bench-proven: the GC880 GPU demosaic feeding the
+`/cam/h264` CODA960 H.264 stream (render, IPU stride-fix crop, VPU encode;
+~14 fps for one viewer at ~14 % CPU, luma bit-clean against the CPU path) with
+CSI hardware frame skip as the low-CPU setting; `camera.h264-stream` covers
+it in the acceptance catalog. `FORGECTRL_NO_GPU` / `FORGECTRL_NO_H264` /
+`FORGECTRL_NO_HW_SKIP` strip them individually, each falling back to the
+measured paths above.
 `/cam/status` reports `encoder` and `buffers`. A CSI glitch frame can out-size
 the coda driver's default JPEG capture buffer, so forgectrl requests 3 B/px and
 drops error-flagged dequeues as single bad frames. **LightBurn consumes the
@@ -577,12 +582,13 @@ inheritance, the always-required core, invalidate-all, the release gate and the
 coverage currency rule — is specified in `docs/ACCEPTANCE.md`; the tool lives in
 `forgetest/` and ships only on the dev image (`/etc/init.d/forgetest`, HTTP
 :8090). It is **bench-validated**: the full campaign on dev image
-`20260821181036` satisfied 42 of 42 (12 run on that image, 30 inherited
-under the domain model from the day's earlier dev images) and the export reads "Release authorized:
-YES" for that image's manifest. That authorizes a release; it is not one
-until `releases/v<version>/acceptance.json` is committed.
+`20260824230512` (`c-20260824231028-b7ca`) satisfied 45 of 45 from nothing,
+36 of them unattended with the bench actuator in the loop, in 27 minutes, and
+the export reads "Release authorized: YES" for that image's manifest. That
+authorizes a release; it is not one until `releases/v<version>/acceptance.json`
+is committed.
 
-- **Catalog: 44 tests** in `forgetest/forgetest/suite/`, every one a port of a
+- **Catalog: 45 tests** in `forgetest/forgetest/suite/`, every one a port of a
   proven bench drill or a bench-verified check: the always-required core
   (`image.health`, `kernel.latch-locked-idle`, `kernel.k1-k2`,
   `kernel.fire-line`), `forgectrl.*`, `logs.*`, `update.*`, `motion.*`
@@ -598,7 +604,8 @@ until `releases/v<version>/acceptance.json` is committed.
   the cloud client driven from a local socket with a synthesized
   laser-free job, no account, no network, nothing on the bed). Tests that
   share a setup are merged; the `auto` tests stay separate for failure
-  isolation. 27 are `auto`, 9 `operator`, 8 `live`.
+  isolation. 28 are `auto`, 9 `operator`, 8 `live`; with the bench actuator up,
+  eight of the operator tests run in the unattended queue.
 - **The operator's part is asked for by name, not by popup**
   (`docs/ACCEPTANCE.md` "The operator's part"): a Ready prompt before a
   timed step, a standing notice the test takes down when the machine shows
@@ -607,9 +614,9 @@ until `releases/v<version>/acceptance.json` is committed.
   emission witness's mark). The head accelerometer, the beam detector, the
   button LEDs, and a lid-lamp toggle between two snapshots replaced the
   other eyeball confirmations; `kernel.fire-line` and `camera.snapshot` are
-  `auto`. Bench-validated 2026-08-22 on dev image `20260822204234`: campaign
-  `c-20260822220701-a1c0`, 43 of 43 from nothing, the attended block 19
-  minutes. A test's implementation hash is its own function plus its
+  `auto`. With the bench actuator up the attended block is the nine tests
+  that need a person (four laser live, five cloud): 12 minutes on dev image
+  `20260824230512`. A test's implementation hash is its own function plus its
   module's shared code, so a fix inside one test re-requires that test
   alone.
 - **Machine identity is content-defined.** Every component recipe contributes
@@ -702,7 +709,8 @@ until `releases/v<version>/acceptance.json` is committed.
   `step_wise`, trips at **85 C passive** and **90 C critical** (the
   consumer-grade points the driver derives from the fuses: hot point 95,
   critical at hot minus 5, passive at hot minus 10). The passive trip is
-  bound to `cpufreq-cpu0` (996 / 792 / 396 MHz, governor `ondemand`) and
+  bound to `cpufreq-cpu0` (996 / 792 / 396 MHz OPPs; `performance` is the only
+  governor built, so the core sits at 996 MHz until the trip lowers it) and
   both GPU cooling devices; the critical trip is the kernel's orderly
   poweroff. A throttle slows the engine, the camera and the protocol thread
   before the step stream (the ring is in hand). The factory board carries
@@ -772,14 +780,27 @@ until `releases/v<version>/acceptance.json` is committed.
   keeps only a few KB in flight. The 32 KiB gap is retained history: the
   writer stops that far short of the play head, so any fill leaves 3.2 s of
   played program (at the print tick) to back a pause into, which is what
-  `cnc/max_backtrack` reports less the deceleration tail.
+  `cnc/max_backtrack` reports less the deceleration tail. The engine's `ipg`
+  and `ahb` clocks are enabled only by a channel holder: imx-sdma leaves them
+  off after probe, and glowforge.ko holds them itself through
+  `sdma_get_channel()` in the SDMA API patch for as long as it is loaded;
+  nothing else on this board holds an SDMA channel (ecspi2 runs PIO). With the
+  block gated every channel-0 transfer completes at once and moves nothing:
+  the ring reads back its bounce page, the probe cannot start and `cnc/free`
+  exceeds the ring, which is why `image.health` asserts the clock enable
+  count directly.
 - **Reserved memory**: 511 MiB usable DRAM (`0x10000000`–`0x2fefffff`), of which
   96 MiB is reserved for DMA: the 32 MiB `cnc-pulsebuf` no-map pool (dynamically
   placed, `alignment = size`, so it lands at `0x2c000000`) plus 64 MiB of
   reusable CMA for camera/IPU/VPU buffers. no-map means the pulse pool is gone
   from the kernel's map whether a job uses it or not, which is what makes
   `dma_alloc_coherent()` deterministic for a late-probing out-of-tree module.
-  MemTotal ~454 MiB; measured idle use in GRBL mode with the daemon and
+  The 1 MiB above the memory node (`0x2ff00000`, held back by the bootloader)
+  is pstore/ramoops: 32 KiB dump records, a 256 KiB console record, 16-byte
+  ECC, mounted at `/sys/fs/pstore` from fstab and staged by the log export.
+  MemTotal ~464 MiB on the board-only kernel (`linux-fslc` 6.12, `SMP` off,
+  `CONFIG_PREEMPT=y`, zImage 4.8 MB, 31 module packages, ROM SDMA scripts);
+  measured idle use in GRBL mode with the daemon and
   controller up is ~100 MiB. The playback script is
   relocated to SDMA channel 26 at `<26 0xF00>` (halfword 7680) with a pre-run
   integrity guard; the probe lines to look for are `EPIT clock 66000000 Hz` and
@@ -1167,54 +1188,27 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     matter. Only if it still recurs, cap the bus with
     `max-frequency = <25000000>` on `&usdhc1` (halves Wi-Fi throughput — last
     resort; the factory ran 50 MHz on these pads).
-12. **Release acceptance follow-through.** The full campaign on the first
-    image built with the `<recipe>-pin.inc` layout is done: dev image
-    `20260821181036`, 42 of 42, release authorized (the export is on the
-    board at `/data/forgetest/export/`). From here a component pin bump
-    re-requires only the tests covering that component. That image also
-    carries the 32 MiB pulse ring (DT pool plus the module default):
-    `image.health` reads the pool and `ring_mb` back, and
-    `cloud.oversize-stream` fed a print longer than the ring from the live
-    service. Still owed: exercising the ported bench tools from the page
-    (they are registered and unit-tested, not yet driven from the page), and
-    the first release, which commits `releases/v<version>/acceptance.json`.
-    Cutting the operator's part of a campaign: the forgetest-only step
-    (the operator channel, the merged mode-switch, the sensor witnesses,
-    the steps pane, the journal, per-test implementation hashing) is done
-    and bench-validated (CAMPAIGN-LOG 2026-08-22). The offline cloud
-    service for the machine-behavior tests (gfutilities `OfflineService`,
-    `gfcloud --offline`, `forgetest/puls.py`, four tests re-ported) is done
-    and bench-validated on dev image `20260822232347` (43 of 43, the four
-    offline tests in 5.5 minutes, nothing on the bed). The service-protocol
-    test on the emulator (`cloud.service-protocol`, `gfcloud --emulate`, the
-    `python3-gfutilities-emulator` fixtures on the dev image; only a Print
-    in the app to drive) is done and bench-validated on dev image
-    `20260823161333` (44 of 44, CAMPAIGN-LOG 2026-08-23). The service's
-    connect-time hunt is paid only where it is the subject: every cloud
-    client the tool starts for anything else comes up under
-    `/run/gfcloud-nohunt` (`gfcloud --no-hunt`, the first settings report in
-    the reconnect form), while the two homing tests and the one real print
-    get theirs, the print by never reusing a session that has not hunted
-    the machine itself (the contract's cloud split in ACCEPTANCE.md). The
-    coverage maps follow the split (a sign-in change re-requires the
-    protocol test and the print, a feeder change the offline tests and the
-    print, a doc edit nothing), and the bench actuator `forgefixture`
-    (`fixture/`: ESP32-S3, three relays, the `ctx.act` seam, an operator
-    test it covers routed into the unattended queue) is written and
-    host-proven (the firmware builds in the pinned ESP-IDF container, the
-    policy and the tool's client have host tests) and **owed its bench
-    proof**: the harness at the machine's connectors, then a campaign with
-    it up. Catalog
-    gaps left from the tool's own plan: `cooling.confirm-escalate` and
-    `cooling.fire-gate-blocks-arm` are not ported (both need the pump switched
-    by hand mid-run, so they are bench-tab material first), and whether
-    `laser.armed-kill` belongs in the always-required core rather than its
-    domain is still an open call (the core carries the emission witness).
+12. **Release acceptance follow-through.** The campaign is the release gate
+    and runs as designed: dev image `20260824230512`, 45 of 45 from nothing,
+    36 of them unattended with the bench actuator in the loop, release
+    authorized (the export is on the board at `/data/forgetest/export/`).
+    What is left is small. The ported bench tools are registered and
+    unit-tested but not yet driven from the page. Two catalog gaps from the
+    tool's own plan, `cooling.confirm-escalate` and
+    `cooling.fire-gate-blocks-arm`, are not ported (both need the pump
+    switched by hand mid-run, so they are bench-tab material first), and
+    whether `laser.armed-kill` belongs in the always-required core rather
+    than its domain is still an open call (the core carries the emission
+    witness). From the coverage maps: splitting gfutilities' `websocket.py`
+    into transport and transfer helpers would take websocket-transport
+    changes off the offline tests (a gfutilities refactor, not a map).
     Tools that genuinely need a second host (LAN flood, remote auth probes)
-    stay host-side by design, and the registry marks them so.
-13. **Publish.** The kas flip and the first GitHub release, per
-    `kas/README.md` ("Pins, pushes, and the release flow"), once ready to
-    publish. Repoint the core submodule to
+    stay host-side by design, and the registry marks them so. The first
+    release is item 13.
+13. **Publish.** The first release: `releases/v<version>/acceptance.json`
+    from the authorized export, `scripts/release.sh`, the kas flip and the
+    first GitHub release, per `kas/README.md` ("Pins, pushes, and the release
+    flow"), once ready to publish. Repoint the core submodule to
     upstream if the `step_us_min` sizing fix merges.
 14. **Update system Phase 5 — recovery refresh.** The remaining phase of
     `docs/UPDATE-SYSTEM.md` (a refreshed recovery image in boot0); Phases 0–4
@@ -1272,13 +1266,14 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     and the existing `FORGECTRL_STREAM_FPS` cap skips demosaic and encode but
     still dequeues every frame. Shares the bench slot with item 8.
 
-    To re-measure on the next image before spending more on it: the kernel
-    is now UP (no SMP locking) with the performance governor as the only
-    governor (no 396 MHz idle floor, no ondemand sampling delay), and the
-    video offload's hardware frame skip halves the dequeues the cache
-    maintenance rides on. The same drill (a GRBL job with the stream live,
-    the run's `clamped` count and `min margin`) decides whether the camera
-    gate is still owed or the item closes.
+    The kernel is now UP (no SMP locking) with the performance governor as
+    the only governor (no 396 MHz idle floor, no ondemand sampling delay),
+    and the video offload's hardware frame skip halves the dequeues the
+    cache maintenance rides on. On that image the campaign's
+    `motion.step-timing-under-load` (a nice-5 hog against a job) passed with
+    no clamped events. Still to measure: the same drill with the stream live
+    (the run's `clamped` count and `min margin`), which decides whether the
+    camera gate is still owed or the item closes.
 17. **Laser power model: dose by FIRE-bit density.** grblHAL maps S onto the
     analog PWM duty (`$30`/`$31` → `$35`/`$36`, written raw into PWMSAR against
     the 127-count period). `$35` now ships at 16, the measured lasing
@@ -1464,149 +1459,22 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     are established. A pause on contact, on the factory's shape, would be
     the first use.
 
-20. **Video pipeline offload — bench validation.** First hardware session
-    done (2026-08-24, dev image 20260824122014, drill binaries; fixes in
-    forgectrl 6614833). Proven: Mesa etnaviv fits the release slot
-    (~5 MiB margin); surfaceless EGL and dmabuf import both directions;
-    `GL_MAX_TEXTURE_SIZE` 8192 (no tiling even at 8 MP); the full path
-    GPU render → IPU stride-fix crop (`src/ipu_copy.c`, the render
-    engine's 64-byte rows and the CODA's round_up(width,16) stride never
-    meet, so the IPU crops between them, 14 ms, no CPU touch) → VPU
-    encode, `convert: "gpu"`, image correct to within 2 counts of the
-    scalar demosaic; `/cam/h264` serving valid fragmented MP4 on
-    hardware (avc1.424020, ~480 kbit/s on a static bed). Second session
-    (2026-08-24 evening, forgectrl 2d59d78): the render decomposed to
-    41 ms luma + 49 ms per chroma pass; the chroma passes now
-    point-sample instead of box-average (16x fewer per-fragment fetch
-    chains), taking the render to 64 ms - **~9 fps at ~7 % CPU**
-    against the NEON path's 15 fps at 41 % - with luma measured
-    bit-clean against the CPU path (which also retired the bottom-row
-    artifact of the first session). The **CSI hardware frame skip is
-    live-proven** with the GPU path (`FORGECTRL_STREAM_FPS=7` →
-    `hw_fps_skip: true`, steady ~7 fps, daemon sampling 0.0 % in top):
-    that is the recommended low-CPU configuration today. Third session
-    (2026-08-24 night, forgectrl deee6a1): the render and the encode now
-    overlap - a frame renders behind an EGL fence while the previous
-    frame is IPU-cropped, encoded and published (two IPU source buffers;
-    the rendering frame's capture buffer held until its fence clears) -
-    measured **13.8 fps single-viewer at ~14 % CPU** (fence stall
-    7-9 ms of the 64 ms render, so it is fully hidden), **9.8 fps with
-    MJPEG and H.264 served at once** (stall 0), luma still bit-clean.
-    Fourth session (2026-08-24 night, forgectrl d97cb35): MSE playback
-    in Chrome found the fragments carrying raw boot-clock timestamps
-    and the panel's live-edge seek overshooting the one-frame buffered
-    window; each viewer's fragments are now zero-based, the seek clamps
-    into the newest range, and a paused element is kicked back into
-    play. Verified live: the panel's H.264 view plays at 1296x972 with
-    no MJPEG fallback, and with that view plus an MJPEG viewer running,
-    a jog out and back completed at its commanded feed with the step
-    ring's underrun counter unmoved and the planner buffer full - the
-    GPU stream path and motion coexist. Bench validation of the video
-    offload is complete. The acceptance campaign is not tracked here:
-    it rides the release flow as always (item 12; Mesa joining the
-    image makes the next one full, and `camera.h264-stream` rides in
-    it). The one piece of video work that needs hardware this bench
-    does not have is 8 MP first light (item 6). Switches to strip a suspect layer: `FORGECTRL_NO_GPU`,
-    `FORGECTRL_NO_H264`, `FORGECTRL_NO_HW_SKIP`, plus the existing
-    `FORGECTRL_NO_VPU` / `FORGECTRL_NO_NEON` /
-    `FORGECTRL_NO_CACHED_BUFS`; diagnostics under `FORGECTRL_GPU_CHECK`
-    (tight stats cadence, render-versus-copy split, luma/chroma
-    compare) plus `FORGECTRL_GPU_PASSES` (limit the draws) and the
-    frame-wait column in the stream stats.
-
-21. **Kernel trim: bench validation.** The kernel is built for this board
-    alone: `glowforge.cfg` names the driver set and turns off what the
-    multi-board defconfig adds, and `glowforge.conf` names the modules and
-    firmware the rootfs carries. Built into image 20260824164619, not yet
-    flashed: zImage 4.8 MB (was 9.1 MB), 31 kernel-module packages (was 254),
-    no SDMA, EPDC or Quad-VPU firmware, ARMv7-only code, no virtual console
-    (`USE_VT = "0"`), and no `dmas` on ecspi2, so the pulse ring is the SDMA's
-    only client. New on the same image: pstore/ramoops in the 1 MiB the
-    bootloader holds back at the top of DRAM (`/sys/fs/pstore` mounts from
-    fstab), the hung-task and soft-lockup detectors behind the panic
-    notifier, `PANIC_TIMEOUT=10` in Kconfig, and `evbug` gone from the kernel
-    log. Bench-validated on that image (CAMPAIGN-LOG 2026-08-24): every node
-    binds and nothing defers, the panic sysctls read as configured,
-    `/sys/fs/pstore` mounts with ramoops registered, `/dev/dri/renderD128`
-    is present and both cameras stream through the GPU demosaic, Wi-Fi
-    associates with `regulatory.db` loaded, the switches sit on `event0`,
-    31 modules load and no DMA channel is held by anyone (which, as the
-    campaign later showed, was the problem: see below). Two cosmetic dmesg
-    lines came with it: spi-imx reports the absent DMA channel at ERR level
-    and runs PIO, and `consoleblank=0` (uEnv) is an unknown parameter without
-    a virtual console. The crash record is proven: a forced `sysrq-c`
-    panicked, rebooted on the timeout, and the next boot read back
-    `dmesg-ramoops-0` and `console-ramoops-0` with no ECC errors (the
-    first boot's header-init lines did not repeat). The `spi_device_id`
-    table for `glowforge,pic` is pinned into the next build (its boot
-    warning goes with it). Still owed: a GRBL job on the image, then the
-    acceptance campaign (platform change).
-
-    A second round rides the next image, host-proven and unflashed: the
-    kernel is UP (`SMP` off) with performance as its only cpufreq governor;
-    spi-imx no longer logs the absent DMA channel (patch 0014);
-    `consoleblank=0` is gone from the boot
-    arguments; only `wl18xx-fw-4.bin` and `wl18xx-conf.bin` ship for the
-    WL1805 (the current factory image's set); IPv6 is on end to end
-    (distro feature, `udhcpc6` from the `wlan0 inet6` stanza, forgectrl,
-    grblHAL's TCP:23 and forgetest listening dual-stack); the log export
-    carries `/sys/fs/pstore`; and the release rootfs drops nano/libmagic,
-    the udev hardware database and urllib3's pyOpenSSL chain (~22 MB).
-    Bench-validated on dev 20260824200726 (CAMPAIGN-LOG 2026-08-24, second
-    round): the three lines are gone, the kernel is UP at 996 MHz on the
-    performance governor, Wi-Fi is up on the two-file firmware set, every
-    port answers over IPv6 on the board's ULA, the export runs. Dev
-    20260824201945 adds patch 0015 (wlcore asks for its optional NVS the
-    quiet way) and the last stray dmesg line is gone. The missing GUA is a
-    network matter, diagnosed (CAMPAIGN-LOG 2026-08-24, "the second DHCPv6
-    responder"): the firewall advertises an address, but an access point on
-    the bench VLAN still ran its own RA and DHCPv6 server, its Advertise
-    arrived first with nothing to give, and busybox's `udhcpc6` stays with
-    the first Advertise it sees. With that access point's RA and DHCPv6
-    disabled (as on the other two) the board took the firewall's lease, and
-    every service answered on the global address from another VLAN: IPv6 is
-    on end to end.
-
-    The campaign on dev 20260824201945 then found what every check above had
-    missed: the machine cannot move on any image since the trim. The SDMA
-    engine's `ipg`/`ahb` clocks are enabled only while a dmaengine client
-    holds a channel; imx-sdma leaves them off after probe, and glowforge.ko
-    takes its channel through the SDMA API patch without touching them. The
-    ecspi2 `dmas` had been the only clock holder since the first image, by
-    accident. With the block gated every channel-0 transfer completes at
-    once and moves nothing, so the ring reads back the bounce page: the
-    supervisor's probe logs `cannot start the probe run` at every spawn
-    (`cnc/run` returns -ENODATA because the head sync reads the tail it just
-    published), `cnc/free` exceeds the ring, and `/status` reports a position
-    that never moved. `image.health` failed on the free check after the
-    150 s settle timeout, which is how it surfaced (CAMPAIGN-LOG 2026-08-24,
-    "the SDMA clocks, held by nobody"). The fix, host-proven and unbuilt:
-    `sdma_get_channel()` enables the clocks and `sdma_put_channel()`
-    releases them (patch 0003, the API header), the module calls put on
-    remove and on the probe unwind, the empty-ring run request logs at ERR
-    level again (it was the only kernel-log trace of the fault), and
-    `image.health` asserts the SDMA clock enable count directly. The ecspi2
-    `dmas` stay deleted. Bench-proven on dev 20260824215906: the clock count
-    reads 1, the probe reports MOTION OK, `cnc/free` reads the ring less its
-    gap, and the campaign ran every kernel, forgectrl, logs and motion test
-    green.
-
-    That campaign then stopped on `cooling.fans-quiet-after-motion`: M8
-    raised no fan duty because forgectrl had accepted no cooling report
-    from the controller at all (`report_age_s` -1). The dual-stack listener
-    of the second round reports every peer as a `sockaddr_in6`, and ulfius
-    2.7.15 copies the peer into `client_address` as `sizeof(struct
-    sockaddr)`, 16 bytes; the mapped-loopback bytes the check reads lie
-    beyond the copy, so `POST /cool/state` from 127.0.0.1 got `403 loopback
-    only` (fail-safe: the engine treats silence as a stand-down, so nothing
-    fired, but no run profile and no armed window either). The fix: the
-    image patches ulfius to allocate a `sockaddr_storage` and copy the
-    family's length (`meta-forgefirm/recipes-extended/ulfius`), the peer
-    check lives in `src/peer.c` with a host unit test (`auth_peer_test`,
-    including the truncated-copy case, which fails closed), and
-    `forgectrl.auth` asserts that the loopback peer is accepted as well as
-    that a LAN peer is refused. Left: build, flash, the item-16 drill and
-    the campaign.
+20. **Image trims not taken.** Two rootfs reductions the kernel review left
+    on the table, each wanting a check before it lands. The `python3`
+    meta-package installs `python3-modules` (tkinter, idle, 2to3, pydoc,
+    ensurepip, venv, the debugger, doctest, asyncio, multiprocessing,
+    xmlrpc: ~10 MB) where the apps declare `python3-core` and a few modules,
+    so replacing it with the explicit set needs an import audit of gfcloud,
+    gfhome, gfhardware and gfutilities (the cloud tests are the check).
+    `libgnutls30`, `libunistring5`, `nettle` and `libgmp10` (~4.9 MB) sit on
+    the rootfs with no package depending on them and no binary linking them;
+    a `PACKAGE_EXCLUDE` experiment on a build would name the holder if there
+    is one. Five helper modules are built and not shipped (`crc7`,
+    `crc-ccitt`, `libcrc32c`, `st-accel-spi`, `st-sensors-spi`: 0.1 MB,
+    harmless). The debug features stay in the release kernel by decision
+    (`KPROBES`, `PERF_EVENTS`, `BPF_SYSCALL`, `DEBUG_FS`, `DEVMEM`,
+    `MAGIC_SYSRQ`: no runtime cost unused, root-only exposure, and root can
+    load modules anyway).
 
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the

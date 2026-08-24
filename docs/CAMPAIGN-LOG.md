@@ -3975,6 +3975,51 @@ peer fails the catalog on the first forgectrl test rather than the first
 cooling one. Owed: the image, the loopback report accepted on the bench,
 the campaign.
 
+## 2026-08-24: the listener heard, and the campaign ran through
+
+Dev 20260824230512 (the ulfius peer patch, forgectrl 78efd16 with
+`src/peer.c`, the SDMA clock fix underneath) on the bench 54 s after
+boot: `POST /cool/state` from 127.0.0.1 answered 200 and the same report
+from the board's LAN address with the token answered `403 loopback only`;
+`/cool/status` showed `report_age_s` 0.1 from the freshly spawned
+controller; the SDMA clock count 1, the probe `MOTION OK` (p2p x=1879
+y=1906), `cnc/free` 33521664. Campaign `c-20260824231028-b7ca`, the 36
+unattended tests with the fixture in the loop: 36 passed in 13 minutes,
+`forgectrl.auth` with its loopback assertion, `motion.liveness-probe`,
+`cooling.fans-quiet-after-motion` (the fans up on M8 through the accepted
+channel, quiet again within the cooldown), the fan-gate trips, both
+unattended laser tests, the cameras, the update slots and the two cloud
+tests. Nothing inherited: the image is a platform change twice over. The
+nine attended tests (four laser live, five cloud) stand between this
+image and an authorized release. The bench was left in cloud mode on the
+offline client, as the cloud tests leave it; nothing of the session's on
+the board.
+
+## 2026-08-24: the attended nine, and a release authorized
+
+The operator ran the nine attended tests on dev 20260824230512 after the
+unattended 36, in one sitting: `laser.emission-witness` (23:25Z, 33 s),
+`laser.disarm-in-hold` (83 s), `laser.armed-kill` (66 s),
+`laser.pause-resume-lid-cancel` (31 s), `cloud.service-protocol` (65 s),
+`cloud.lid-interlock-abort` (66 s), `cloud.pause-resume` (198 s),
+`cloud.oversize-stream` (166 s) and `cloud.paused-lid-cancel` (23:37Z,
+28 s): every one passed. Campaign `c-20260824231028-b7ca` closed at 45 of
+45 from nothing, the whole of it in 27 minutes of test time (36 unattended
+in 13, the attended block in 12), and the export authorizes the image.
+No release is cut. This is the first campaign on an image carrying the
+board-only kernel, the SDMA clock fix and the ulfius peer patch together,
+so it is the bench proof of all three, and the first with the bench actuator
+doing the operator's door, interlock and button work end to end.
+
+With it, three BRINGUP items close and two working files at the tree root
+are merged: item 12's campaign narrative, item 20 (the video offload's bench
+validation, `camera.h264-stream` in the campaign), item 21 (the kernel
+trim, the campaign being what it owed), the acceptance burden plan (every
+step landed, its decisions taken) and the kernel configuration review (its
+status section is the record of what changed). Their texts, as they stood,
+are in "Superseded status notes" below; what stays open went into BRINGUP
+items 12, 13, 16 and the new item 20.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
@@ -4275,6 +4320,1110 @@ that carry more than one license (`wlconf`, `python3-gfhardware`) declare
 each of them with a checksum on its license text. The stack
 is hardware-validated end to end: motion timing, the laser and safety chain,
 the camera pipeline, both controller modes, and the A/B install path.
+
+### Release acceptance follow-through (item 12), as listed 2026-08-24
+
+Closed by campaign `c-20260824231028-b7ca` (45 of 45 on dev 20260824230512, the bench actuator proven in it). The leftovers (bench tools from the page, two unported cooling tests, the armed-kill core question, the websocket.py split) stay in BRINGUP item 12; the first release is item 13.
+12. **Release acceptance follow-through.** The full campaign on the first
+    image built with the `<recipe>-pin.inc` layout is done: dev image
+    `20260821181036`, 42 of 42, release authorized (the export is on the
+    board at `/data/forgetest/export/`). From here a component pin bump
+    re-requires only the tests covering that component. That image also
+    carries the 32 MiB pulse ring (DT pool plus the module default):
+    `image.health` reads the pool and `ring_mb` back, and
+    `cloud.oversize-stream` fed a print longer than the ring from the live
+    service. Still owed: exercising the ported bench tools from the page
+    (they are registered and unit-tested, not yet driven from the page), and
+    the first release, which commits `releases/v<version>/acceptance.json`.
+    Cutting the operator's part of a campaign: the forgetest-only step
+    (the operator channel, the merged mode-switch, the sensor witnesses,
+    the steps pane, the journal, per-test implementation hashing) is done
+    and bench-validated (CAMPAIGN-LOG 2026-08-22). The offline cloud
+    service for the machine-behavior tests (gfutilities `OfflineService`,
+    `gfcloud --offline`, `forgetest/puls.py`, four tests re-ported) is done
+    and bench-validated on dev image `20260822232347` (43 of 43, the four
+    offline tests in 5.5 minutes, nothing on the bed). The service-protocol
+    test on the emulator (`cloud.service-protocol`, `gfcloud --emulate`, the
+    `python3-gfutilities-emulator` fixtures on the dev image; only a Print
+    in the app to drive) is done and bench-validated on dev image
+    `20260823161333` (44 of 44, CAMPAIGN-LOG 2026-08-23). The service's
+    connect-time hunt is paid only where it is the subject: every cloud
+    client the tool starts for anything else comes up under
+    `/run/gfcloud-nohunt` (`gfcloud --no-hunt`, the first settings report in
+    the reconnect form), while the two homing tests and the one real print
+    get theirs, the print by never reusing a session that has not hunted
+    the machine itself (the contract's cloud split in ACCEPTANCE.md). The
+    coverage maps follow the split (a sign-in change re-requires the
+    protocol test and the print, a feeder change the offline tests and the
+    print, a doc edit nothing), and the bench actuator `forgefixture`
+    (`fixture/`: ESP32-S3, three relays, the `ctx.act` seam, an operator
+    test it covers routed into the unattended queue) is written and
+    host-proven (the firmware builds in the pinned ESP-IDF container, the
+    policy and the tool's client have host tests) and **owed its bench
+    proof**: the harness at the machine's connectors, then a campaign with
+    it up. Catalog
+    gaps left from the tool's own plan: `cooling.confirm-escalate` and
+    `cooling.fire-gate-blocks-arm` are not ported (both need the pump switched
+    by hand mid-run, so they are bench-tab material first), and whether
+    `laser.armed-kill` belongs in the always-required core rather than its
+    domain is still an open call (the core carries the emission witness).
+    Tools that genuinely need a second host (LAN flood, remote auth probes)
+    stay host-side by design, and the registry marks them so.
+
+### Video pipeline offload: bench validation (item 20), closed 2026-08-24
+
+Closed: `camera.h264-stream`, `camera.frame-health` and `camera.snapshot` passed in the campaign on the GPU path, and motion ran under the stream. The strip switches and diagnostics named at the end are documented in `forgectrl/docs/SERVICES.md`; 8 MP first light stays with item 6.
+20. **Video pipeline offload - bench validation.** First hardware session
+    done (2026-08-24, dev image 20260824122014, drill binaries; fixes in
+    forgectrl 6614833). Proven: Mesa etnaviv fits the release slot
+    (~5 MiB margin); surfaceless EGL and dmabuf import both directions;
+    `GL_MAX_TEXTURE_SIZE` 8192 (no tiling even at 8 MP); the full path
+    GPU render → IPU stride-fix crop (`src/ipu_copy.c`, the render
+    engine's 64-byte rows and the CODA's round_up(width,16) stride never
+    meet, so the IPU crops between them, 14 ms, no CPU touch) → VPU
+    encode, `convert: "gpu"`, image correct to within 2 counts of the
+    scalar demosaic; `/cam/h264` serving valid fragmented MP4 on
+    hardware (avc1.424020, ~480 kbit/s on a static bed). Second session
+    (2026-08-24 evening, forgectrl 2d59d78): the render decomposed to
+    41 ms luma + 49 ms per chroma pass; the chroma passes now
+    point-sample instead of box-average (16x fewer per-fragment fetch
+    chains), taking the render to 64 ms - **~9 fps at ~7 % CPU**
+    against the NEON path's 15 fps at 41 % - with luma measured
+    bit-clean against the CPU path (which also retired the bottom-row
+    artifact of the first session). The **CSI hardware frame skip is
+    live-proven** with the GPU path (`FORGECTRL_STREAM_FPS=7` →
+    `hw_fps_skip: true`, steady ~7 fps, daemon sampling 0.0 % in top):
+    that is the recommended low-CPU configuration today. Third session
+    (2026-08-24 night, forgectrl deee6a1): the render and the encode now
+    overlap - a frame renders behind an EGL fence while the previous
+    frame is IPU-cropped, encoded and published (two IPU source buffers;
+    the rendering frame's capture buffer held until its fence clears) -
+    measured **13.8 fps single-viewer at ~14 % CPU** (fence stall
+    7-9 ms of the 64 ms render, so it is fully hidden), **9.8 fps with
+    MJPEG and H.264 served at once** (stall 0), luma still bit-clean.
+    Fourth session (2026-08-24 night, forgectrl d97cb35): MSE playback
+    in Chrome found the fragments carrying raw boot-clock timestamps
+    and the panel's live-edge seek overshooting the one-frame buffered
+    window; each viewer's fragments are now zero-based, the seek clamps
+    into the newest range, and a paused element is kicked back into
+    play. Verified live: the panel's H.264 view plays at 1296x972 with
+    no MJPEG fallback, and with that view plus an MJPEG viewer running,
+    a jog out and back completed at its commanded feed with the step
+    ring's underrun counter unmoved and the planner buffer full - the
+    GPU stream path and motion coexist. Bench validation of the video
+    offload is complete. The acceptance campaign is not tracked here:
+    it rides the release flow as always (item 12; Mesa joining the
+    image makes the next one full, and `camera.h264-stream` rides in
+    it). The one piece of video work that needs hardware this bench
+    does not have is 8 MP first light (item 6). Switches to strip a suspect layer: `FORGECTRL_NO_GPU`,
+    `FORGECTRL_NO_H264`, `FORGECTRL_NO_HW_SKIP`, plus the existing
+    `FORGECTRL_NO_VPU` / `FORGECTRL_NO_NEON` /
+    `FORGECTRL_NO_CACHED_BUFS`; diagnostics under `FORGECTRL_GPU_CHECK`
+    (tight stats cadence, render-versus-copy split, luma/chroma
+    compare) plus `FORGECTRL_GPU_PASSES` (limit the draws) and the
+    frame-wait column in the stream stats.
+
+### Kernel trim: bench validation (item 21), closed 2026-08-24
+
+Closed: the campaign it owed ran green on dev 20260824230512, after the two faults it uncovered on the way (the SDMA clocks and the truncated peer address, both above) were fixed. The kernel's present shape is in the facts bank ("Reserved memory", "SDMA pulse engine", "The SoC guards itself"); the item-16 drill stays with item 16; the trims not taken are the new item 20.
+21. **Kernel trim: bench validation.** The kernel is built for this board
+    alone: `glowforge.cfg` names the driver set and turns off what the
+    multi-board defconfig adds, and `glowforge.conf` names the modules and
+    firmware the rootfs carries. Built into image 20260824164619, not yet
+    flashed: zImage 4.8 MB (was 9.1 MB), 31 kernel-module packages (was 254),
+    no SDMA, EPDC or Quad-VPU firmware, ARMv7-only code, no virtual console
+    (`USE_VT = "0"`), and no `dmas` on ecspi2, so the pulse ring is the SDMA's
+    only client. New on the same image: pstore/ramoops in the 1 MiB the
+    bootloader holds back at the top of DRAM (`/sys/fs/pstore` mounts from
+    fstab), the hung-task and soft-lockup detectors behind the panic
+    notifier, `PANIC_TIMEOUT=10` in Kconfig, and `evbug` gone from the kernel
+    log. Bench-validated on that image (CAMPAIGN-LOG 2026-08-24): every node
+    binds and nothing defers, the panic sysctls read as configured,
+    `/sys/fs/pstore` mounts with ramoops registered, `/dev/dri/renderD128`
+    is present and both cameras stream through the GPU demosaic, Wi-Fi
+    associates with `regulatory.db` loaded, the switches sit on `event0`,
+    31 modules load and no DMA channel is held by anyone (which, as the
+    campaign later showed, was the problem: see below). Two cosmetic dmesg
+    lines came with it: spi-imx reports the absent DMA channel at ERR level
+    and runs PIO, and `consoleblank=0` (uEnv) is an unknown parameter without
+    a virtual console. The crash record is proven: a forced `sysrq-c`
+    panicked, rebooted on the timeout, and the next boot read back
+    `dmesg-ramoops-0` and `console-ramoops-0` with no ECC errors (the
+    first boot's header-init lines did not repeat). The `spi_device_id`
+    table for `glowforge,pic` is pinned into the next build (its boot
+    warning goes with it). Still owed: a GRBL job on the image, then the
+    acceptance campaign (platform change).
+
+    A second round rides the next image, host-proven and unflashed: the
+    kernel is UP (`SMP` off) with performance as its only cpufreq governor;
+    spi-imx no longer logs the absent DMA channel (patch 0014);
+    `consoleblank=0` is gone from the boot
+    arguments; only `wl18xx-fw-4.bin` and `wl18xx-conf.bin` ship for the
+    WL1805 (the current factory image's set); IPv6 is on end to end
+    (distro feature, `udhcpc6` from the `wlan0 inet6` stanza, forgectrl,
+    grblHAL's TCP:23 and forgetest listening dual-stack); the log export
+    carries `/sys/fs/pstore`; and the release rootfs drops nano/libmagic,
+    the udev hardware database and urllib3's pyOpenSSL chain (~22 MB).
+    Bench-validated on dev 20260824200726 (CAMPAIGN-LOG 2026-08-24, second
+    round): the three lines are gone, the kernel is UP at 996 MHz on the
+    performance governor, Wi-Fi is up on the two-file firmware set, every
+    port answers over IPv6 on the board's ULA, the export runs. Dev
+    20260824201945 adds patch 0015 (wlcore asks for its optional NVS the
+    quiet way) and the last stray dmesg line is gone. The missing GUA is a
+    network matter, diagnosed (CAMPAIGN-LOG 2026-08-24, "the second DHCPv6
+    responder"): the firewall advertises an address, but an access point on
+    the bench VLAN still ran its own RA and DHCPv6 server, its Advertise
+    arrived first with nothing to give, and busybox's `udhcpc6` stays with
+    the first Advertise it sees. With that access point's RA and DHCPv6
+    disabled (as on the other two) the board took the firewall's lease, and
+    every service answered on the global address from another VLAN: IPv6 is
+    on end to end.
+
+    The campaign on dev 20260824201945 then found what every check above had
+    missed: the machine cannot move on any image since the trim. The SDMA
+    engine's `ipg`/`ahb` clocks are enabled only while a dmaengine client
+    holds a channel; imx-sdma leaves them off after probe, and glowforge.ko
+    takes its channel through the SDMA API patch without touching them. The
+    ecspi2 `dmas` had been the only clock holder since the first image, by
+    accident. With the block gated every channel-0 transfer completes at
+    once and moves nothing, so the ring reads back the bounce page: the
+    supervisor's probe logs `cannot start the probe run` at every spawn
+    (`cnc/run` returns -ENODATA because the head sync reads the tail it just
+    published), `cnc/free` exceeds the ring, and `/status` reports a position
+    that never moved. `image.health` failed on the free check after the
+    150 s settle timeout, which is how it surfaced (CAMPAIGN-LOG 2026-08-24,
+    "the SDMA clocks, held by nobody"). The fix, host-proven and unbuilt:
+    `sdma_get_channel()` enables the clocks and `sdma_put_channel()`
+    releases them (patch 0003, the API header), the module calls put on
+    remove and on the probe unwind, the empty-ring run request logs at ERR
+    level again (it was the only kernel-log trace of the fault), and
+    `image.health` asserts the SDMA clock enable count directly. The ecspi2
+    `dmas` stay deleted. Bench-proven on dev 20260824215906: the clock count
+    reads 1, the probe reports MOTION OK, `cnc/free` reads the ring less its
+    gap, and the campaign ran every kernel, forgectrl, logs and motion test
+    green.
+
+    That campaign then stopped on `cooling.fans-quiet-after-motion`: M8
+    raised no fan duty because forgectrl had accepted no cooling report
+    from the controller at all (`report_age_s` -1). The dual-stack listener
+    of the second round reports every peer as a `sockaddr_in6`, and ulfius
+    2.7.15 copies the peer into `client_address` as `sizeof(struct
+    sockaddr)`, 16 bytes; the mapped-loopback bytes the check reads lie
+    beyond the copy, so `POST /cool/state` from 127.0.0.1 got `403 loopback
+    only` (fail-safe: the engine treats silence as a stand-down, so nothing
+    fired, but no run profile and no armed window either). The fix: the
+    image patches ulfius to allocate a `sockaddr_storage` and copy the
+    family's length (`meta-forgefirm/recipes-extended/ulfius`), the peer
+    check lives in `src/peer.c` with a host unit test (`auth_peer_test`,
+    including the truncated-copy case, which fails closed), and
+    `forgectrl.auth` asserts that the loopback peer is accepted as well as
+    that a LAN peer is refused. Bench-proven on dev 20260824230512: the
+    loopback report answers 200 and the LAN peer 403, the controller's
+    reports land (`report_age_s` 0.1), and campaign `c-20260824231028-b7ca`
+    ran the 36 unattended tests green in 13 minutes, `fans-quiet` among
+    them (CAMPAIGN-LOG 2026-08-24, "the listener heard, and the campaign
+    ran through"). Left: the item-16 drill and the nine attended tests
+    (four laser live, five cloud).
+
+### The acceptance burden plan (tree-root working file), merged 2026-08-24
+
+The working file `ACCEPTANCE_BURDEN_PLAN.md`, verbatim, at the point every step had landed: step 1 (the operator channel and the witnesses), 2a (the offline service), 2b (the protocol test on the emulator), 3 (the bench actuator) and 4 (finer covers) bench-validated, the operator's decisions taken (the fixture built; arm presses human by default with the opt-in; the mode-switch merge done; the protocol test a catalog test). The contract lives in `ACCEPTANCE.md`; the one thing it left open, the `websocket.py` split, is in BRINGUP item 12. The file is deleted.
+#### Acceptance campaign: cutting the operator's burden
+
+**Working file, not a repo document.** The tree root is not a git repo. When this
+closes, its conclusions merge into `forgefirm/docs/ACCEPTANCE.md` (the catalog
+kinds, the action seam, the fixture contract, the cloud split),
+`forgefirm/docs/BRINGUP.md` (the open work it leaves behind, and the fixture in
+the hardware facts bank if one is built), `forgectrl/docs/SERVICES.md` (the
+offline cloud service, if it becomes a setting), and the dated record goes to
+`forgefirm/docs/CAMPAIGN-LOG.md`. Then this file is deleted. Same
+merge-and-remove convention as the audit and acceptance plans.
+
+**Status: step 1 DONE and bench-validated 2026-08-22** (forgefirm de324cc,
+9139e92, 296fd68, 2547a8e, 60db956; dev image `20260822204234`; campaign
+`c-20260822220701-a1c0`, 43 of 43 from nothing, the 16 attended tests in 19
+minutes of test time against the 111-minute estimate the plan started from).
+**Step 2a DONE and bench-validated 2026-08-22** (gfutilities 768730e,
+gfhardware a3ca36f, forgefirm 9cc2e4e/628f2f7/0cb9044, meta-openglow a52e68c;
+dev image `20260822232347`; campaign `c-20260822233344-08de`, 43 of 43, the
+four offline tests in 5.5 minutes with nothing on the bed). **Step 2b
+CODE-COMPLETE, BENCH OWED** (gfhardware 12ad3b1 `gfcloud --emulate`,
+meta-openglow a4e3abf `python3-gfutilities-emulator`, forgefirm 1c8197f/4c9dcca
+`cloud.service-protocol`; dev image `20260823002125` BUILT, NOT FLASHED; it
+carries a layer change, so its first campaign is a full one: 28 unattended, 17
+attended). 2c (one real print stays) is `cloud.pause-resume` by construction.
+Steps 3 to 4 not started.
+
+**Step 2b DONE and bench-validated 2026-08-23** (CAMPAIGN-LOG 2026-08-23,
+forgefirm e5fa444): the emulator's hunt bypass found by the dry-check and
+fixed (gfhardware b7e8035); the operator's no-hunt change (gfhardware
+351a623, forgefirm 969bac6: `--no-hunt`/`/run/gfcloud-nohunt`, markers
+consumed by the client first thing, `session_hunted` guarding the real
+print; policy in ACCEPTANCE.md); the POST /mode timeout found on the bench
+and fixed both sides (gfhardware 537d0db: the emulator reports idle to the
+cooling engine; forgefirm ab0a515: 120 s for the supervisor's levers).
+Final: dev `20260823161333`, campaign `c-20260823161923-0dd7`, **44 of 44,
+release authorized**, 29 inherited, 868 s attended. `cloud.service-protocol`
+68 s with one Print in the app; the real client back in 14 s under NO-HUNT.
+No release cut. The cloud split (L2) is complete.
+
+**Step 4 (L5, finer covers) DONE 2026-08-23, host-proven, bench re-baseline
+owed** (forgefirm 53e4fa2 + 335c6de, pushed, forgetest 241/241, lint clean):
+the cloud maps by what each test proves (`_SERVICE_LAYER`, `_MACHINE_RUN`,
+`_HOMING_PATH`, the print `_CLOUD_ALL`), two hollow entries of the protocol
+test found and fixed (globs anchor at the repository root), the lint now
+fails any entry that selects nothing, and non-behavioral paths (docs, CI,
+unit tests, licenses: `NON_BEHAVIORAL` in manifest.py) are outside every
+fingerprint. Measured on the tree manifest: a sign-in change re-requires
+proto + print; a feeder change the 4 offline tests + print; a camera change
+mode-switch + print; a doc edit nothing. Cost: 28 fingerprints move once
+(the 7 cloud tests by their maps, 21 laser/motion/kernel tests because
+their `**` used to hash grblHAL/kernel docs and tests): 16 attended + 12
+unattended on the next image. Not done: splitting gfutilities'
+websocket.py (transport vs. transfer helpers), which would take
+websocket-transport changes off the offline tests; a gfutilities refactor,
+not a map.
+
+**Step 3 (L1, the fixture) CODE-COMPLETE 2026-08-23, bench owed**
+(forgefirm 8ee4ee3 firmware + b54b94e tool side, pushed, both CI green):
+`fixture/` = ESP-IDF v5.5 project for the ESP32-S3 DevKitC-1 (GPIO 4 lid,
+5 interlock, 6 button, 7 enable jumper to GND; active-high 3.3 V opto
+relay modules; HTTP :80, `X-Fixture-Key`; mDNS `forgefixture.local`;
+`fixture.env` baked at build; `fixture.sh env|build|flash|monitor|test`;
+builds in `espressif/idf:v5.5.5` via podman from Git Bash, 837 KB).
+forgetest: `fixture.py` (config `/data/forgetest/fixture.json`, own mDNS
+resolver, client), `hands=` on tests, routing of covered operator tests
+into the unattended queue, Ready pass-through, prompt guard, release after
+every run, `arm_press` opt-in (`Context.arm_press`, used by the laser
+suite). Operator decisions: ESP-IDF native, .env baked, jumper, name.
+Settled: the interlock loop is J8 (J6 is the speaker), the 3.3 V rail has
+the headroom. 2026-08-23 18:50Z: flashed (COM15), on the air as
+forgefixture at 172.16.1.135, found by forgetest (dev 20260823184050) over
+mDNS by itself, every API path verified from the board; lid and interlock
+relays switch; the button reports disabled until the jumper is in. Left:
+the harness, then the campaign.
+
+**Step 3 BENCH-PROVEN 2026-08-24 (harness wired by the operator):** every
+channel proven through forgectrl's switch readings (lid 50 ms, interlock
+40/200 ms, button pulse seen); forgetest routed 8 operator tests into the
+unattended queue. The first fixture campaign (`c-20260824171919-e4f0`)
+failed `motion.button-hold-resume` on a harness defect: the second press
+was asked while the first 200 ms pulse was still on, the fixture answered
+409, the runner fell back to an operator who was not there, and the
+post-baseline could not jog a controller left in Hold. Fixed in forgetest
+(press spacing in `fixture.py`, unattended fixture refusal = ERROR in
+`runner.py`, soft reset out of Hold/Door before the return jog in
+`baseline.py`; 5 host tests; ACCEPTANCE.md + fixture/README.md),
+hot-installed by the operator, rerun `c-20260824174545-0bdc`: 25/25,
+36 unattended satisfied (11 inherited), every fixture action `by:
+fixture`, 0.04 to 0.34 s each; the baseline's hold reset proven by a dry
+drill the same day (a move held at 7.988 mm reset and jogged back).
+Committed and pushed as forgefirm 00ded74. Left:
+the 9 attended tests (4 laser live, 5 cloud), the CAMPAIGN-LOG entry,
+then the merge of this file.
+
+**COLD PICKUP (next session):** 1. the operator builds the harness and
+flashes the DevKit (`fixture/README.md`); settle the interlock connector
+first and fix whichever doc is wrong; 2. `/data/forgetest/fixture.json`
+on the bench (key from fixture.env, mode 0600); the forgetest change
+reaches the bench with the next image (or a hot-install); 3. a campaign
+with the fixture up: the 28-test re-baseline of step 4 plus the fixture's
+own proof (operator tests in the unattended queue, `by: fixture` in the
+evidence, the release leftover); 4. CAMPAIGN-LOG entry, then merge this
+file into ACCEPTANCE.md / BRINGUP / SERVICES.md per the header and delete
+it. Written 2026-08-22 from a read of the 45-test
+catalog, the runner, the page, and the cloud client's seams; the numbers in
+§1 and §4 are the catalog's own `est_min` and `steps` declarations, not a
+stopwatch; the campaign record is `CAMPAIGN-LOG.md` 2026-08-22.
+
+**What step 1 settled, beyond the plan:**
+
+- **Per-test implementation hashing** (not in the original plan): the
+  fingerprint's implementation half was the whole suite file, so a two-line
+  witness fix re-required every test of its module. It is now the test's
+  function plus the module's shared code. One-time cost paid (every
+  fingerprint moved; the 43/43 campaign above).
+- **`cloud.pause-cancel-paths` became `cloud.paused-lid-cancel`**: the app
+  cancel lives in `cloud.oversize-stream` only, judged in full there. Catalog
+  stays 43 (the protocol test of L2c is still to come).
+- **Witness facts from the bench:** the head accelerometer lands 2 to 3 sysfs
+  samples per one-second jog leg and sees ramps, not travel (judge the
+  sequence, never a single leg); the button LEDs fade under the smooth
+  trigger (read `target`, the commanded level); the beam detector read delta
+  500 and 479 against the 300 threshold at S400 (digital flag seen both
+  times); the lid camera's half-res frame is ~2x the bytes lit vs lamp-off.
+- **Every action was the operator's** (74 recorded `by: operator`); the
+  fixture seam (`runner.fixture`, `covers()`/`act()`) is exercised only by the
+  host test until step 3.
+- **Step 2a decisions:** the offline lever is a volatile marker
+  (`/run/gfcloud-offline`, one start, never a persisted setting: a reboot can
+  never come up offline) plus `gfcloud --offline`; no forgectrl change. The
+  service is `OfflineService(GFUIService)` in gfutilities (same dispatch
+  loop; a UNIX-socket listener stands in for the WsClient; a requests
+  Session with a `file://` adapter and an upload sink stands in for the web
+  session). Jobs are synthesized on the board from a captured factory print
+  header (MCsn 0, so no serial lock) over a laser-free square; a job longer
+  than the ring is the whole file gzip-compressed (the client's gzip ISIZE
+  is its progress denominator). Lesson: the marker must stay until the
+  `OFFLINE service` line is logged (Python import time on the i.MX6 runs
+  seconds past the supervisor's "running").
+
+---
+
+##### 0. The problem in one paragraph
+
+A full campaign is 45 tests: 25 `auto` (48 min), 12 `operator` (46 min), 8
+`live` (65 min). The attended block is 111 of 159 catalog minutes, and it asks a
+human for roughly eighty discrete things: open the lid, press the button, pull
+the interlock, set up a job in the Glowforge app, place scrap, look at the
+scrap, look at the app, answer a popup before the head finishes its move. The
+inheritance model spares most of this on a quiet day, but during development
+of the cloud client every change invalidates all eight cloud tests, which means
+six real prints and a full-bed raster designed in the app. The goal here is to
+take the hands out of the campaign wherever a sensor or a relay can stand in
+for them, without moving a single safety line.
+
+##### 1. Where the burden actually is
+
+Counting what the 20 attended tests ask of a person in one full campaign:
+
+| Action | Count | Where |
+|---|---|---|
+| Lid open or close | ~23 | 9 tests; every one a software-visible EV_SW edge the test already verifies |
+| Button press, pause/resume | ~10 | 6 tests |
+| Button press, arm consent | 11 | the 8 live tests |
+| Interlock unplug/restore | 4 | 2 tests |
+| App: set up a job and press Print | 7 jobs (one a full-bed raster), 2 cancels | 5 cloud tests |
+| Scrap placement | ~8 | every live test |
+| Eyeball confirmation (`ctx.confirm`) | ~16 | 13 tests |
+
+Three facts shape everything that follows.
+
+1. **The switch actions are the majority and the cheapest to remove.** All
+   three consumers (grblHAL `glowforge_switches.c`, gfhardware `switches.py`,
+   forgectrl `status.c`/`liveness.c`/`auth.c`) read the same gpio-keys device
+   (`/dev/input/event0`, EVIOCGSW). There is no software injection path on the
+   board; grblHAL's `GF_SWITCH_FILE` hook exists only in the null-sink host
+   build. Adding one to three repos' safety paths is the wrong trade when a
+   relay exercises the real edge, the real hardware button latch, and the real
+   interlock latch drive.
+2. **The app operations and the eyeball confirmations are the slow items**, and
+   nearly every confirmation duplicates evidence the test already collects
+   (log needles, kernel counters, `armed`, the latch bit) or could collect from
+   a witness the machine already has: `head/beam_detect_analog` (baseline
+   ~1834, 2600 to 2890 during S300/S400 fire, measured 2026-08-12),
+   `beam_detect_digital`, the head accelerometer (the supervisor's own
+   liveness witness), the button LEDs (`/sys/class/leds/button_led_*`, already
+   read by the baseline), `pic/hv_current`.
+3. **The cloud tests conflate two mechanisms.** The service protocol (auth,
+   WSS, action dispatch, pulse download, lifecycle events, progress) and
+   gfhardware's run loop (button wait, lid/interlock abort, park, retrace,
+   cancel). Only the first needs the real service; only the second needs the
+   real machine. The seam is clean: `GFUIService` feeds
+   `dispatch_action(machine, msg)`, and the hardware sits behind `Machine`
+   (gfhardware) or `Emulator` (gfutilities, which already completes a homing
+   to print cycle against the real service with canned images).
+
+##### 2. The levers, ranked by payoff
+
+###### L1. A bench actuator fixture, and a typed action seam in forgetest
+
+**Hardware.** Three relay channels at the connectors, no board modification:
+
+| Channel | Where | Contact | Why it is fail-safe |
+|---|---|---|---|
+| Lid | in series with the lid-switch loop (the J4.12/13 net) | normally closed | a series contact can only add an open, never mask a real lid open; the hardware chain sees exactly what it sees today |
+| Interlock | in place of the J8 jumper (Basic/Plus), or in the Pro's plug loop | normally closed | same argument |
+| Button | from J5's 12 V to J5 BTN | normally open, pulsed by the fixture firmware (max ~500 ms), never held | a parallel contact can only add a press; see the consent question in §5 |
+
+A Pico W or ESP32 with a trivial HTTP API on the LAN; forgetest gets
+`FORGETEST_FIXTURE_URL` and the channel inventory from a bench-local file
+(`/data/forgetest/fixture.json`). The interposer harness lives with the bench
+and is described in the hardware facts bank, never in the public repos.
+
+**Software: `ctx.act()`.** Replace the free-text `ctx.instruct("Open the lid
+NOW ...")` calls with typed actions: `ctx.act("lid", "open")`,
+`ctx.act("interlock", "open")`, `ctx.act("button", "press")`, with the
+existing wording kept as the human fallback text. The runner fulfills an
+action through the fixture when the channel is present and then verifies the
+resulting EV_SW state through `/status switches` (the tests already make this
+check by hand after every prompt), otherwise it falls back to exactly today's
+prompt. Tests declare `actions=[...]` next to `steps`. The `kind` stays the
+conservative truth for a bench without a fixture; a declared-`operator` test
+whose actions the bench's fixture all covers is routed into the unattended
+queue at runtime; `live` never downgrades. Every result records, per action,
+whether the fixture or a human fulfilled it (`evidence.operator.actions`).
+
+**Payoff.** All 12 operator tests become unattended. The live tests lose every
+action except the arm press. About 37 of the 80 actions are gone.
+
+###### L2. Split the cloud tests: service protocol vs. machine behavior
+
+**(a) Offline action injection for the machine-behavior tests.** An
+`OfflineService` in `forgefirm-app` with `GFUIService`'s interface: no auth, no
+WSS, a local UNIX socket that accepts action messages in the exact WSS shape
+(`{"id", "action_type", "motion_url", "settings", ...}`) and writes every
+`send_wss_event` as the same `<action> [id]: finished with event ":..."` lines
+the tests already needle on. `load_motion` gains a `file://` branch. forgectrl
+passes the mode through as a named setting (`cloud_service = offline`), a test
+lever like the `cool_*` gates, harmless on a release image because it only
+ever runs offline. The connect-time hunt becomes an injected `hunt` when a
+test wants one.
+
+Pulse files: this machine's own captured factory files in `_RESOURCES` are
+serial-locked to the bench (`MCsn` passes), so a tool that strips the FIRE
+bits and zeroes the power bytes turns them into FIRE-less jobs; or a generator
+on top of gfutilities' pulse helpers plus a header generator from the decoded
+tag table (`_RESOURCES/FW/PULSE-HEADER-TAGS.md`) synthesizes any job, which
+gives the oversize test a 40 MiB job in seconds instead of a full-bed raster
+designed in the app.
+
+This moves `cloud.lid-interlock-abort`, `cloud.pause-cancel-paths`,
+`cloud.lid-during-button-wait`, and `cloud.oversize-stream` off the app and
+off the scrap: no job set-up, no Print, no app cancel (an injected `cancel`),
+nothing to burn. They still arm (the run loop unlocks the latch on the button
+press), so by the contract's definition they stay `live` even FIRE-less; with
+L1 their only human input is the arm press. Going fully offline, rather than
+injecting into a live session, is deliberate: a half-measure would send events
+for invented action ids to the real service.
+
+**(b) One real print stays.** `cloud.pause-resume` is the right one: it is
+where progress, warm-up and rest, the header limits reaching the engine, and
+the laser-off resume lead all show, and the lead is only observable with FIRE
+bits. It keeps the service-to-machine path honest once per cloud change, and
+with L1 it costs one app job and one arm press.
+
+**(c) `cloud.service-protocol`, new.** Under `POST /controller/stop` (cloud
+standby), run the existing gfutilities `Emulator` on the board with the board's
+credentials and the canned images (small JPEGs, shipped with the dev package);
+the operator, or an agent with a browser, only presses Print in the app (the
+emulator's `_button_wait` is a no-op). Judge the session, the hunt, the image
+uploads, the pulse download, and the lifecycle events from the emulator's log;
+optionally a cancel from the app. Then stop the emulator and
+`POST /controller/start`. No motion, no lid, no button, no scrap. This needs
+none of the emulator-parity work declined on 2026-08-21; the emulator already
+does what this test needs. Because `POST /answer` exists, an agent can run it
+end to end with nobody at the machine.
+
+###### L3. Replace eyeballs with the witnesses the machine already has
+
+| Today's confirmation | Replacement |
+|---|---|
+| "Did it mark the scrap?" (4 tests) | `beam_detect_analog` delta over baseline plus `beam_detect_digital` asserted during the fire window plus `hv_current`, in the existing 8 Hz sample trail. The human mark confirm stays in `laser.emission-witness` only: one per campaign, the bench's calibration of the sensor witness. |
+| "Is the button dark / lit?" (5 tests) | the button LED brightness attrs. |
+| "Did the gantry move?" (`motion.jog-roundtrip`) | the head accelerometer sampled per jog against the thresholds already established for the liveness gate. This also frees `motion.step-timing-under-load` (auto, requires jog-roundtrip) and the whole live block's prerequisite chain from the attended queue. |
+| "Did the head reach the home corner?" (`cloud.gfhome-homing`) | accelerometer motion seen plus a kernel displacement consistent with the corner; stronger follow-up: a lid snapshot matched against a bench-local "head at home" reference frame under `/data/forgetest/`. |
+| "Does the panel show the bed?" (`camera.snapshot`) | toggle `pic/lid_led` between two snapshots and require a luminance change (proves a live capture, not a stale frame), plus an optional correlation against a bench-local reference frame for orientation. |
+| "Did both burns end abruptly?", "did the head back up?", "does the app show cancelled?" | already in the evidence: the emission and beam trails, the retrace log lines, the `:cancelled` event sent. |
+
+###### L4. Merges where a setup is shared, and two reclassifications
+
+**`cloud.mode-switch` absorbs `cloud.hunt-lid-open` and `cloud.gfhome-homing`.**
+Sequenced, not simultaneous, because the two need opposite lid states (the
+reason they were kept apart on 2026-08-17): lid open, switch to cloud, session
+established, the connect-time hunt completes with the lid open (no "unsafe to
+move" before its terminal line, airflow gates unjudged, exhaust off), lid
+closed, the re-hunt waited quiet, switch back to grbl, Idle, `$H` with
+`homing_mode = gfcloud`, homed within the session timeout. One test, one lid
+open and close, carrying both absorbed tests' `covers` (grblhal `src/**`,
+forgectrl `super.c`, `cool.*`, `airflow.*`). The standing merge rule applies:
+merge only where a setup is shared, never auto tests. Without a fixture this
+saves an operator cycle; with one, all three are free and separate ids give
+invalidation finer teeth, so the merge is right now and can be unwound later.
+
+**`kernel.fire-line` to `auto`.** It is in the always-required core, so it
+costs a person every campaign, but its only prompt is conditional on HV
+reporting good at idle, which the chain holds low. Reclassify with a
+"cannot start" precondition (the same outcome as an unmet prerequisite, not a
+FAIL that closes the campaign) when `laser_pgood` reads good; with L1 the
+fixture opens the lid instead. Check `results.jsonl` first: if `laser_pgood`
+was 0 in every recorded run, the prompt has never fired.
+
+**`camera.snapshot` to `auto`** via L3.
+
+Optional, lower value: the four GRBL travel-job tests (`motion.button-hold-resume`,
+`motion.lid-cancel-home`, `motion.interlock-cancel-home`, `motion.lid-policy-hold`)
+share a trivial setup (bed clear, 40 to 60 mm of +X). A merge saves three
+baseline cycles and no hand actions; not worth it once L1 exists.
+
+###### L5 (secondary). Finer `covers` maps
+
+Every cloud test covers all of `forgefirm-app`, `gfhardware`, and
+`gfutilities`, so a one-line websocket change invalidates six real prints.
+With L2 the natural partition is: the protocol test covers
+`gfutilities/service/**`, `basemachine.py`, `emulator.py`; the offline behavior
+tests cover `gfhardware/machine.py`, `feeder.py`, `switches.py`, `cnc.py`,
+`gfcloud.py`, the offline service; the real print stays coarse as the
+integration. A websocket change then reruns the protocol test (agent-runnable)
+plus one real print. The coverage lint still requires every path covered; this
+is a re-partition, not a relaxation. The laser block's `kernel **` coverage is
+honest (the kernel is the emission path) and stays.
+
+###### Usability tweak A: the message area goes to the log
+
+The notes at the top of the Campaign card come from `Runner._note` and two
+direct appends (`runner.py` ~341, ~588, ~608), a bounded list rendered as
+`state.messages`:
+
+| Source | Already recorded elsewhere? |
+|---|---|
+| baseline boot-reference failure | nowhere else |
+| takeover recovery at start-up | nowhere else |
+| queue opened / skipped / stopped / driver errored | the queue card renders the live queue state; a stop-on-FAIL shows in the test row |
+| leftovers before and after a run | the run's own log pane and the result's `evidence.baseline.pre/post` |
+
+`state.messages` and the `#msgs` div go away. Every `_note` goes to a runner
+journal: a `forgetest` logger under the unified tree
+(`/data/log/forgefirm/forgetest/`, so it shows in the panel's Logs tab and the
+sanitized export like the other daemons), and, when a run is in progress, into
+that run's log as well (the leftovers and baseline lines already do). The
+Campaign card keeps only the invalidate note and the transient click feedback
+(`actmsg`, `qmsg`). Nothing is lost: leftovers stay in evidence, queue outcomes
+stay in the rows and the queue card, the raw log stays the bench's record.
+
+###### Usability tweak B: instructions before the test, not popups during it
+
+Every attended test already declares `steps=[...]`, rendered today only under
+each row's *details*; `ctx.instruct()` then appears inline in the run card
+(`#prompt`) with no warning, and many of those prompts are timed. Two changes:
+
+**Presentation: a standing "What you will do" pane in the run card.** When a
+test is selected or started, the run card shows its steps as a numbered
+checklist above the log, for the whole run. For an attended queue, the pane
+shows the union for the queue before it starts, then the per-test pane takes
+over as each test begins. Prompts advance the checklist in place instead of
+opening a new box: the current step highlights, the buttons attach to it, done
+steps gray out. With `actions=[...]` the pane is typed: a step the fixture
+performs is marked *automatic* so the operator knows what not to do, and a
+timed step says so up front ("step 3 is timed: about 8 s").
+
+**Structure: timed steps become Ready-gated.** The surprise is partly how the
+tests are written: start the move, then `instruct("press NOW")`. Flip the
+order wherever a step is timed: `instruct("When you click Ready, the head
+starts a 12 s move; press the button about 2 s in")`, Ready, then the test
+starts the move and waits with a generous window. `arm_and_fire` already works
+this way ("Ready?" then the stream); the button, lid, and interlock steps in
+`motion.*`, `laser.pause-resume-lid-cancel`, and the cloud tests do not. This
+changes nothing about what is measured, is replayable host-side, and is the
+same seam the fixture plugs into later (the fixture fulfills the step with
+exact timing; a human gets the Ready gate).
+
+##### 3. Per-test disposition
+
+| Test | Today (the operator does) | Proposal | Kind: no fixture, then with fixture |
+|---|---|---|---|
+| camera.snapshot | look at the panel | L3 lamp toggle + reference frame | auto, auto |
+| camera.lid-privacy | lid x3 | L1 | operator, auto |
+| cloud.mode-switch | (auto) | L4 merge host: lid open for the connect, `$H` after the switch back | operator, auto |
+| cloud.gfhome-homing | watch, confirm the corner | merged into mode-switch; L3 evidence | eliminated |
+| cloud.hunt-lid-open | lid x2, confirm | merged into mode-switch | eliminated |
+| cloud.lid-during-button-wait | app job, Print, lid x2, confirm | L2a offline print + L1 lid; LED for "button dark" | operator (one lid), auto |
+| kernel.fire-line (core) | conditional lid | L4 precondition, or fixture lid | auto, auto |
+| laser.arm-wait-lid | lid x2 | L1 | operator, auto |
+| motion.jog-roundtrip | bed clear, confirm motion | L3 accelerometer | auto, auto |
+| motion.button-hold-resume | button x2 | L1 | operator, auto |
+| motion.lid-cancel-home | lid x4, button x1 | L1 | operator, auto |
+| motion.interlock-cancel-home | interlock x2 | L1 | operator, auto |
+| motion.lid-policy-hold | lid x2 | L1 | operator, auto |
+| laser.emission-witness (core) | scrap, ack, arm, confirm mark + dark | keep the mark confirm; LED for dark | live, 1 press |
+| laser.disarm-in-hold | ack, arm, confirm | L3 (Hold state + armed + LED) | live, 1 press |
+| laser.armed-kill | ack, arm x2, judge x2 | L3 trails | live, 2 presses |
+| laser.pause-resume-lid-cancel | ack, arm, button x2, lid x2, confirm | L1 + L3 | live, 1 press |
+| cloud.lid-interlock-abort | 2 app jobs, 2 Prints, arm x2, lid x4, interlock x2, confirm x2 | L2a offline FIRE-less + L1 | live, 2 presses, no app, no scrap |
+| cloud.pause-resume | app job, Print, arm, button x2, confirm x2 | keep real (L2b); L1 for pause/resume; L3 | live, 1 press + 1 app job |
+| cloud.oversize-stream | full-bed raster in the app, Print, arm, 2 min burn, button x2, app cancel, confirm | L2a synthesized 40 MiB FIRE-less job + L1; injected cancel | live, 1 press, no app |
+| cloud.pause-cancel-paths | 2 app jobs, 2 Prints, arm x2, button, lid x2, app cancel, confirm | L2a + L1 | live, 2 presses, no app |
+| cloud.service-protocol (new) | Print in the app | L2c, agent-runnable | operator (app only) |
+
+##### 4. The campaign after
+
+| | Today | L2 + L3 + L4 + tweaks, no fixture | + L1 fixture | + fixture arm press (opt-in) |
+|---|---|---|---|---|
+| Catalog | 45 | 44 | 44 | 44 |
+| Unattended | 25 | 28 | 41 | 41 |
+| Operator actions | ~80 | ~45 (app 7 jobs to 1, confirms 16 to 2) | ~16 (11 arm presses, 1 app job, scrap, 1 mark) | ~5 |
+| Attended minutes | 111 | ~85 | ~60, sitting through the live block | the same, hands-free |
+
+The floor is by design: the always-required core wants one real emission
+witness per campaign, so every campaign needs a person with eye protection in
+the room for one burn, and the contract wants the arm press through the
+controller's normal path.
+
+##### 5. Lines not crossed, and the one policy question
+
+- A FIRE-less armed run stays `live`. It is "emission possible" by the
+  contract's conservative definition, even though it needs no scrap.
+- No software switch injection in the three consumers' safety paths on the
+  board. The fixture exercises the real edge, the real hardware button latch
+  (`laser.pause-resume-lid-cancel` checks it SET), and the real interlock
+  latch drive.
+- forgetest never touches the laser latch. The offline service never talks to
+  the real service. The protocol test never moves the machine.
+- The cloud `requires` chains stay minimal (the 2026-08-17 rule), and every
+  re-ported test gets its host-side replay (`tests/test_cloud_suite.py` and
+  friends) before the operator sees it.
+- **The policy question: may the fixture press the button for the arm?** A
+  fixture press goes through the controller's normal path (the hardware
+  input), so the consent becomes the queue's live acknowledgment with the
+  operator present. Recommendation: human by default, since the operator is
+  in the room for the fire watch anyway; fixture arm presses as an explicit
+  opt-in (a physical enable on the fixture's button channel, plus the page's
+  live ack, plus the per-action record in evidence).
+
+##### 6. Decisions that are the operator's
+
+1. Build the fixture? It is the single biggest lever and a small build (three
+   relays, an interposer harness at J4/J5/J8, a Pico W). Everything else here
+   stands without it.
+2. Fixture arm presses: never, or opt-in under the live ack?
+3. Merge mode-switch + hunt-lid-open + gfhome-homing now, or keep them
+   separate and wait for the fixture?
+4. Is `cloud.service-protocol` a catalog test (carries `covers` for the
+   service layer, participates in inheritance) or a bench tool? Recommendation:
+   a catalog test.
+
+##### 7. Order of work
+
+1. **DONE 2026-08-22. forgetest only, no new hardware:** L3, L4, usability
+   tweaks A and B, Ready-gating the timed steps, and per-test implementation
+   hashing. Two tests gone, three to `auto`, the confirms down to two, the
+   page quiet, the operator reading the whole list once instead of racing
+   popups.
+2. **The cloud split:** L2a offline service and the pulse-file tooling, the
+   four behavior tests re-ported onto it: **DONE 2026-08-22.** L2c, the
+   protocol test with the existing emulator: **code-complete 2026-08-23,
+   bench owed** (see COLD PICKUP above).
+3. **The fixture:** L1 hardware and the `ctx.act()` seam, with the fallback
+   wired so a bench without a fixture behaves exactly as today.
+4. **L5** once the cloud split exists.
+
+Each step is a catalog change, so each lands with its coverage map kept
+current (`python3 -m forgetest.coverage --enforce`) and is proven in the
+order the working rules require: host test, then a bench drill logged in
+`CAMPAIGN-LOG.md`.
+
+### The kernel configuration review (tree-root working file), merged 2026-08-24
+
+The report `KERNEL_CONFIG_REVIEW.md`, verbatim: its status section is the record of the two rounds that built the board-only kernel (what each finding became, with its proof), and the original report below it is the evidence they were decided on. Its "cannot start cut" row carries the correction the campaign forced. The suggestions it left are BRINGUP item 20; the cosmetic upstream dmesg lines are left by decision. The file is deleted.
+#### ForgeFIRM kernel configuration review (2026-08-24)
+
+##### Status (2026-08-24): what was done, what remains
+
+Section numbers below refer to the original report that follows.
+
+###### Done: implemented, built, bench-validated, committed and pushed
+
+Commits: `meta-openglow e1bb4ac` (kernel trim) and `8f8b540` (module pin),
+`kernel-module-glowforge 615a36f`, `forgefirm cb9cd53` (BRINGUP item 21, CAMPAIGN-LOG
+entry "2026-08-24: the kernel built for one board"). Bench validation ran on dev image
+20260824164619 (built from the same tree state before the commits); the post-commit
+build that adds the module pin is what the acceptance campaign runs on.
+
+| Report item | What was done | Proof |
+|---|---|---|
+| 1.1 `evbug` autoload | `# CONFIG_INPUT_EVBUG is not set` | Not in `lsmod`; no `evbug:` lines in dmesg |
+| 1.2 dropped lockup-panic lines | `DETECT_HUNG_TASK=y`, `SOFTLOCKUP_DETECTOR=y`; the two `BOOTPARAM_*_PANIC=y` lines now land | `/proc/sys/kernel/hung_task_panic` = 1, `softlockup_panic` = 1 |
+| 1.3 `MULTIPLEXER`/`MUX_GPIO` requested `=y`, landed `=m` | Written as `=m` (plus `MUX_MMIO=m`); every fragment line now matches the built `.config` (checked line by line) | Configure-check diff: no unlanded lines |
+| 1.4 distro/kernel mismatch | Bluetooth, sound/ASoC, NFS/SUNRPC, PCI/PCIe, ext2/ext3, `IPV6_SIT` off. IPv6 core kept (see Remaining) | dmesg has none of them; `sit0` gone |
+| 1.5 DT leftovers | `&asrc`, `&usbphy1/2`, `&usbphynop1/2`, `&usbmisc` disabled | Built DTB shows `status = "disabled"`; the phy/dummy-supply lines are gone from dmesg |
+| 1.6 `glowforge_pic` without `spi_device_id` | Table `{ "pic" }` + `MODULE_DEVICE_TABLE(spi)`; pinned at `615a36f` | `alias=spi:pic` in the built module; the boot warning clears on the post-commit image |
+| 2.1 no crash record | `PSTORE`, `PSTORE_RAM`, `PSTORE_CONSOLE`; `ramoops@2ff00000` (1 MiB, `no-map`, 32 KiB records, 256 KiB console, 16-byte ECC) in the region the factory bootloader already holds back; `pstore` line in fstab | Forced `sysrq-c`: reboot on the timeout, next boot 0 header errors, `dmesg-ramoops-0` (24 KB, "Panic#1 Part1") and `console-ramoops-0` (ends "Kernel panic - not syncing: sysrq triggered crash / Rebooting in 10 seconds.. / ECC: No errors detected") |
+| 2.2 `panic=10` only on the cmdline | `CONFIG_PANIC_TIMEOUT=10` | `/proc/sys/kernel/panic` = 10; the DTS fallback boot now reboots on panic too |
+| 2.4 SDMA firmware never loads | Decision (a): ROM scripts stay; `linux-firmware-imx-sdma-imx6q` and `-imx7d` removed from `MACHINE_FIRMWARE`; `dmas`/`dma-names` deleted from `&ecspi2` | `/lib/firmware/imx` gone; dmaengine summary holds no channels; PIC probes and reads in PIO |
+| 4.1 built-in dead weight | USB, Ethernet/PHY/PTP/PPS, CAN, BT, SATA/SCSI, PCI, MTD/NAND/UBI, RAM disks, JFFS2/UBIFS/NFS/FUSE/autofs/quota/ISO/UDF/MSDOS/binfmt_misc, DRM_IMX + HDMI/LVDS/panels/bridges/MXSFB, FB/fbcon/logo/VT/backlight, all audio, touchscreens/HID/mouse/serio/beeper/RC, PMICs/expanders/W1/SIOX/other-board sensors and bus glue, ten other i.MX SoCs + Vybrid, PSCI, TEE, `ARCH_MULTI_V6` (ARMv7-only code), suspend/kexec/crash-dump/ATAGs/swap/HIGHMEM, three cpufreq governors, BFQ/Kyber, connector, five initrd decompressors. Kept by decision: `DRM` + `DRM_ETNAVIV`, `IMX_IPUV3_CORE`, `DEBUG_FS`, `DEVMEM`, `MAGIC_SYSRQ`, `KPROBES`, `PERF_EVENTS`, `IKCONFIG_PROC`, `NETFILTER`, `SMP` | `.config` 1634/245 to 819/32 (`=y`/`=m`); zImage 9.13 MB to 4.76 MB; vmlinux text 14.7 MB to 7.8 MB; MemTotal +9.4 MB |
+| 4.2 253 modules shipped, 27 needed | `MEDIA_SUPPORT_FILTER=y` + `SUBDRV_AUTOSELECT` (the DVB tree gone), other sensors off; `kernel-modules` replaced by the board's 13-module list in `glowforge.conf` (dependencies follow through modules.dep RDEPENDS; the Wi-Fi ciphers are built in so nothing loads by alias from the rootfs) | 31 `kernel-module-*` packages; built modules 9.7 MB to 2.4 MB; 31 loaded on the bench, all needed |
+| 4.3 firmware dead weight | `firmware-imx-epdc`, `firmware-imx-vpu-imx6q`, both SDMA packages removed | `/lib/firmware` 7.7 MB to 2.6 MB |
+| 5.1 `DRM_IMX` removal vs the GPU demosaic | Removed; verified | `/dev/dri/renderD128` present, `card1` gone; lid and head streams ran with `gpu: GLES2 debayer up`, GPU IRQs 0 to 135 |
+| New: virtual console gone | `USE_VT = "0"` so no tty1 getty respawns against a device that no longer exists | inittab carries only `ttymxc0` |
+
+Also validated on the live image: every node binds, `devices_deferred` empty, Wi-Fi
+associated with `regulatory.db` loaded (country US), switches on `event0`, no QA
+warnings in the build.
+
+Lessons now written into the fragment's comments: the defconfig never names `PM`,
+`REGULATOR`, `EXT4_FS`, `CONFIGFS_FS`; it got them by selection from suspend, the
+PMIC drivers, ext3 and the USB gadget, so a trimmed fragment must pin what it keeps.
+`KEYBOARD_ATKBD` selects `SERIO`, `I2C_IMX` selects `I2C_SLAVE`, `DRM_MXSFB` selects
+`DRM_MXS`, `SOC_VF610` selects `PINCTRL_VF610`.
+
+###### Remaining: issues found and not acted on
+
+State after round 1. Round 2 (below) closes 1.4 (IPv6 is on), 2.5 (firmware set),
+2.6 (performance governor), the `consoleblank` and spi-imx lines, and the empty-ring
+message; the cosmetic upstream lines stand.
+
+| Report item | Issue | Suggested action |
+|---|---|---|
+| 1.4 | `IPV6=y` while `DISTRO_FEATURES` removes `ipv6`; `forgectrl/src/auth.c` references `AF_INET6` | Decide once: either put `ipv6` back into the distro (the kernel matches the code) or make `auth.c` IPv4-only and drop `IPV6` from the kernel |
+| 2.5 | `wlcore: WARNING Detected unconfigured mac address in nvs` / `This default nvs file can be removed`: `linux-firmware-wl18xx` ships the generic `wl1271-nvs.bin` (and `wl127x-nvs.bin`, three unused `wl18xx-fw*` variants, three `TIInit_*.bts` BT scripts) | Cosmetic. A `linux-firmware` bbappend can drop the NVS and BT files; keep all four `wl18xx-fw*` unless every board is PG 2.2 |
+| 2.6 | cpufreq policy is `ondemand` from the defconfig default; nothing sets a governor. A single core with a `SCHED_FIFO` producer (BRINGUP item 16) idles at 396 MHz | Policy, not a defect: `performance` while a job runs (forgectrl) or `CPU_FREQ_DEFAULT_GOV_PERFORMANCE`; measure against item 16 first |
+| 3 | `Unknown kernel command line parameters "consoleblank=0 board=glowforge"`: `consoleblank` is a VT parameter and VT is gone; `board=` is for userspace | Drop `consoleblank=0` from the uEnv (forgefirm-uenv); `board=` stays |
+| 3 (new) | `spi_imx 200c000.spi: error -ENODEV: can't get the TX DMA channel!` at ERR level at every boot: upstream logs the absent channel with `dev_err_probe` and continues in PIO | Cosmetic. Accept, or a one-line layer patch demoting it (a 14th patch in the bbappend) |
+| 3 | `hwmon hwmon1: temp1_input not attached to any thermal zone` (lm75 with `THERMAL_OF`) | Cosmetic; leave |
+| 3 | `glowforge_cnc cnc: cannot start cut; no data enqueued` at 31 s after boot | WRONG, corrected 2026-08-24: those occurrences were the SDMA clocks gated by the ecspi2 dmas deletion (CAMPAIGN-LOG 2026-08-24, "the SDMA clocks, held by nobody"); no motion on any image since the trim. Someone issues a run on an empty ring at controller start (forgectrl liveness probe or grblHAL init); worth finding and silencing, in the module's owner's time |
+| 3 | fw_devlink "Fixed dependency cycle(s)" (46 lines), "Static allocation of GPIO base is deprecated" (7), the SDIO "voltages below defined range" and "read-only switch" lines | Upstream behavior; leave |
+| 5.6 | `kas/README.md` backlog #2 said the PWM prescaler port was obsolete, the PIC SPI delay a bring-up TODO, and `reg-userspace-consumer` enabled by the fragment | Done: the paragraph now describes patches 0009 and 0004 as carried, the 12 V rail without a consumer node, and the config fragment as the board's kernel (uncommitted in `forgefirm`) |
+
+###### Remaining: suggestions not acted on
+
+State after round 1. Round 2 closes 5.2 (`SMP=n`) and the pstore export; 5.5 is
+answered (kept, root-only exposure); the firmware split is done as part of 2.5.
+
+| Report item | Suggestion | Why it waits |
+|---|---|---|
+| 5.2 | `CONFIG_SMP=n` on the single core (no spinlock/IPI overhead, `NR_CPUS=4` gone) | Needs a measurement against BRINGUP item 16 (producer stalls) before it is worth a platform change |
+| 5.5 | `KPROBES`, `PERF_EVENTS`, `BPF_SYSCALL`, `DEBUG_FS`, `DEVMEM`, `MAGIC_SYSRQ` off for release | One kernel serves both images; a release-only config needs a second kernel variant or a fragment switch, which is more machinery than the gain |
+| 4.3 | Split `linux-firmware-wl18xx` to the one `wl18xx-fw-*` this hardware boots | Only once every board's PG revision is known |
+| 2.1 follow-up | Have forgectrl's log export include `/sys/fs/pstore` (and clear records after export) | The records exist now; the consumer is a forgectrl feature |
+| 4.2 note | Five helper modules are built and not shipped (`crc7`, `crc-ccitt`, `libcrc32c`, `st-accel-spi`, `st-sensors-spi`; the last two are selected by the accelerometer driver) | 0.1 MB of build output; harmless |
+
+###### Round 2 (2026-08-24, later): implemented, host-proven, committed, built as images/20260824200726 (unflashed)
+
+| Item | What was done | Proof so far |
+|---|---|---|
+| 1.4 IPv6 | `ipv6` back in `DISTRO_FEATURES` (busybox IPv6 + ifupdown inet6, openssh/ntp/rsyslog IPv6); busybox `udhcpc6` (+RFC 3646) with a hook script (`default6.script`) and a `wlan0 inet6 manual` stanza that starts it; forgectrl listens dual-stack (`ulfius_init_instance_ipv6`, `U_USE_ALL`), grblHAL's TCP:23 is an `AF_INET6` socket with `IPV6_V6ONLY=0`, forgetest binds `::` (dual-stack). The kernel already did SLAAC (the board holds a ULA and the GUA prefix route); the DHCPv6 address is what the client adds | forgectrl `-Werror` build + 11 tests, grblHAL build + 4 CI tests, forgetest 252 tests, bind smoke (`AF_INET6`, v6only 0). Bench (dev 20260824201945): proven end to end. A GUA from pfSense's Kea via `udhcpc6` (lease 7200 s, renew OK); ports 22/23/8080/8090 answer on it from a host on another VLAN; IPv6 egress to the WAN gateway works. The earlier "no GUA" was an OpenWrt access point on the bench VLAN still running RA + DHCPv6 in server mode (its NoAddrsAvail Advertise beat pfSense's, and busybox keeps the first Advertise); disabled by the operator, the other two were already off |
+| 2.5 firmware files | `linux-firmware_%.bbappend`: only `wl18xx-fw-4.bin` stays (the current factory image ships exactly that plus `wl18xx-conf.bin`); the `wlcommon` package (NVS files, BT `.bts`) is no longer pulled | Factory `/factory/img1/lib/firmware/ti-connectivity` = `wl18xx-conf.bin` + `wl18xx-fw-4.bin`. Bench: Wi-Fi up, no NVS warning |
+| 2.6 / BRINGUP 16 | `CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y`, ondemand and the other governors off: 996 MHz always. Item 16 carries the re-measure plan | Bench: `scaling_governor` = performance; the item-16 drill (clamps, min margin) on this image |
+| 3 `consoleblank=0` | Dropped from `uEnv.txt` and the U-Boot default env (`glowforge.h`) | Bench: no "Unknown kernel command line parameters" line |
+| 3 spi-imx ERR line | Patch 0014: `dev_err_probe` only when the failure is not `-ENODEV` (no DMA described = PIO by design) | Bench: no `can't get the TX DMA channel` line |
+| 3 `cannot start cut` | Found: grblHAL's `issue_run` already treats a run on an empty ring as an ordinary race (`idle` + `ENODATA`, "already consumed"); only the module logged it at ERR. `cnc.c` now `dev_dbg`s it | Module compiles; bench: line gone from dmesg |
+| 5.2 `SMP=n` | `# CONFIG_SMP is not set` (UP kernel: GPT tick, no IPIs, no spinlock cost) | Configure check + bench boot owed |
+| 2.1 follow-up | forgectrl's log export stages `/sys/fs/pstore/*` under `system/pstore/` (README lists it) | forgectrl build + tests; bench: export after the sysrq record |
+| Fluff | `nano` (+`file`/libmagic, 8.7 MB) release-image only via `IMAGE_INSTALL:remove`, kept on dev; `BAD_RECOMMENDATIONS += eudev-hwdb` (7.7 MB of USB/PCI IDs); `python3-urllib3` bbappend drops its pyOpenSSL/cryptography recommendation (~6 MB: cryptography, pyopenssl, cffi, pycparser, ply; nothing imports them) | Build + campaign |
+
+Fluff found and not acted on: the `python3` meta-package installs `python3-modules` (tkinter, idle, 2to3, pydoc, ensurepip, venv, debugger, doctest, asyncio, multiprocessing, xmlrpc: ~10 MB) where the apps declare only `python3-core` + a few modules; replacing `python3` with the explicit module set needs an import audit of gfcloud/gfhome/gfhardware/gfutilities (the campaign's cloud tests are the check). `libgnutls30`, `libunistring5`, `nettle`, `libgmp10` (~4.9 MB) are installed with no package depending on them and no binary on the rootfs linking them; a `PACKAGE_EXCLUDE` experiment on a build would name the holder if there is one. `v4l-utils` (1.8 MB) is a declared runtime dependency of forgectrl and gfhardware (media-ctl); `shadow` is pulled by openssh/ntp/dbus; `curl` is the update downloader; `openssl-bin` serves `ca-certificates`.
+
+Debug features in release (5.5): no runtime cost when unused; the exposure is root-only (`/dev/mem`, debugfs, sysrq over a physically attached console, kprobes/perf/BPF with unprivileged BPF already off) and root can load modules anyway, so a compromise of root is the actual boundary. Kept.
+
+###### Owed, in the operator's hands
+
+A GRBL job on the image, then the full acceptance campaign (platform change) on the
+post-commit build, which also confirms the `spi_device_id` warning is gone at boot.
+
+##### Original report
+
+Report only at the time of writing. Nothing was changed on the bench, in any repo, or in the build tree.
+
+##### Scope and evidence
+
+| Source | What was examined |
+|---|---|
+| `meta-openglow/.../linux-fslc/glowforge.cfg` + `linux-fslc_%.bbappend` | The config fragment and the 13 patches |
+| `arch/arm/boot/dts/nxp/imx/glowforge.dts` + `imx6qdl.dtsi`/`imx6dl.dtsi` defaults | Which peripherals the board actually enables |
+| Bench board, fresh boot (9 min uptime) | `dmesg`, `/proc/config.gz`, `lsmod`, platform/i2c/spi/sdio driver bindings, `/proc/interrupts`, `/proc/iomem`, debugfs gpio + clk tree, cpuidle/cpufreq, sysctl, `/lib/modules`, `/lib/firmware` |
+| WSL `forge-yocto` build tree (`linux-fslc/6.12.20+git`) | Built `.config`, `imx_v6_v7_defconfig`, module sizes, `imx-base.inc`, the image manifests |
+| `forgectrl/src`, `python3-gfhardware`, `Glowforge-Utilities`, `kernel-module-glowforge/src` | Which kernel interfaces userspace consumes |
+
+The running kernel config is byte-identical to the built `.config` (the board runs the
+current build). Kernel: `6.12.20-fslc`, `SMP PREEMPT`, zImage 9.1 MB, vmlinux text
+14.7 MB; 1634 `=y` and 245 `=m` symbols against a defconfig of 403 + 63.
+
+##### 1. Misconfigurations (wrong today)
+
+###### 1.1 `evbug` autoloads and logs every switch event to the kernel log
+`CONFIG_INPUT_EVBUG=m` (inherited from the defconfig). `evbug` carries a catch-all
+`MODULE_DEVICE_TABLE(input, ...)`, so udev loads it for the `switches` gpio-keys device on
+every boot (`lsmod` shows it; `dmesg` shows `evbug: Connected device: input0` and
+`evbug: Event. Dev: input0, Type: 5, Code: 4, Value: 1` for the HV-enable readback).
+Every lid, button, interlock, and HV-enable transition lands in `dmesg`/rsyslog for the
+life of the machine. It is a kernel debugging aid, nothing consumes it.
+Fix: `# CONFIG_INPUT_EVBUG is not set` in `glowforge.cfg`.
+
+###### 1.2 Two safety lines of the fragment were silently dropped
+`glowforge.cfg` requests `CONFIG_BOOTPARAM_HUNG_TASK_PANIC=y` and
+`CONFIG_BOOTPARAM_SOFTLOCKUP_PANIC=y` with the comment "Hung-task and softlockup also
+panic on the same reasoning". Neither symbol exists in the built `.config`, because their
+parents are off: `# CONFIG_DETECT_HUNG_TASK is not set`, `# CONFIG_SOFTLOCKUP_DETECTOR is
+not set`. On the board `/proc/sys/kernel/hung_task_panic` and `softlockup_panic` do not
+exist. Only `PANIC_ON_OOPS` is live; a hard lockup or a hung feeder does not reach the
+laser-safing panic notifier the fragment describes.
+Fix: add `CONFIG_DETECT_HUNG_TASK=y` and `CONFIG_SOFTLOCKUP_DETECTOR=y` (which pulls
+`LOCKUP_DETECTOR`) ahead of the two `BOOTPARAM_*` lines; consider
+`CONFIG_HARDLOCKUP_DETECTOR=y` (the buddy detector is available: `HAVE_HARDLOCKUP_DETECTOR_BUDDY=y`,
+though on one core it has no buddy, so the perf-based NMI detector is the only real one and
+arm32 lacks it; softlockup is the practical ceiling). Verify after the build with
+`ls /proc/sys/kernel/{hung_task,softlockup}_panic`.
+
+###### 1.3 Two more fragment lines are not what landed
+`CONFIG_MULTIPLEXER=y` and `CONFIG_MUX_GPIO=y` are requested, `=m` is what the build
+produced (both load fine as modules; `mux_gpio`, `mux_mmio`, `mux_core` are in `lsmod`).
+Functionally harmless, but the fragment does not describe the kernel. Either write `=m`
+(and `CONFIG_MUX_MMIO=m`, which the IPU CSI muxes need and which nothing pins) or find out
+why the merge demoted them.
+
+###### 1.4 Distro features and the kernel disagree
+`forgefirm.conf` removes `bluetooth bluez5 alsa nfs pci ipv6 ext2` from `DISTRO_FEATURES`,
+but the kernel is built from the multi-board `imx_v6_v7_defconfig`, which does not follow
+distro features. The kernel therefore still carries, built in:
+
+| Feature removed from the distro | Still in the kernel |
+|---|---|
+| bluetooth | `BT=y`, `BT_HCIUART=y` (+LL, serdev), `BT_BNEP=m`; `Bluetooth: Core ver 2.22` in dmesg. The WL1805 is Wi-Fi only (no BT core, no serdev node). |
+| alsa | `SOUND/SND/SND_SOC=y` with the whole i.MX ASoC stack and ten codec drivers; `fsl-asrc` binds to the SoC's ASRC (16 clocks + an IRQ) because `imx6qdl.dtsi` leaves `&asrc` `okay`. "No soundcards found." Audio/buzzer is not a planned feature. |
+| nfs | `NFS_FS=y` (v3, v4, v4.1, v4.2) + SUNRPC; `rpciod`, `xprtiod`, `nfsiod` kthreads at boot. |
+| pci | `PCI=y`, `PCIE_DW_HOST=y`, `PCI_IMX6=y`, MSI, ASPM. No PCIe node is enabled. |
+| ipv6 | `IPV6=y`, `IPV6_SIT=y` (creates the `sit0` device seen in `/sys/class/net`). `forgectrl/src/auth.c` references `AF_INET6`, so keep IPv6 core unless that is resolved; `IPV6_SIT` has no consumer. |
+| ext2 | `EXT2_FS=y`, `EXT3_FS=y` as separate drivers; ext4 mounts both formats. |
+
+###### 1.5 Device-tree leftovers enabled by the SoC defaults
+`imx6qdl.dtsi` enables these without a `status`, and the board has no consumer:
+- `usbphy1`/`usbphy2` (mxs_phy), `usbphynop1`/`usbphynop2`, `usbmisc`: no USB controller
+  node is enabled (`usbotg`, `usbh1` are `disabled`, as in the factory tree). They produce
+  `supply phy-3p0 not found, using dummy regulator` and `dummy supplies not allowed for
+  exclusive requests (id=vbus)` at every boot.
+- `asrc`: `status = "okay"` by default; binds `fsl-asrc` as above.
+Fix (DTS): `status = "disabled"` on `&asrc`, `&usbphy1`, `&usbphy2`, `&usbphynop1`,
+`&usbphynop2`, `&usbmisc`.
+
+###### 1.6 `glowforge_pic` has no `spi_device_id` table
+`SPI driver glowforge_pic has no spi_device_id for glowforge,pic` at every boot. The SPI
+core wants an `spi_device_id` table alongside `of_device_id` (module alias generation and
+the non-OF match path). `kernel-module-glowforge/src/glowforge.c` has `pic_dt_ids` only.
+Hygiene, no functional effect while the device comes from the DT.
+
+##### 2. Incomplete configuration
+
+###### 2.1 No crash record survives a panic
+`# CONFIG_PSTORE is not set`; no ramoops. The design is `PANIC_ON_OOPS` + `panic=10`, so
+the machine reboots ten seconds after any oops and the reason is gone unless a serial
+console happens to be attached. The factory environment carried
+`ramoops.mem_address/mem_size/record_size/console_size` on the command line for exactly
+this reason (visible in the U-Boot `mmcargs`). Recommend `CONFIG_PSTORE=y`,
+`CONFIG_PSTORE_RAM=y`, `CONFIG_PSTORE_CONSOLE=y` (and `PSTORE_PMSG` if forgectrl wants to
+leave breadcrumbs), backed by a `ramoops` node under `reserved-memory` in `glowforge.dts`
+so it does not depend on the bootloader environment. The record is then readable from
+`/sys/fs/pstore` after the reboot, and forgectrl's log export can pick it up.
+
+###### 2.2 `panic=10` lives only in the boot arguments
+`CONFIG_PANIC_TIMEOUT=0`. The DTS fallback `bootargs` has no `panic=`, so a boot that falls
+through to the DTS (the documented recovery ladder) hangs on panic instead of rebooting.
+`CONFIG_PANIC_TIMEOUT=10` makes the behavior independent of the environment. (Keep the
+cmdline value too; the cmdline wins when present.)
+
+###### 2.3 Lockup detectors (see 1.2).
+
+###### 2.4 SDMA RAM firmware never loads (decided: keep the ROM scripts, drop the packages)
+`imx-sdma 20ec000.dma-controller: external firmware not found, using ROM firmware`.
+`IMX_SDMA=y` probes at 0.42 s, before the rootfs, so `sdma-imx6q.bin` (installed by
+`linux-firmware-imx-sdma-imx6q`) is never used; the ROM scripts run. The pulse script is
+loaded by glowforge.ko itself (halfword 7680), not by the firmware.
+
+Decision: the ROM-script behavior stays, and the two SDMA firmware packages
+(`linux-firmware-imx-sdma-imx6q`, plus `linux-firmware-imx-sdma-imx7d`, which the
+`imx-mainline-bsp` override also pulls) leave `MACHINE_FIRMWARE`. This is a runtime no-op:
+nothing on the board runs on the RAM firmware. Loading it deliberately was rejected because
+no client gains from it and it would let a PIC SPI burst run through SDMA channel 0 next to
+the pulse channel during a job (channel 0 has the highest priority).
+
+SDMA client inventory behind that decision (running board + DT + driver source):
+
+| Client | `dmas` in the SoC dtsi | Use today | Scripts needed |
+|---|---|---|---|
+| glowforge.ko pulse ring | n/a (driven directly, channel 26, priority 6, EPIT1 event 16) | The only real user | Its own script, loaded by the module |
+| ecspi2 (PIC) | yes | Two dmaengine channels held since probe, 0 bytes transferred; `spi-imx` uses DMA only for transfers of 64 bytes or more, PIC transactions are 3 bytes and the largest observed bucket is 32-63 bytes (full register-map reads). Only the sysfs `raw` write can cross 64 bytes; today that path logs `sdma firmware not ready!` once, and the SPI core retries in PIO and disables DMA for the controller for good. | RX ROM; TX `mcu_2_ecspi` is a RAM script on i.MX6Q/DL (ERR009165 path) |
+| uart1 (console) | yes | Never; the console port is excluded from DMA | n/a |
+| uart2 | yes | Enabled in the DTS, nothing opens `ttymxc1` | ROM |
+| asrc | yes | Enabled only by the dtsi default, never opened (removal list) | RAM |
+| i2c1/2/4 | none | PIO | n/a |
+| uSDHC x3, IPU/CSI, VPU, GPU, CAAM | own DMA masters | not SDMA | n/a |
+| mxs-dma (`110000`) | separate APBH engine | no client | n/a |
+
+`/sys/kernel/debug/dmaengine/summary` lists exactly the two ecspi2 channels; the SDMA IRQ
+count is static at idle (all 170 came from boot: script load and verify, device open, 40 V on).
+The firmware layout in the binary checks out against the DTS comment: v3.6,
+`ram_code_size` 2754 bytes = 1377 halfwords at 6144, so RAM code spans 6144-7520 and the
+highest script entry is 7419; the pulse script at 7680-7819 is clear.
+
+Companion change (DTS): drop `dmas`/`dma-names` from `&ecspi2`. That releases the two held
+channels, makes the PIC's PIO behavior explicit instead of relying on the 64-byte threshold
+and the fallback path, and leaves the pulse ring as the SDMA's only client, which is what the
+timing argument in BRINGUP item 16 assumes.
+
+###### 2.5 Wi-Fi NVS
+`wlcore: WARNING Detected unconfigured mac address in nvs, derive from fuse instead` and
+`This default nvs file can be removed from the file system`: the generic
+`wl1271-nvs.bin` from linux-firmware is installed. The MAC comes from the chip fuse anyway,
+so this is cosmetic. Removing the file (or shipping a real NVS) silences it.
+
+###### 2.6 cpufreq policy is the defconfig default
+`CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND`, OPPs 396/792/996 MHz, `ondemand` at runtime,
+nothing in forgectrl sets a governor. On a single core with a `SCHED_FIFO` step producer
+(BRINGUP item 16), the 396 MHz idle floor plus ondemand's sampling delay is a latency
+source at job start and between moves. Not a defect; a policy to decide. `performance`
+while a job runs (forgectrl) or `CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE` (mains-powered
+machine, SoC at 47 C with 85 C passive trip) are the two levers. Drop
+`CONSERVATIVE`/`POWERSAVE`/`USERSPACE` governors either way.
+
+##### 3. dmesg review (fresh boot)
+
+No driver probe failed; `/sys/kernel/debug/devices_deferred` is empty; every DTS node
+binds (`cnc`, `thermal`, `pic`, `head`, both cameras, 3 accelerometers, lm75, wl18xx,
+watchdog, 3 PWMs, EPIT1/2). The SDIO CRC watch (BRINGUP item 11) shows 0 events this boot.
+
+| Line | Cause | Action |
+|---|---|---|
+| `evbug: Event. Dev: input0 ...` (every switch transition) | `INPUT_EVBUG=m` autoloaded | Remove (1.1) |
+| `SPI driver glowforge_pic has no spi_device_id for glowforge,pic` | Missing id table in glowforge.ko | Add table (1.6) |
+| `imx-sdma: external firmware not found, using ROM firmware` | Built-in driver, firmware on rootfs | Decided: ROM scripts stay, packages go (2.4) |
+| `mxs_phy 20c9000.usbphy: supply phy-3p0 not found` x2, `usb_phy_generic usbphynop1/2: dummy supplies not allowed for exclusive requests` | USB PHY nodes enabled with no USB controller | Disable in DTS (1.5) |
+| `imx-drm display-subsystem: [drm] Cannot find any crtc or sizes` + 4 `card1-crtcN` kthreads | `DRM_IMX=y` with no display | Remove DRM_IMX (4.1) |
+| `Bluetooth: Core ver 2.22 ...`, `HCI UART protocol H4/LL registered` | `BT=y` | Remove (1.4) |
+| `ALSA device list: No soundcards found.` | `SND=y` | Remove (1.4) |
+| `usbcore: registered new interface driver r8152/lan78xx/asix/...` (13 lines) | USB net drivers built in, no USB | Remove (4.1) |
+| `CAN device driver interface`, `can: raw/bcm/gw` | `CAN=y`, `CAN_FLEXCAN=y` | Remove (4.1) |
+| `SCSI subsystem initialized`, `libata version 3.00 loaded`, `kworker/R-ata_sff` | `SCSI=y`, `ATA=y` | Remove (4.1) |
+| `PCI: CLS 0 bytes, default 64`, `vgaarb: loaded` | `PCI=y`, `VGA_ARB=y` | Remove (4.1) |
+| `jffs2: version 2.2. (NAND)`, `fuse: init`, `NFS: Registering the id_resolver`, `RPC: Registered ...` | JFFS2/FUSE/NFS built in | Remove (4.1) |
+| `brd: module loaded` + 16 `ram0..15` in `/proc/partitions` | `BLK_DEV_RAM=y`, 16 x 64 MiB | Remove |
+| `mxs-dma 110000.dma-controller: initialized` | APBH DMA (GPMI NAND) | Remove `MXS_DMA` |
+| `hwmon hwmon1: temp1_input not attached to any thermal zone` | `THERMAL_OF` + lm75 without a zone | Cosmetic |
+| `Unknown kernel command line parameters "board=glowforge"` | uEnv passes it for userspace | Cosmetic |
+| `No ATAGs?` | `ATAGS=y` on a DT boot | Drop `ATAGS`/`ATAGS_PROC` |
+| `snvs_rtc: setting system clock to 1970-01-01` | No RTC battery | Expected; ntpd sets time |
+| `Fixed dependency cycle(s) with ...` (about 40 lines) | fw_devlink over the video-mux graph and the CSI muxes | Upstream noise, harmless |
+| `gpio gpiochipN: Static allocation of GPIO base is deprecated` x7 | Upstream `gpio-mxc` | Harmless |
+| `sdhci-esdhc-imx 2190000.mmc: card claims to support voltages below defined range` | WL18xx advertises 1.8 V, host is `no-1-8-v` | Harmless |
+| `mmc1: host does not support reading read-only switch` | `broken-cd` SD slot | Harmless |
+| `imx_media_common/imx6_media/...: module is from the staging directory` | imx-media lives in staging | Expected |
+| `glowforge: loading out-of-tree module taints kernel` | Expected | None |
+
+##### 4. Drivers that are configured and unnecessary
+
+Evidence for "unnecessary": no node in `glowforge.dts` (and none in the factory 4.14 tree
+either), no driver bound on the running board, and no consumer in forgectrl, gfhardware,
+gfutilities, or grblHAL. The board's peripheral set is: UART1/2, eCSPI2 (PIC), I2C1/2/4,
+uSDHC1 (WL1805 SDIO) / 2 (SD) / 3 (eMMC), PWM1/2/4, EPIT1/2, SDMA, MIPI CSI-2 + IPU CSI,
+VPU (coda), GPU (etnaviv, used by forgectrl's surfaceless-EGL demosaic), CAAM (RNG),
+OCOTP, SNVS RTC, WDOG1, tempmon, GPIO switches/leds, the glowforge nodes.
+
+###### 4.1 Built in (`=y`), removable from `glowforge.cfg`
+These are what the 9.1 MB zImage is made of. Grouped; each group is one `# CONFIG_X is not
+set` cluster in the fragment (the defconfig sets them, the fragment must unset them).
+
+| Group | Symbols (parents; children fall with them) | Note |
+|---|---|---|
+| USB (all) | `USB_SUPPORT`, `USB`, `USB_CHIPIDEA*`, `USB_EHCI_HCD`, `USB_GADGET` + `USB_CONFIGFS*`/`USB_F_*`, `USB_USBNET` + `USB_NET_*`, `USB_RTL8152`, `USB_LAN78XX`, `USB_STORAGE`, `USB_HID`, `USB_MXS_PHY`, `USB_ULPI_BUS`, `USB_ONBOARD_DEV`, `USB_ROLE_SWITCH`, `EXTCON_USB_GPIO`, `USB_PCI` | No USB controller on the board |
+| Wired/other networking | `FEC`, `PHYLIB`/`MDIO_*`, `PTP_1588_CLOCK`, `PPS`, `NET_VENDOR_*` (58 gates), `CAN` + `CAN_FLEXCAN/RAW/BCM/GW`, `BT` + `BT_HCIUART*`, `SERIAL_DEV_BUS`, `CFG80211_WEXT`, `IPV6_SIT`, `IP_PNP` | No Ethernet, CAN, or BT |
+| Storage buses | `SCSI` (+`SCSI_LOWLEVEL`), `ATA` (+`ATA_SFF`, `ATA_BMDMA`), `PCI` + `PCIE_DW_HOST` + `PCI_IMX6` + `PCI_MSI` + `PCIEASPM`, `MTD` (+`MTD_CFI*`, `MTD_RAW_NAND`, `MTD_NAND_GPMI_NAND`, `MTD_NAND_MXC`, `MTD_SPI_NOR`, `MTD_UBI`, `MTD_DATAFLASH`, `MTD_PHYSMAP`), `MXS_DMA`, `FSL_EDMA`, `IMX_WEIM`, `BLK_DEV_RAM` | eMMC/SD only; EIM pads are plain GPIOs here |
+| Filesystems | `JFFS2_FS`, `UBIFS_FS`, `NFS_FS` (+SUNRPC), `FUSE_FS`, `AUTOFS_FS`, `EXT2_FS`, `EXT3_FS`, `QUOTA`, `ISO9660_FS`/`UDF_FS`/`MSDOS_FS` (modules), `BINFMT_MISC` | Keep `EXT4_FS`, `VFAT_FS` + `NLS_*` (SD cards), `TMPFS`, `CONFIGFS_FS` |
+| Display | `DRM_IMX` (+`DRM_IMX_HDMI/LDB/PARALLEL_DISPLAY/TVE`), `DRM_DW_HDMI` (+CEC, AHB audio), `DRM_MSM` (Qualcomm; the whole `DRM_MSM_*` block), `DRM_MXSFB`, `DRM_PANEL_*`, `DRM_SII902X`, `DRM_TI_TFP410`, `DRM_I2C_NXP_TDA998X`, `DRM_LVDS_CODEC`, `DRM_FBDEV_EMULATION`, `FB`, `FRAMEBUFFER_CONSOLE`, `LOGO`, `VT` + `DUMMY_CONSOLE` + `CONSOLE_TRANSLATIONS`, `VGA_ARB`, `BACKLIGHT_CLASS_DEVICE`/`BACKLIGHT_GPIO`/`BACKLIGHT_PWM`, `LCD_CLASS_DEVICE`, `CEC_CORE`, `MEDIA_CEC_SUPPORT` | **Keep `DRM`, `DRM_ETNAVIV`, `DRM_ETNAVIV_THERMAL`, `IMX_IPUV3_CORE`** (GPU demosaic needs the etnaviv render node; the IPU core drives CSI capture). See 5.1 for the verification this needs. |
+| Audio | `SOUND`, `SND`, `SND_SOC`, `SND_IMX_SOC`, `SND_SOC_FSL_SSI/SAI/ESAI/SPDIF/ASRC/AUDMUX/UTILS`, `SND_SOC_IMX_PCM_DMA/FIQ`, all codec drivers (`SGTL5000`, `WM8960`, `WM8962`, `WM8994`, `TLV320AIC23/31XX/3X`, `CS42XX8`, `ES8328`), `SND_SIMPLE_CARD`, `SND_SOC_HDMI_CODEC`, `SND_AC97_CODEC`, `SND_USB_AUDIO` | Plus `&asrc` disabled in the DTS |
+| Input | `INPUT_TOUCHSCREEN` + 19 `TOUCHSCREEN_*`, `HID`/`HID_GENERIC`/`HID_MULTITOUCH`/`HID_WACOM`/`I2C_HID*`, `INPUT_MOUSE` (psmouse), `SERIO`/serport, `INPUT_MISC` + `INPUT_GPIO_BEEPER`, `INPUT_EVBUG`, `INPUT_LEDS`, `INPUT_MATRIXKMAP`, `RC_CORE`/`RC_DEVICES`/`IR_GPIO_CIR`/`VIDEO_IR_I2C` | **Keep `INPUT`, `INPUT_EVDEV`, `KEYBOARD_GPIO`** (`/dev/input/event0` = the switches) |
+| PMIC / board-support for other boards | `MFD_DA9052_I2C`, `MFD_DA9062`, `MFD_DA9063` (+`da9063_wdt`), `MFD_MC13XXX*` (+`SENSORS_MC13783_ADC`, `TOUCHSCREEN_MC13783`), `MFD_RN5T618` (+`rn5t618_power`), `MFD_ROHM_BD71828` + `GPIO_BD71815` + `REGULATOR_ROHM`, `MFD_STMPE` (+gpio, ts), `MFD_SY7636A` (+`SENSORS_SY7636A`), `MFD_WM8994`, `GPIO_74X164`, `GPIO_MAX732X`, `GPIO_PCA953X`, `GPIO_PCF857X`, `GPIO_VF610`, `GPIO_SIOX`/`SIOX`, `REGULATOR_GPIO`, `POWER_SUPPLY`, `W1` (+`ds2482`, `w1_therm`), `I2C_GPIO`, `I2C_MUX_GPIO`, `I2C_ALGOPCA/PCF`, `I2C_SLAVE`, `SPI_GPIO`/`SPI_BITBANG`, `SPI_FSL_DSPI`, `SPI_FSL_QUADSPI`, `PWM_FSL_FTM`, `PWM_IMX_TPM`, `RTC_DRV_MXC`, `SENSORS_GPIO_FAN`, `SENSORS_PWM_FAN`, `SENSORS_IIO_HWMON`, `SENSORS_ISL29018`, `IIO_ST_SENSORS_SPI` (+`st_accel_spi`), `LEDS_PWM`, `LEDS_TRIGGER_*`, `IMX_IRQSTEER`, `IMX_GPCV2*`, `SERIAL_FSL_LPUART*`, `DMATEST`, `IRQ_IMX_MU_MSI`, `HW_RANDOM_IMX_RNGC`, `HW_RANDOM_MXC_RNGA`, `HW_RANDOM_OPTEE`, `HW_RANDOM_ARM_SMCCC_TRNG`, `CRYPTO_DEV_MXS_DCP`, `CRYPTO_DEV_SAHARA`, `TEE`/`OPTEE`, `ARM_PSCI*` | **Keep `REGULATOR_FIXED_VOLTAGE`, `REGULATOR_ANATOP`, `GPIO_MXC`, `GPIO_CDEV`, `GPIO_SYSFS`, `LEDS_GPIO`, `LEDS_CLASS`, `I2C_IMX`, `I2C_CHARDEV`, `SPI_IMX`, `PWM_IMX27`, `RTC_DRV_SNVS`, `NVMEM_IMX_OCOTP`, `NVMEM_SNVS_LPGPR`, `CRYPTO_DEV_FSL_CAAM*`, `SENSORS_LM75`, `IIO_ST_SENSORS_CORE`/`I2C`, `IMX_THERMAL`, `CPU_THERMAL`** |
+| Other SoCs | `SOC_IMX31/35/50/51/53/6SL/6SLL/6SX/6UL/7D/7ULP/8M`, `PINCTRL_IMX35/50/51/53/6SL/6SLL/6SX/6UL/7D/7ULP/8MM/8MN/8MP/8MQ`, `PINCTRL_VF610` | **Keep `SOC_IMX6Q`, `PINCTRL_IMX6Q`, `MXC_CLK`, `CLKSRC_IMX_GPT`, `IMX2_WDT`, `ARM_IMX6Q_CPUFREQ`** |
+| Media (non-camera) | `MEDIA_ANALOG_TV_SUPPORT`, `MEDIA_DIGITAL_TV_SUPPORT`, `MEDIA_RADIO_SUPPORT`, `MEDIA_SDR_SUPPORT`, `MEDIA_TEST_SUPPORT`, `MEDIA_USB_SUPPORT`, `DVB_CORE`, `VIDEO_IMX_PXP` (the 6DL PXP node's compatible is not one this driver matches; unbound), `VIDEO_OV2680`/`OV5640`/`OV5645`/`ADV7180`, `USB_VIDEO_CLASS` | **Keep `MEDIA_SUPPORT`, `MEDIA_CAMERA_SUPPORT`, `MEDIA_PLATFORM_SUPPORT`, `MEDIA_CONTROLLER`, `VIDEO_DEV`, `VIDEO_V4L2_SUBDEV_API`, `V4L_PLATFORM_DRIVERS`, `V4L_MEM2MEM_DRIVERS`, `VIDEO_CODA`, `VIDEO_IMX_VDOA`, `VIDEO_IMX_MEDIA`, `VIDEO_MUX`, `VIDEO_OV5648`, `VIDEO_OV8856`, `STAGING_MEDIA`**. The single switch `CONFIG_MEDIA_SUPPORT_FILTER=y` (then enable only CAMERA + PLATFORM) is what removes the DVB/tuner tree (4.2). |
+| Debug / misc | `KEXEC`, `CRASH_DUMP`, `PROC_VMCORE`, `ATAGS` + `ATAGS_PROC`, `SUSPEND`/`PM_SLEEP`/`PM_TEST_SUSPEND`/`PM_DEBUG` (no suspend use on a laser), `SWAP`, `CPU_FREQ_GOV_CONSERVATIVE/POWERSAVE/USERSPACE`, `IOSCHED_BFQ`, `MQ_IOSCHED_KYBER`, `CONNECTOR`/`PROC_EVENTS`, `RD_BZIP2/LZ4/LZMA/LZO/XZ/ZSTD` (no initrd), `HIGHMEM` (512 MB fits lowmem; dmesg: `HighMem empty`) | `DEBUG_FS`, `DEVMEM`, `MAGIC_SYSRQ`, `KPROBES`, `PERF_EVENTS`, `IKCONFIG_PROC` are bench tools; keep on the dev image at least |
+
+###### 4.2 Modules shipped and never used
+`imx-base.inc` sets `MACHINE_EXTRA_RRECOMMENDS = "kernel-modules"`, so every module built
+lands on the rootfs: 253 modules, 9.7 MB, in the release image as well (its manifest lists
+254 `kernel-module-*` packages). The board loads 28; 27 are needed (`wl12xx` is not).
+Breakdown of the dead weight on the board:
+
+| Group | Modules | Size | Why they exist |
+|---|---|---|---|
+| DVB frontends + tuners | 153 | 3.1 MB | `MEDIA_SUPPORT_FILTER` off + `MEDIA_SUBDRV_AUTOSELECT` off makes every frontend `default m` |
+| Non-TI Wi-Fi (`ath10k`, `brcmfmac`, `mwifiex`, `wl12xx`) | 13 | 1.4 MB | `WLAN_VENDOR_*` gates + defconfig |
+| USB (gadget legacy, serial, `cdc-acm`, `usbtest`, `ehset`, `uvcvideo`, `snd-usb-audio`, USB net) | 20 | 1.2 MB | No USB |
+| Other (`psmouse`, `serport`, `gpio-beeper`, `w1`, `siox`, `dmatest`, `evbug`, `bnep`, `udf`/`isofs`/`msdos`, `binfmt_misc`, `da9063_wdt`, `rn5t618_power`, `lvds-codec`, `dw-hdmi-ahb-audio`, `qcaspi`, `ov2680/ov5640/ov5645/adv7180`, `cxd2880-spi`, `irq-imx-mu-msi`, `st_accel_spi`, `i2c-algo-pca/pcf`, `nls_iso8859-15`) | ~40 | 1.3 MB | Defconfig |
+
+Two independent fixes: (1) unset the symbols so the modules are not built (4.1 plus
+`MEDIA_SUPPORT_FILTER=y`); (2) replace the blanket `kernel-modules` recommendation in
+`glowforge.conf` with the explicit list (`kernel-module-glowforge`, the `wlcore`/`wl18xx`/
+`mac80211`/`cfg80211`/`ccm`/`ctr`/`gcm`/`ghash`/`libarc4` set, `ov5648`, `ov8856`,
+`video-mux`, `mux-core/gpio/mmio`, `imx-media-common`, `imx6-media`, `imx6-media-csi`,
+`imx6-mipi-csi2`, `coda-vpu`, `v4l2-jpeg`, `imx-vdoa`, `lm75`, `st-accel`/`st-accel-i2c`/
+`st-sensors`/`st-sensors-i2c`). (2) alone already shrinks the release rootfs by about
+8 MB against the 200 MiB slot; (1) is what shrinks the kernel and the build.
+
+###### 4.3 Firmware packages (adjacent, same mechanism)
+`MACHINE_FIRMWARE` in `imx-base.inc` adds, for `mx6dl-generic-bsp` and `imx-mainline-bsp`:
+`firmware-imx-epdc` (5.0 MB of e-paper controller firmware; no EPDC on this board),
+`firmware-imx-vpu-imx6q` (the 6DL uses `vpu_fw_imx6d.bin`), `linux-firmware-imx-sdma-imx7d`
+(wrong SoC), plus `linux-firmware-imx-sdma-imx6q` (never loads; both SDMA packages are
+decided out, 2.4). `/lib/firmware` is 7.7 MB; about 5.5 MB of it has no consumer. `linux-firmware-wl18xx` carries four `wl18xx-fw*`
+variants; this board (PG 2.2) boots `wl18xx-fw-4.bin`. Keep all four unless every board
+is known to be PG 2.2. The `TIInit_*.bts` files are BT init scripts (no BT).
+
+##### 5. Considerations (not defects; decide, then measure)
+
+###### 5.1 `DRM_IMX` removal must be verified against the GPU demosaic
+forgectrl's `gpu_debayer.c` opens EGL through `EGL_PLATFORM_SURFACELESS_MESA`, which
+enumerates render nodes (`/dev/dri/renderD128`, etnaviv). It does not need `card1`
+(imx-drm). After removing `DRM_IMX`, confirm on the bench that `/dev/dri/renderD128` still
+exists and forgectrl logs the GPU path as active (the `gpu:` lines) rather than falling back
+to NEON. Mesa's `PACKAGECONFIG:pn-mesa = "... gallium etnaviv"` is unaffected.
+
+###### 5.2 `SMP=y` on a single core
+`CONFIG_SMP=y`, `NR_CPUS=4`, one CPU brought up. Every spinlock and per-CPU path pays the
+SMP cost for nothing. `CONFIG_SMP=n` (the multi-platform build allows it) removes that and
+the seven IPI vectors. Worth measuring against BRINGUP item 16 (producer stalls); it is
+not a correctness issue.
+
+###### 5.3 Kernel-side latency knobs that are already right
+`PREEMPT=y`, `HZ=100` with `NO_HZ_IDLE` and `HIGH_RES_TIMERS`, `imx6q_cpuidle` (WFI + WAIT,
+50 us exit), `RCU_PREEMPT`, no `DEBUG_PREEMPT`/lock debugging, `DEBUG_INFO_NONE`,
+`INIT_STACK_ALL_ZERO` (small cost, fine). `sched_rt_runtime_us=950000` is the default RT
+throttle; a `SCHED_FIFO` feeder that ever runs a full 950 ms without sleeping is throttled
+for 50 ms. The feeder sleeps, so this is a note, not a finding.
+
+###### 5.4 Watchdog
+`IMX2_WDT=y` + `WATCHDOG_HANDLE_BOOT_ENABLED=y`: the kernel adopts U-Boot's 60 s watchdog
+and keeps it fed while `/dev/watchdog` stays closed (nothing opens it, by design per the
+image recipe). Consistent with the fragment. A hung userspace does not reset the machine;
+that is the documented decision.
+
+###### 5.5 Tracing and BPF
+`FTRACE`-family symbols are absent from the config (no function tracer), but `BPF_SYSCALL`,
+`KPROBES`, `RCU_TRACE`, `TASKS_TRACE_RCU`, `PERF_EVENTS` are on. Keep on the dev image
+(latency work), consider off for release.
+
+###### 5.6 Documentation drift noticed on the way (kas/README.md #2)
+The README says the PWM prescaler port is "obsolete", that the PIC SPI delay is a
+"hardware-bring-up TODO", and that `reg-userspace-consumer` is enabled via `glowforge.cfg`.
+The bbappend carries patch 0009 (`fsl,extra-prescale = <13>` on `&pwm2`) and patch 0004
+(the PERIODREG delay), and the fragment has no userspace-consumer line (the DTS dropped
+the node). The bbappend header is current; the README paragraph is not.
+
+##### 6. What to keep (the board's real driver set)
+
+Built in: `IMX_SDMA`, `MXC_EPIT_API`, `PREEMPT`, `PANIC_ON_OOPS`, `IMX2_WDT`, `CMA`/`DMA_CMA`,
+`SERIAL_IMX` (+console), `MMC_SDHCI_ESDHC_IMX`, `MMC_BLOCK`, `I2C_IMX`, `I2C_CHARDEV`,
+`SPI_IMX`, `PWM_IMX27`, `GPIO_MXC`, `GPIO_CDEV`, `GPIO_SYSFS`, `PINCTRL_IMX6Q`, `SOC_IMX6Q`,
+`KEYBOARD_GPIO`, `INPUT_EVDEV`, `LEDS_GPIO`, `REGULATOR_FIXED_VOLTAGE`, `REGULATOR_ANATOP`,
+`IMX_THERMAL`, `CPU_THERMAL`, `ARM_IMX6Q_CPUFREQ` (+`ondemand`, `performance`), `CPU_IDLE`,
+`RTC_DRV_SNVS`, `NVMEM_IMX_OCOTP`, `IMX_IPUV3_CORE`, `DRM` + `DRM_ETNAVIV`,
+`CRYPTO_DEV_FSL_CAAM` (RNG, `hwrng` thread), `IIO` + triggered buffer, `HWMON`, `WATCHDOG`,
+`EXT4_FS`, `VFAT_FS` + `NLS_*`, `TMPFS`, `DEVTMPFS`, `CONFIGFS_FS`, `IKCONFIG_PROC`,
+`INET`/`UNIX`/`PACKET`, `IPV6` (until `auth.c` says otherwise), `RFKILL` (wpa_supplicant),
+`WIRELESS`/`WLAN`/`WLAN_VENDOR_TI`, `MEDIA_SUPPORT` + camera/platform, `STAGING_MEDIA`,
+`SRAM`, `MXC_CLK`, `CLKSRC_IMX_GPT`, `HAVE_ARM_TWD`, `IMX_GPC` + PM domains (`vddpu`).
+
+Modules (27): `glowforge`, `wl18xx`, `wlcore`, `wlcore_sdio`, `mac80211`, `cfg80211`,
+`libarc4`, `ccm`, `ctr` (+`gcm`, `ghash` for WPA3/GCMP), `ov5648`, `ov8856`, `video_mux`,
+`mux_core`, `mux_gpio`, `mux_mmio`, `imx_media_common`, `imx6_media`, `imx6_media_csi`,
+`imx6_mipi_csi2`, `coda_vpu`, `v4l2_jpeg`, `imx_vdoa`, `lm75`, `st_accel`, `st_accel_i2c`,
+`st_sensors`, `st_sensors_i2c`.
+
+##### 7. Suggested order, if acted on
+
+1. `glowforge.cfg`: unset `INPUT_EVBUG`; add `DETECT_HUNG_TASK` + `SOFTLOCKUP_DETECTOR`;
+   add `PSTORE`/`PSTORE_RAM`/`PSTORE_CONSOLE` (+ ramoops node in the DTS); set
+   `PANIC_TIMEOUT=10`; write `MULTIPLEXER`/`MUX_GPIO`/`MUX_MMIO` as `=m`. (Safety and
+   diagnostics first.)
+2. `glowforge.conf`: replace the `kernel-modules` recommendation with the explicit module
+   list; drop `firmware-imx-epdc`, `firmware-imx-vpu-imx6q`, `linux-firmware-imx-sdma-imx6q`,
+   and `linux-firmware-imx-sdma-imx7d` from `MACHINE_FIRMWARE` (2.4, decided).
+3. `glowforge.cfg`: the removal clusters in 4.1 with `MEDIA_SUPPORT_FILTER=y`; `glowforge.dts`:
+   disable `&asrc` and the USB PHY nodes, and drop `dmas`/`dma-names` from `&ecspi2` (2.4).
+4. `kernel-module-glowforge`: `spi_device_id` table for `glowforge,pic`.
+5. Bench: fresh-boot `dmesg` diff, `/proc/sys/kernel/*_panic` present, `/sys/fs/pstore`
+   mounts, `renderD128` present and forgectrl on the GPU path, cameras stream, Wi-Fi up,
+   then the acceptance catalog.
+
+All of 1 through 4 ride one image flash (kernel/BSP changes batch), and every item here is
+a platform change under the acceptance model.
+
 
 ## Reference notes
 
