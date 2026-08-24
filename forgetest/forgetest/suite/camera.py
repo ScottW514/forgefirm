@@ -5,6 +5,8 @@ from ..baseline import LID_LAMP_ATTR
 
 _CAM_COVERS = [("forgectrl", "src/cam.*"), ("forgectrl", "src/camhealth.*"),
                ("forgectrl", "src/debayer.*"), ("forgectrl", "src/vpu_jpeg.*"),
+               ("forgectrl", "src/vpu_h264.*"), ("forgectrl", "src/mp4mux.*"),
+               ("forgectrl", "src/gpu_debayer.*"),
                ("forgectrl", "src/main.c"),
                ("python3-gfhardware", "gfhardware/src/**"), ("python3-gfhardware", "gfhardware/cam*")]
 
@@ -156,6 +158,68 @@ def sensor_profile(ctx):
         ev["jpeg_%s" % res] = got
         ctx.log("%s snapshot: %s (%d bytes)", res, got, len(data))
         ctx.check(got == (w, h), "%s snapshot is %s, not %dx%d", res, got, w, h)
+
+
+@test("camera.h264-stream", title="H.264 live stream", subsystem="camera",
+      kind="auto", est_min=2,
+      covers=_CAM_COVERS, requires=["forgectrl.panel-serves"],
+      steps=["Setup: lid closed."],
+      description="/cam/h264 answers a fragmented MP4: a codec header naming the SPS profile, an "
+                  "init segment (ftyp+moov) followed by media fragments (moof+mdat) within a few "
+                  "seconds, and /cam/status reporting the H.264 encoder active with this client "
+                  "counted. Also records which demosaic path (GPU or CPU) served the stream. On a "
+                  "machine whose image lacks Mesa or whose encoder refused, the endpoint must "
+                  "answer 503 rather than hang - that is a pass for the endpoint but is recorded "
+                  "in the evidence.")
+def h264_stream(ctx):
+    import urllib.error
+    import urllib.request
+
+    fc = ctx.forgectrl
+    ev = ctx.evidence
+
+    req = urllib.request.Request(fc.base + "/cam/h264?cam=lid",
+                                 headers={"Host": fc.host_header()})
+    try:
+        r = urllib.request.urlopen(req, timeout=20)
+    except urllib.error.HTTPError as e:
+        ev["status"] = e.code
+        ev["body"] = e.read()[:200].decode("utf-8", "replace")
+        ctx.check(e.code == 503, "H.264 refused with %s, not 503: %s", e.code, ev["body"])
+        ctx.log("H.264 unavailable on this machine (503): %s", ev["body"])
+        return
+    with r:
+        codec = r.headers.get("X-H264-Codec", "")
+        ctype = r.headers.get("Content-Type", "")
+        ev["codec"] = codec
+        ev["content_type"] = ctype
+        ctx.log("codec %s, content-type %s", codec, ctype)
+        ctx.check(ctype == "video/mp4", "content type is %r", ctype)
+        ctx.check(codec.startswith("avc1."), "codec header is %r", codec)
+
+        # Init segment, then at least one media fragment.
+        data = b""
+        while len(data) < 512 * 1024:
+            chunk = r.read(65536)
+            if not chunk:
+                break
+            data += chunk
+            if b"moof" in data and b"mdat" in data:
+                break
+    ev["bytes"] = len(data)
+    ctx.check(data[4:8] == b"ftyp", "stream does not start with ftyp")
+    ctx.check(b"moov" in data, "no moov (init segment)")
+    ctx.check(b"avcC" in data, "no avcC in the init segment")
+    ctx.check(b"moof" in data and b"mdat" in data,
+              "no media fragment arrived in %d bytes", len(data))
+
+    st, body = fc.get("/cam/status")
+    ctx.check(st == 200 and isinstance(body, dict), "GET /cam/status -> %s", st)
+    ev["cam_status"] = body
+    ctx.log("convert=%s h264=%s", body.get("convert"), body.get("h264"))
+    h = body.get("h264") or {}
+    ctx.check(h.get("active") is True, "/cam/status does not report the H.264 encoder active: %s",
+              body)
 
 
 @test("camera.frame-health", title="Capture delivers whole frames", subsystem="camera",

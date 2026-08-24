@@ -484,6 +484,10 @@ bounce copy; daemon ~41 % CPU with one viewer. Full-res snapshot 2.4 s warm /
 copy, needed on a kernel without the `allow_cache_hints` patch — detected via
 the `MMAP_CACHE_HINTS` capability bit), `FORGECTRL_NO_NEON` (scalar convert,
 bit-identical), `FORGECTRL_NO_VPU` (libjpeg; also the snapshot path).
+Newer and **not yet bench-run** (Next work item 20): the GC880 GPU demosaic,
+the `/cam/h264` CODA960 H.264 stream, and CSI hardware frame skip, with
+`FORGECTRL_NO_GPU` / `FORGECTRL_NO_H264` / `FORGECTRL_NO_HW_SKIP` to strip
+them individually; all fall back to the measured paths above.
 `/cam/status` reports `encoder` and `buffers`. A CSI glitch frame can out-size
 the coda driver's default JPEG capture buffer, so forgectrl requests 3 B/px and
 drops error-flagged dequeues as single bad frames. **LightBurn consumes the
@@ -1441,6 +1445,30 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     point, and the header values are only a cross-check once the units
     are established. A pause on contact, on the factory's shape, would be
     the first use.
+
+20. **Video pipeline offload — bench validation.** Code-complete and
+    host-proven (CI: `mp4mux_test`; catalog: `camera.h264-stream`), not yet
+    run on hardware: the GC880 GLES2 demosaic (`src/gpu_debayer.c`,
+    dlopen'd Mesa, capture dmabuf in, encoder dmabuf out), the CODA960
+    H.264 stream (`/cam/h264`, fragmented MP4, panel MSE player,
+    ~1.5 Mbit/s vs MJPEG's ~9), and the CSI hardware frame skip behind
+    `FORGECTRL_STREAM_FPS`. Falls back to the NEON path wherever a piece
+    is missing, so the existing stream is not at risk. To settle on the
+    bench, in order: (1) the image builds with Mesa etnaviv inside the
+    200 MiB slot cap (distro `PACKAGECONFIG:pn-mesa`, image adds
+    `libegl-mesa libgles2-mesa libgbm mesa-megadriver`); (2) surfaceless
+    EGL comes up and dmabuf import works both directions (the open logs
+    say exactly which probe refused); (3) `FORGECTRL_GPU_CHECK` reports a
+    max delta of a couple of counts against the scalar demosaic;
+    (4) `GL_MAX_TEXTURE_SIZE` covers 1944 rows (5 MP single-tile; the
+    8 MP tiling path can only be exercised on an HD machine or by
+    forcing tiles); (5) coda H.264 rate control and picture quality at
+    1296x972p15, and the measured CPU with a panel H.264 viewer vs the
+    41 % MJPEG baseline; (6) the stream-during-jog coexistence drill
+    rerun with the GPU path active. Switches to strip a suspect layer:
+    `FORGECTRL_NO_GPU`, `FORGECTRL_NO_H264`, `FORGECTRL_NO_HW_SKIP`,
+    plus the existing `FORGECTRL_NO_VPU` / `FORGECTRL_NO_NEON` /
+    `FORGECTRL_NO_CACHED_BUFS`.
 
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the

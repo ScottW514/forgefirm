@@ -1,10 +1,11 @@
 # Video and the cameras
 
 The machine has two cameras — one in the lid looking down at the bed, one in the
-print head looking at the material under the lens — and ForgeFIRM serves both as
-plain **MJPEG over HTTP** from the web control panel. There is no app, no cloud
-relay, and no proprietary protocol: a browser, LightBurn, or anything else that
-can read an MJPEG stream or fetch a JPEG can use them.
+print head looking at the material under the lens — and ForgeFIRM serves both
+over plain HTTP from the web control panel: **MJPEG** for anything that can read
+a stream of JPEGs, and an **H.264** live stream for clients that decode video
+(the panel uses it when the browser can). There is no app, no cloud relay, and
+no proprietary protocol.
 
 One rule governs all of it: **the cameras only capture with the lid closed**
 (§2). Everything else here assumes that condition is met.
@@ -115,6 +116,7 @@ buttons; **Live** switches the same frame to the running stream.
 |---|---|
 | `/cam/stream?cam=lid` | continuous MJPEG (`multipart/x-mixed-replace`) |
 | `/cam/stream?cam=head` | the same, from the head camera |
+| `/cam/h264?cam=lid` | continuous H.264 as fragmented MP4 (see §5.6): the same picture in a fraction of the bytes, for clients that decode video |
 | `/cam/snapshot?cam=lid` | one full-resolution JPEG |
 | `/cam/snapshot?cam=lid&res=half` | one half-resolution JPEG (much faster) |
 | `/cam/status` | JSON: which sensor, which camera, frame rate, frame sizes, whether the lid currently permits capture |
@@ -145,7 +147,7 @@ practice: paste the URL into any local client and it works.
 | Live stream | 1296 × 972 | 1632 × 1224 |
 | Full snapshot | 2592 × 1944 | 3264 × 2448 |
 | Half snapshot | 1296 × 972 | 1632 × 1224 |
-| Format | JPEG, quality 75 by default | same |
+| Stream formats | MJPEG (quality 75 by default) and H.264 (~1.5 Mbit/s by default) | same |
 | Frame rate | **15 fps** sustained | not yet measured (§10) |
 
 Measured on a 5 MP machine: 15.0 fps with a viewer attached, which is the rate
@@ -160,6 +162,11 @@ The stream frame is not a resampled copy of the full frame. Each 2 × 2 group of
 sensor pixels becomes exactly one output pixel, which is why the stream is
 precisely half the capture in each axis and why it is cheap enough to run
 continuously.
+
+The 41 % figure is the NEON demosaic feeding the hardware JPEG encoder. When
+the GPU demosaic and the H.264 stream carry the load instead (§5.6), the
+stream's CPU cost drops to bookkeeping; those two paths are newer than the
+figure above and their own numbers will be measured on the bench the same way.
 
 ---
 
@@ -177,7 +184,7 @@ reason.
 | Bit depth | 10 bits per pixel | 8 bits | JPEG is 8-bit, and 8-bit is what makes §5.2 fit |
 | Exposure / color | auto exposure and auto white balance | fixed values | a bed image has to look the same frame to frame; §5.4 |
 | Lens | — | no correction applied | correction belongs in the client; §5.5 |
-| Encoding | — | MJPEG only, nothing recorded | §5.6 |
+| Encoding | — | MJPEG and H.264, nothing recorded | §5.6 |
 | Mirroring | a mirror register | mirrored in software instead | the register breaks capture on this board; §5.7 |
 
 ### 5.1 Resolution and frame rate on a 5 MP machine
@@ -273,20 +280,43 @@ correction on the host, which is more accurate than a fixed correction baked
 into the firmware and costs the machine's CPU nothing. Run that calibration
 before trusting the camera overlay for placement.
 
-### 5.6 MJPEG only — and nothing is recorded
+### 5.6 Two streams, one picture: MJPEG and H.264. Nothing is recorded.
 
-The stream is a sequence of complete JPEG frames, not H.264 or any other
-inter-frame codec, and **the machine never writes video to disk**.
+The same live picture is served two ways, and **the machine never writes video
+to disk**.
 
-MJPEG is the right trade here: every frame stands alone, so a viewer can join
-or leave at any moment and a dropped frame costs nothing; browsers and sender
-software consume it with no plugin; and stream frames are encoded by the
-board's **hardware JPEG encoder**, which is what makes 15 fps affordable while
-the machine is also running a job. (Stills are encoded in software instead,
-which is most of why a full-resolution one takes a couple of seconds.) An
-inter-frame codec would need buffering and a container, would break the "any
-client, any time" property, and would buy bandwidth savings that a LAN does
-not need.
+**MJPEG** (`/cam/stream`) is the universal one: every frame is a complete
+JPEG, so a viewer can join or leave at any moment, a dropped frame costs
+nothing, and browsers, LightBurn and mjpg-streamer clients consume it with no
+plugin. It stays, unchanged, and it is what anything that cannot decode video
+should use.
+
+**H.264** (`/cam/h264`) exists because bytes on this machine are not free.
+MJPEG re-sends the whole scene fifteen times a second, roughly 9 Mbit/s, and
+the WiFi transmit path runs on the machine's single CPU core, where measured
+cost is about 7 % of the core per MB/s sent. A bed camera's scene barely
+changes between frames, which is exactly what an inter-frame codec exploits:
+the H.264 stream carries the same picture in roughly 1.5 Mbit/s and gives most
+of that CPU back. It arrives as fragmented MP4, the form a browser's Media
+Source Extensions accept, with the codec named in an `X-H264-Codec` response
+header; the panel's **Live** button uses it automatically where the browser
+can and falls back to MJPEG where it cannot. Latency is a beat behind MJPEG
+(under a second), which is why LightBurn keeps consuming the MJPEG stream.
+
+Both encoders are hardware: JPEG frames come from the CODA960's JPEG unit and
+H.264 from its BIT processor, two independent engines, so serving both at once
+does not double any cost that matters. The demosaic that feeds them runs as
+fragment shaders on the SoC's GC880 GPU when the image ships the GL stack
+(reported as `"convert": "gpu"` in `/cam/status`), reading the sensor frame
+and writing the encoder's buffer directly, so a stream frame never crosses the
+CPU at all; without the GPU it falls back to the NEON demosaic. (Stills are
+still demosaiced and encoded on the CPU, which is most of why a
+full-resolution one takes a couple of seconds.)
+
+One more consumer of nothing: with a frame-rate cap set (`FORGECTRL_STREAM_FPS`
+of 1 or more), the cap is programmed into the CSI receiver's frame-skip
+hardware, and skipped frames are dropped before they are ever written to
+memory. `/cam/status` reports `"hw_fps_skip": true` when that is in effect.
 
 If you want a recording, record the stream on the computer watching it. The
 machine stores its firmware, settings and logs on a small internal flash device

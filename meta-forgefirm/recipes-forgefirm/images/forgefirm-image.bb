@@ -35,6 +35,11 @@ IMAGE_INSTALL:remove = "gfui-client"
 # VIRTUAL-RUNTIME_base-utils-syslog (conf/distro/forgefirm.conf).
 IMAGE_INSTALL:append = " grblhal-glowforge forgectrl gfhome gfcloud v4l-utils fwup ffboot slotmigrate forgefirm-logging"
 
+# Mesa GLES2/EGL on etnaviv for forgectrl's GPU demosaic (loaded with
+# dlopen at runtime; forgectrl itself has no build-time GL dependency,
+# and without these packages it falls back to the NEON path).
+IMAGE_INSTALL:append = " libegl-mesa libgles2-mesa libgbm mesa-megadriver"
+
 # NXP's firmware EULA covers the i.MX VPU/EPDC blobs the BSP installs, so the
 # image ships the license text with them (/usr/share/licenses/firmware-imx).
 # The SDMA firmware brings its own -license package through linux-firmware.
