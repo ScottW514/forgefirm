@@ -3879,6 +3879,61 @@ and forgetest all answered on it from a host on a different VLAN, and
 the board reached the IPv6 WAN gateway. IPv6 is on end to end; the
 stale ULA ages out with its own lifetime.
 
+## 2026-08-24: the SDMA clocks, held by nobody
+
+The first campaign on dev 20260824201945 (`c-20260824204310-6b6d`) stalled
+on `image.health`: the pre-baseline waited its full 150 s for
+`motion=verified`, which forgectrl never reported, and the test then
+failed on `cnc/free 35618816 exceeds the ring less its 32 KiB gap`. The
+forgectrl log had the shape of it: `liveness probe: ERROR - cannot start
+the probe run` at every controller spawn on every boot since the first
+kernel-trim image (164619), and `MOTION OK` with a healthy p2p on every
+boot before it, the last at 17:47Z on 161618. The kernel log had nothing,
+because the one line that would have said so had been demoted to
+`dev_dbg` the same afternoon on the belief that it was grblHAL's benign
+race.
+
+The ring's own readbacks named the fault. `cnc/position` read X =
+0x200000 steps on a machine that had not moved (forgectrl showed 39321.60
+mm), the head index sat 2 MiB ahead of the tail on an idle ring, and
+scratch6/7 read back the script's constants (the 0x01ffffff index mask
+and the PWM sample-register address), which is the start of the channel
+context, not its scratch registers. Every context fetch was returning the
+bounce page as last written, not SDMA memory. `/sys/kernel/debug/clk/sdma`
+confirmed it: `clk_enable_count 0`, prepare 1, the engine unclocked.
+
+The mechanism: imx-sdma enables the engine's `ipg` and `ahb` clocks only
+in `sdma_alloc_chan_resources`, for a dmaengine client, and disables them
+at the end of probe. glowforge.ko takes channel 26 through the SDMA API
+patch's `sdma_get_channel()`, which returned `&sdma->channel[ch]` and
+nothing more. Until the trim, spi-imx on ecspi2 held two SDMA channels
+and so held the clocks; the pulse engine had run on that accident since
+its first image. The round-1 device tree deleted ecspi2's `dmas` on
+purpose (the ring as the only SDMA client), and took the last clock holder
+with it. With the block gated a channel-0 transfer completes at once and
+moves nothing: the script load, the context load, the head sync and the
+position fetch all "succeed"; `cnc/run` sees head == tail right after the
+tail publish and returns -ENODATA; grblHAL treats that as its ordinary
+race and carries on idle; `verify_sdma_script` passes by construction,
+because the write copies the script into the same bounce page the read
+returns. The "47 earlier occurrences" of `cannot start cut; no data
+enqueued` on 164619 and the "no DMA channel held by anyone" observation
+were this fault, read as noise. The SDMA RAM firmware is not involved: it
+never loaded on any image.
+
+The fix, and what proves it so far: `sdma_get_channel()` enables both
+clocks and a new `sdma_put_channel()` releases them (patch 0003 and the
+API header); the module calls put in remove and in the probe unwind; the
+empty-ring run request logs at ERR level again; `image.health` asserts
+`clk_enable_count >= 1` directly, ahead of the 150 s settle it would
+otherwise wait out. The ecspi2 `dmas` stay deleted. Host-proven: the
+patch round-trips against the kernel tree with 0008 on top, the kernel
+object compiles with no new warnings, the module compiles under `-Werror`
+(its modpost waits on the rebuilt kernel's export), the module's host
+tests and the 270 forgetest tests pass. Owed: the image, then on the
+bench `clk_enable_count` reading 1, `MOTION OK` from the probe,
+`cnc/free` at 33521664 idle, a GRBL job, and the campaign.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

@@ -71,7 +71,8 @@ def fds_of(pid):
               ("grblhal-glowforge", "CMakeLists.txt"), ("kernel-module-glowforge", "**"),
               ("linux-fslc", "**")],
       description="The image that is running is the image the manifest describes, with the "
-                  "kernel options, the module and the pulse ring it maps, the daemon ownership, "
+                  "kernel options, the module, the pulse ring it maps and the SDMA clocks it holds, "
+                  "the daemon ownership, "
                   "the init ordering, and the file modes the release depends on.")
 def image_health(ctx):
     ev = ctx.evidence
@@ -128,6 +129,19 @@ def image_health(ctx):
     ctx.check(ring is None or free is None or free <= ring - 32 * 1024,
               "cnc/free %s exceeds the ring less its 32 KiB gap (%s)", free, ring)
     ctx.check(hw.sysfs_read("cnc/interlock_circuit") is not None, "cnc/interlock_circuit unreadable")
+
+    # The SDMA engine runs only while a channel holder keeps its ipg/ahb
+    # clocks enabled; imx-sdma leaves them off after probe and only a channel
+    # allocation turns them on. glowforge.ko takes its channel outside
+    # dmaengine and holds the clocks itself. With the block gated every
+    # channel-0 transfer is a silent no-op: the probe cannot start, and the
+    # ring reads back a stale bounce page (free above the ring size, a
+    # position counter that never moved).
+    clk = (_read("/sys/kernel/debug/clk/sdma/clk_enable_count", "") or "").strip()
+    ev["sdma_clk_enable_count"] = clk
+    ctx.log("sdma clk_enable_count: %s", clk or "(unreadable)")
+    ctx.check(clk.isdigit() and int(clk) >= 1,
+              "SDMA clk_enable_count %r: the engine's ipg/ahb clocks are not held", clk)
 
     # 4. forgectrl holds /dev/glowforge and supervises the controller
     pids = hw.pidof("forgectrl")

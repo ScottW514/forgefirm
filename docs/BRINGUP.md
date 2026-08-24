@@ -1530,7 +1530,8 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     `/sys/fs/pstore` mounts with ramoops registered, `/dev/dri/renderD128`
     is present and both cameras stream through the GPU demosaic, Wi-Fi
     associates with `regulatory.db` loaded, the switches sit on `event0`,
-    31 modules load and no DMA channel is held by anyone. Two cosmetic dmesg
+    31 modules load and no DMA channel is held by anyone (which, as the
+    campaign later showed, was the problem: see below). Two cosmetic dmesg
     lines came with it: spi-imx reports the absent DMA channel at ERR level
     and runs PIO, and `consoleblank=0` (uEnv) is an unknown parameter without
     a virtual console. The crash record is proven: a forced `sysrq-c`
@@ -1543,9 +1544,8 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
 
     A second round rides the next image, host-proven and unflashed: the
     kernel is UP (`SMP` off) with performance as its only cpufreq governor;
-    spi-imx no longer logs the absent DMA channel (patch 0014) and the
-    module no longer logs a run request on an empty ring (grblHAL treats it
-    as the ordinary race it is); `consoleblank=0` is gone from the boot
+    spi-imx no longer logs the absent DMA channel (patch 0014);
+    `consoleblank=0` is gone from the boot
     arguments; only `wl18xx-fw-4.bin` and `wl18xx-conf.bin` ship for the
     WL1805 (the current factory image's set); IPv6 is on end to end
     (distro feature, `udhcpc6` from the `wlan0 inet6` stanza, forgectrl,
@@ -1565,7 +1565,29 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     the first Advertise it sees. With that access point's RA and DHCPv6
     disabled (as on the other two) the board took the firewall's lease, and
     every service answered on the global address from another VLAN: IPv6 is
-    on end to end. Left: the item-16 drill and the campaign.
+    on end to end.
+
+    The campaign on dev 20260824201945 then found what every check above had
+    missed: the machine cannot move on any image since the trim. The SDMA
+    engine's `ipg`/`ahb` clocks are enabled only while a dmaengine client
+    holds a channel; imx-sdma leaves them off after probe, and glowforge.ko
+    takes its channel through the SDMA API patch without touching them. The
+    ecspi2 `dmas` had been the only clock holder since the first image, by
+    accident. With the block gated every channel-0 transfer completes at
+    once and moves nothing, so the ring reads back the bounce page: the
+    supervisor's probe logs `cannot start the probe run` at every spawn
+    (`cnc/run` returns -ENODATA because the head sync reads the tail it just
+    published), `cnc/free` exceeds the ring, and `/status` reports a position
+    that never moved. `image.health` failed on the free check after the
+    150 s settle timeout, which is how it surfaced (CAMPAIGN-LOG 2026-08-24,
+    "the SDMA clocks, held by nobody"). The fix, host-proven and unbuilt:
+    `sdma_get_channel()` enables the clocks and `sdma_put_channel()`
+    releases them (patch 0003, the API header), the module calls put on
+    remove and on the probe unwind, the empty-ring run request logs at ERR
+    level again (it was the only kernel-log trace of the fault), and
+    `image.health` asserts the SDMA clock enable count directly. The ecspi2
+    `dmas` stay deleted. Left: build, flash, the item-16 drill and the
+    campaign.
 
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the
