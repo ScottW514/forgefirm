@@ -396,6 +396,83 @@ def emission_witness(ctx):
             "dark, mark confirmed", peak, ev["hv_min"], ev["hv_max"], beam["delta"], dt)
 
 
+HV_DARK_MAX = 20            # hv_current_raw reads 0 with the tube off; hundreds under fire
+
+
+@test("laser.m5-rapid-dark", title="The rapids after an M5 ship dark",
+      subsystem="laser", kind="live", mode="grbl", est_min=3,
+      covers=_LASER_COVERS,
+      requires=["laser.emission-witness"], actions=["button"],
+      steps=["Scrap under the head with 20 mm of free +X travel; lid closed; exhaust on.",
+             "Press the physical button when it lights white (the arm)."],
+      description="A 20 mm line at constant power (M3 S400/F600), then M5, a dwell, a rapid back "
+                  "over the line, a dwell, a rapid forward, a dwell, and the program end. M5 "
+                  "executes with the planner drained and the kernel run over, and the core "
+                  "issues no per-segment laser update for moves made with the spindle off, so "
+                  "only the stream's own wanted state decides whether those rapids fire; a stale "
+                  "true there lights them at the last level, full duty under the density model. "
+                  "The kernel's LASER_ON sample count must go to 0 after the M5 and stay 0 "
+                  "through both rapids, and the HV current must stay at its idle reading.")
+def m5_rapid_dark(ctx):
+    ev = ctx.evidence
+    with ctx.grbl() as g, LiveJob(ctx, g):
+        prepare(ctx, g)
+        base = sample(ctx)
+        ctx.check(base, "forgectrl /status or /cool/status unavailable")
+        ctx.check(not base["emission"], "emission_samples nonzero before the job (%s)", base["emission"])
+        ctx.ready(ARM_CUE % "20 mm +X")
+        job = ["G91", "G21", "M3", "S400",
+               "G1 X20 F600",
+               "M5", "G4 P2.5",
+               "G0 X-20", "G4 P2.5",
+               "G0 X20", "G4 P2.5",
+               "G90", "M2"]
+        ctx.arm_press()
+        try:
+            samples = run_and_sample(ctx, g, job)
+            # The controller reports Idle inside a G4 dwell, so the sampler
+            # above can return before the rapids; the window closing at M2
+            # is the end of the job. Keep sampling until then.
+            t0 = time.time()
+            while time.time() - t0 < 30:
+                ctx.checkpoint()
+                smp = sample(ctx)
+                if smp:
+                    samples.append(smp)
+                    if not smp["armed"]:
+                        break
+                time.sleep(0.125)
+        finally:
+            ctx.clear_notice()
+    emis = [(s["t"], s["emission"], s["hv"]) for s in samples if s["emission"] is not None]
+    peak = max((e for _t, e, _hv in emis), default=0)
+    ctx.check(peak > 0, "no emission witnessed on the G1 (emission_samples stayed 0)")
+    # The first zero after the peak is the dark window the M5 and its dwell
+    # produce; everything after it is the two rapids and their dwells.
+    i_peak = max(range(len(emis)), key=lambda i: emis[i][1])
+    after = [x for x in emis[i_peak:] if x[1] == 0]
+    ctx.check(after, "emission_samples never returned to 0 after the M5")
+    t_dark = after[0][0]
+    tail = [x for x in emis if x[0] >= t_dark]
+    relit = [x for x in tail if x[1]]
+    hv_tail = max((hv for _t, _e, hv in tail if hv is not None), default=0)
+    ev.update({"samples": len(samples), "emission_peak": peak, "tail_samples": len(tail),
+               "relit_samples": len(relit), "hv_tail_max": hv_tail,
+               "relit_first": relit[0] if relit else None})
+    ctx.log("emission peak %s; dark from +%.1f s; %d samples after it spanning %.1f s, %d with "
+            "emission, HV max after dark %s", peak, t_dark - emis[0][0], len(tail),
+            tail[-1][0] - t_dark, len(relit), hv_tail)
+    ctx.check(tail[-1][0] - t_dark >= 5.0, "sampling ended %.1f s after the dark point, before "
+              "both rapids and their dwells (~5.2 s) had run", tail[-1][0] - t_dark)
+    ctx.check(not relit, "the laser emitted after the M5: %d samples, first at +%.1f s "
+              "(emission_samples %s) - a rapid after M5 fired at the last level",
+              len(relit), (relit[0][0] - t_dark) if relit else 0, relit[0][1] if relit else None)
+    ctx.check(hv_tail <= HV_DARK_MAX, "HV current %s after the M5 (idle reads ~0): the discharge "
+              "ran through a rapid", hv_tail)
+    ctx.log("PASS: emission peak %s on the G1, 0 through both rapids, HV %s after the M5",
+            peak, hv_tail)
+
+
 @test("laser.disarm-in-hold", title="Disarm grace counts down in Hold", subsystem="laser",
       kind="live", mode="grbl", est_min=4,
       covers=_LASER_COVERS,

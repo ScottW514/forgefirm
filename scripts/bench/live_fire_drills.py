@@ -8,7 +8,8 @@ the operator to press the physical arm button before the machine fires;
 nothing here defeats that gate.
 
 Usage: live_fire_drills.py <drill> [arg] [F]  (ircut/pthresh take S,
-       dladder takes the base period in machine ticks)
+       dladder takes the base period in machine ticks, pcurve takes
+       F, the line length and an optional rung list)
 
 Drills (pass a name):
   witness   Phase 5 A-1/A-2/A-5: a short vector mark at S400. Samples
@@ -64,6 +65,37 @@ Drills (pass a name):
             what a shipped machine would actually emit. Sets
             laser_pulse_ticks itself when run on the board.
               dladder [period] [F]      e.g. dladder 20 300
+  pcurve    Laser performance-curve ladder, both instruments: one line
+            per level at constant feed (default F600, 10 mm/s, 100 mm),
+            M3 constant power, the laser off between rungs and a
+            mid-ladder rung repeated at the end as the drift witness. Reads
+            the HV current and the head thermopile (a scatter detector
+            in the beam path upstream of the final mirror, so it sees
+            the beam, not the material) straight from sysfs at ~25 Hz
+            while the machine runs, brackets each rung on the
+            controller's Run/Idle states, and reports per rung the
+            current (mean, spread, max, CLIPPED at 1023), the thermopile
+            delta over its laser-off baseline with its in-line drift,
+            the digital flag's duty and the coolant temperature; then
+            the normalized curve, a monotonicity check, a straight-line
+            fit with its x-intercept as the measured threshold, and the
+            repeat-rung comparison. Rungs follow laser_power_model:
+            analog 16..100 % of duty (dense at the knee), density
+            1..100 %; a comma list overrides. Records the actual level
+            each S lands on from $30/$31/$35/$36; measuring the curve
+            itself wants $35 = 0. JSON record (with the raw trace) in
+            FORGETEST_BENCH_DATA, else /tmp. Runs on the board for the
+            thermopile; from a host it falls back to /status (current
+            only, no curve). Reaches FULL power for 10 s per line.
+              pcurve [F] [len] [pcts]   e.g. pcurve 600 100 16,20,30,50,100
+  m5dark    The rapids after an M5 ship dark: one 20 mm line at M3 S400,
+            M5, a dwell, a rapid back over the line, a dwell, a rapid
+            forward, a dwell, M2. Samples sysfs at 25 Hz (board only):
+            PASS when the current shows exactly one discharge segment,
+            reads dark after the M5, and laser_on_sampled never goes
+            nonzero again after its first zero past the line. Prints the
+            9 s after the line at 40 ms steps. The catalog's
+            laser.m5-rapid-dark is its port.
   expstop   Armed kill on the EXPECTED-stop path: start a mark job,
             then mid-burn POST /controller/stop (the supervisor stops
             the controller: SIGTERM, reap, exit safing). PASS: emission
@@ -739,6 +771,617 @@ def drill_dladder(g):
     return samples
 
 
+# --- performance curve ladder ---------------------------------------------
+
+# One line per level at constant feed, two instruments read through each:
+# the HV current (the supply's curve under analog; presence only under
+# density, where every pulse is full current) and the head thermopile, a
+# scatter detector in the beam path upstream of the final mirror, so it
+# reads the beam and not the material. Rungs are percents of full. The
+# analog list is dense at the knee where the tube starts to lase; the
+# density list is weighted to the bottom, where the per-pulse strike
+# deficit lives.
+PCURVE_ANALOG_PCT = (16, 18, 20, 23, 26, 30, 35, 42, 50, 60, 72, 85, 100)
+PCURVE_DENSITY_PCT = (1, 2, 3, 5, 7, 10, 15, 20, 30, 45, 60, 80, 100)
+PCURVE_FEED = 600                       # mm/min: 10 mm/s
+PCURVE_LEN = 100.0                      # mm of burn per rung
+PCURVE_PITCH = 3.0                      # mm between rungs (+X)
+PCURVE_GAP_S = 4.0                      # laser-off settle before each rung
+PCURVE_GAP_SKIP_S = 1.5                 # of which the first part still decays
+PCURVE_SAMPLE_HZ = 25                   # sysfs sampler target rate
+PCURVE_TRIM_HEAD_S = 1.0                # dropped from the start of each line
+PCURVE_TRIM_TAIL_S = 0.5                # dropped from its end
+SYSFS = '/sys/glowforge'
+HV_FULL_SCALE = 1023                    # the PIC ADC's top count
+# (key, sysfs attribute) per sampled channel.
+PCURVE_CHANNELS = (
+    ('hv', 'pic/hv_current'),
+    ('tp', 'head/beam_detect_analog'),
+    ('tpd', 'head/beam_detect_digital'),
+    ('lon', 'cnc/laser_on_sampled'),
+    ('wt1', 'pic/water_temp_1'),
+    ('wt2', 'pic/water_temp_2'),
+    ('pt', 'pic/pwr_temp'),
+)
+
+
+class Sampler:
+    """Reads the pcurve channels in a thread. On the board they come
+    straight from sysfs, each read a live bus transaction, so the achieved
+    rate is whatever the PIC (SPI) and head (I2C) buses allow and it is
+    reported rather than assumed. From a host the only source is
+    forgectrl's /status at ~8 Hz, which carries the current and nothing
+    the thermopile needs."""
+
+    def __init__(self, hz):
+        import threading
+        self.local = os.path.isdir(SYSFS)
+        self.period = 1.0 / (hz if self.local else 8)
+        self.samples = []
+        self.errors = 0
+        self._stop = threading.Event()
+        self._thr = threading.Thread(target=self._run, daemon=True)
+
+    def start(self):
+        self._thr.start()
+
+    def stop(self):
+        self._stop.set()
+        self._thr.join(timeout=3)
+
+    def _read_sysfs(self):
+        smp = {'t': time.time()}
+        for key, attr in PCURVE_CHANNELS:
+            try:
+                with open(os.path.join(SYSFS, attr)) as f:
+                    smp[key] = int(f.read().strip())
+            except (OSError, ValueError):
+                smp[key] = None
+                self.errors += 1
+        return smp
+
+    def _read_status(self):
+        st = sample_forgectrl()
+        smp = dict((key, None) for key, _attr in PCURVE_CHANNELS)
+        smp['t'] = time.time()
+        if st is None:
+            self.errors += 1
+            return smp
+        smp['hv'] = st['hv']
+        smp['lon'] = st['emission']
+        return smp
+
+    def _run(self):
+        read = self._read_sysfs if self.local else self._read_status
+        next_t = time.time()
+        while not self._stop.is_set():
+            self.samples.append(read())
+            next_t += self.period
+            delay = next_t - time.time()
+            if delay > 0:
+                time.sleep(delay)
+            else:
+                next_t = time.time()
+
+    def rate(self):
+        if len(self.samples) < 2:
+            return 0.0
+        span = self.samples[-1]['t'] - self.samples[0]['t']
+        return (len(self.samples) - 1) / span if span > 0 else 0.0
+
+
+def _stats(vals):
+    n = len(vals)
+    if not n:
+        return {'n': 0, 'mean': None, 'sd': None, 'min': None, 'max': None}
+    mean = sum(vals) / float(n)
+    var = sum((v - mean) ** 2 for v in vals) / float(n)
+    return {'n': n, 'mean': mean, 'sd': var ** 0.5, 'min': min(vals),
+            'max': max(vals)}
+
+
+def _window(samples, t0, t1, key):
+    return [s[key] for s in samples
+            if t0 <= s['t'] < t1 and s.get(key) is not None]
+
+
+def _linfit(xs, ys):
+    """Least squares y = a + b x; (a, b, r2), or None below two points."""
+    n = len(xs)
+    if n < 2:
+        return None
+    mx = sum(xs) / float(n)
+    my = sum(ys) / float(n)
+    sxx = sum((x - mx) ** 2 for x in xs)
+    if sxx == 0:
+        return None
+    b = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
+    a = my - b * mx
+    ss_res = sum((y - (a + b * x)) ** 2 for x, y in zip(xs, ys))
+    ss_tot = sum((y - my) ** 2 for y in ys)
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 1.0
+    return a, b, r2
+
+
+def _degc(raw):
+    """The factory coolant conversion when gfbench is importable (on the
+    board, or with GF_HOST set), else None and the raw count is quoted.
+    The helper lives beside this file in the repo and under the bench
+    directory on the dev image; a copy staged elsewhere still finds it."""
+    for d in (os.path.dirname(os.path.abspath(__file__)),
+              '/usr/share/forgetest/bench'):
+        if d not in sys.path:
+            sys.path.append(d)
+    try:
+        from gfbench import degc
+    except (ImportError, SystemExit):
+        return None
+    return degc(raw)
+
+
+def pcurve_levels(g, pcts):
+    """(pct, S, level) per rung: the level is what the core maps S onto
+    with the settings in force, as a fraction of full (duty/127 under
+    analog, density under density). None when a setting cannot be read."""
+    floor = grbl_setting(g, '$35')
+    ceil = grbl_setting(g, '$36')
+    rpm_max = grbl_setting(g, '$30')
+    rpm_min = grbl_setting(g, '$31')
+    if None in (floor, ceil, rpm_max, rpm_min) or rpm_max <= rpm_min:
+        return None, (rpm_max, rpm_min, floor, ceil)
+    min_value = int(PWM_PERIOD * floor / 100.0)
+    max_value = int(PWM_PERIOD * ceil / 100.0)
+    gradient = (max_value - min_value) / (rpm_max - rpm_min)
+    levels = []
+    for pct in pcts:
+        sval = int(round(rpm_max * pct / 100.0))
+        if sval <= rpm_min:
+            level = 0
+        else:
+            level = min(int((sval - rpm_min) * gradient) + min_value, max_value)
+        levels.append((pct, sval, level / float(PWM_PERIOD)))
+    return levels, (rpm_max, rpm_min, floor, ceil)
+
+
+def pcurve_analyze(samples, rungs, head_trim=PCURVE_TRIM_HEAD_S,
+                   tail_trim=PCURVE_TRIM_TAIL_S):
+    """Per-rung statistics over the trimmed steady window of each line,
+    then the curve: normalized thermopile delta against level, a
+    monotonicity count, straight-line fits with their x-intercepts, and
+    the repeat-rung comparison. Pure: takes the raw trace and the rung
+    brackets, returns a dict, so it can be checked without a machine."""
+    rows = []
+    for r in rungs:
+        t0, t1 = r['t_run0'] + head_trim, r['t_run1'] - tail_trim
+        if t1 - t0 < 1.0:
+            t0, t1 = r['t_run0'], r['t_run1']
+        hv = _stats(_window(samples, t0, t1, 'hv'))
+        tp = _stats(_window(samples, t0, t1, 'tp'))
+        # The thermopile falls back to baseline within about a second of a
+        # line ending (measured 2026-08-25), so the first part of the gap
+        # still carries the previous rung's tail; the baseline is the rest.
+        base = _stats(_window(samples, r['t_gap0'] + PCURVE_GAP_SKIP_S,
+                              r['t_m3'], 'tp'))
+        first = _stats(_window(samples, t0, min(t0 + 2.0, t1), 'tp'))
+        last = _stats(_window(samples, max(t1 - 2.0, t0), t1, 'tp'))
+        tpd = _window(samples, t0, t1, 'tpd')
+        # laser_on_sampled is a once-per-second window count, so the
+        # last window of a line lands after Idle: look one second past.
+        lon = _window(samples, r['t_run0'], r['t_run1'] + 1.0, 'lon')
+        # Coolant from the UPSTREAM sensor: water_temp_1 sits downstream of
+        # the flow-check heater and swings with it during a run.
+        wt1 = _stats(_window(samples, r['t_gap0'], r['t_m3'], 'wt2'))
+        pt = _stats(_window(samples, r['t_gap0'], r['t_m3'], 'pt'))
+        delta = (tp['mean'] - base['mean']
+                 if tp['mean'] is not None and base['mean'] is not None
+                 else None)
+        drift = (last['mean'] - first['mean']
+                 if last['mean'] is not None and first['mean'] is not None
+                 else None)
+        rows.append({
+            'rung': r['rung'], 'repeat': r.get('repeat', False),
+            'pct': r['pct'], 's': r['s'], 'level': r['level'],
+            'seconds': round(r['t_run1'] - r['t_run0'], 2),
+            'hv_n': hv['n'], 'hv_mean': hv['mean'], 'hv_sd': hv['sd'],
+            'hv_max': hv['max'],
+            'hv_clipped': hv['max'] is not None and hv['max'] >= HV_FULL_SCALE,
+            'tp_n': tp['n'], 'tp_mean': tp['mean'], 'tp_sd': tp['sd'],
+            'tp_base': base['mean'], 'tp_base_sd': base['sd'],
+            'tp_delta': delta, 'tp_drift': drift,
+            'tpd_duty': (sum(1 for v in tpd if v) / float(len(tpd))
+                         if tpd else None),
+            'lon_max': max(lon) if lon else None,
+            'fired': bool(lon) and max(lon) > 0,
+            'coolant_raw': wt1['mean'],
+            'coolant_c': _degc(wt1['mean']) if wt1['mean'] is not None else None,
+            'supply_raw': pt['mean'],
+        })
+    primary = [row for row in rows if not row['repeat']]
+    primary.sort(key=lambda row: row['level'])
+    fired = [row for row in primary if row['fired']]
+    curve = {'rows': len(rows), 'fired': len(fired)}
+    # Normalize the thermopile delta to the top of the ladder.
+    deltas = [row['tp_delta'] for row in fired if row['tp_delta'] is not None]
+    top = max(deltas) if deltas else None
+    for row in rows:
+        row['tp_norm'] = (row['tp_delta'] / top
+                          if top and row['tp_delta'] is not None else None)
+    # Monotonicity: decreases of the delta with rising level, beyond noise.
+    dec = 0
+    prev = None
+    for row in fired:
+        if row['tp_delta'] is None:
+            continue
+        if prev is not None and row['tp_delta'] < prev['tp_delta'] - 2.0 * (row['tp_sd'] or 0):
+            dec += 1
+        prev = row
+    curve['tp_decreases'] = dec
+    dec = 0
+    prev = None
+    for row in fired:
+        if row['hv_mean'] is None or row['hv_clipped']:
+            continue
+        if prev is not None and row['hv_mean'] < prev['hv_mean'] - 2.0 * (row['hv_sd'] or 0):
+            dec += 1
+        prev = row
+    curve['hv_decreases'] = dec
+    # Signal rungs: delta clear of the baseline noise, for the fits.
+    sig = [row for row in fired if row['tp_delta'] is not None
+           and row['tp_delta'] > 3.0 * (row['tp_base_sd'] or 0)]
+    fit = _linfit([row['level'] for row in sig], [row['tp_delta'] for row in sig])
+    if fit:
+        a, b, r2 = fit
+        curve['tp_fit'] = {'points': len(sig), 'intercept': a, 'slope': b,
+                           'r2': r2,
+                           'x_intercept': (-a / b) if b else None}
+    unclipped = [row for row in fired if row['hv_mean'] is not None
+                 and not row['hv_clipped']]
+    fit = _linfit([row['level'] for row in unclipped],
+                  [row['hv_mean'] for row in unclipped])
+    if fit:
+        a, b, r2 = fit
+        curve['hv_fit'] = {'points': len(unclipped), 'intercept': a,
+                           'slope': b, 'r2': r2,
+                           'x_intercept': (-a / b) if b else None}
+    curve['hv_clipped_rungs'] = [row['rung'] for row in rows if row['hv_clipped']]
+    reps = [row for row in rows if row['repeat']]
+    firsts = [row for row in rows if not row['repeat'] and reps
+              and row['rung'] == reps[-1]['rung']]
+    if reps and firsts:
+        first, again = firsts[0], reps[-1]
+        rep = {'rung': first['rung']}
+        if first['tp_delta'] is not None and again['tp_delta'] is not None:
+            rep['tp_delta_first'] = first['tp_delta']
+            rep['tp_delta_again'] = again['tp_delta']
+            rep['tp_delta_change'] = again['tp_delta'] - first['tp_delta']
+            rep['tp_delta_change_pct'] = (100.0 * rep['tp_delta_change'] / first['tp_delta']
+                                          if first['tp_delta'] else None)
+        if first['hv_mean'] is not None and again['hv_mean'] is not None:
+            rep['hv_change'] = again['hv_mean'] - first['hv_mean']
+        bases = [row['tp_base'] for row in rows if row['tp_base'] is not None]
+        if len(bases) >= 2:
+            rep['baseline_walk'] = bases[-1] - bases[0]
+        curve['repeat'] = rep
+    return {'rungs': rows, 'curve': curve}
+
+
+def _fmt(v, prec=1):
+    if v is None:
+        return '-'
+    if isinstance(v, float):
+        return '%.*f' % (prec, v)
+    return str(v)
+
+
+def pcurve_report(res, model):
+    rows, curve = res['rungs'], res['curve']
+    print('\n--- per rung (steady window, first %gs and last %gs of each line dropped) ---'
+          % (PCURVE_TRIM_HEAD_S, PCURVE_TRIM_TAIL_S))
+    unit = 'density' if model == 'density' else 'duty'
+    print('  rung  %%    S     %-8s  hv mean  sd    max    | tp delta   sd    base    drift  norm  | dig  lon  cool'
+          % unit)
+    for row in rows:
+        tag = '%2d%s' % (row['rung'], 'r' if row['repeat'] else ' ')
+        print('  %s  %3d  %4d  %6.2f%%   %7s %5s %5s%s | %8s %5s %7s %6s %5s | %4s %4s %s'
+              % (tag, row['pct'], row['s'], 100.0 * row['level'],
+                 _fmt(row['hv_mean']), _fmt(row['hv_sd']), _fmt(row['hv_max'], 0),
+                 '!' if row['hv_clipped'] else ' ',
+                 _fmt(row['tp_delta']), _fmt(row['tp_sd']), _fmt(row['tp_base']),
+                 _fmt(row['tp_drift']), _fmt(row['tp_norm'], 3),
+                 _fmt(row['tpd_duty'], 2), _fmt(row['lon_max'], 0),
+                 _fmt(row['coolant_c']) if row['coolant_c'] is not None
+                 else _fmt(row['coolant_raw'], 0) + 'raw'))
+    print('  (! = hv_current touched %d: the ADC is clipped there and the'
+          % HV_FULL_SCALE)
+    print('   current column is no longer a measurement on that rung)')
+    print('\n--- curve ---')
+    print('rungs fired (laser_on_sampled > 0): %d of %d' % (curve['fired'], curve['rows']))
+    print('thermopile delta decreases with rising level (beyond 2 sd): %s'
+          % curve['tp_decreases'])
+    print('hv_current decreases with rising level (beyond 2 sd, unclipped): %s'
+          % curve['hv_decreases'])
+    if curve.get('hv_clipped_rungs'):
+        print('hv_current CLIPPED on rungs %s' % curve['hv_clipped_rungs'])
+    for name, key in (('thermopile', 'tp_fit'), ('hv_current', 'hv_fit')):
+        f = curve.get(key)
+        if not f:
+            print('%s fit: not enough signal rungs' % name)
+            continue
+        print('%s vs level: %d points, slope %.1f per 100%%, r2 %.3f, '
+              'x-intercept %s%% (the measured threshold if the fit holds)'
+              % (name, f['points'], f['slope'], f['r2'],
+                 _fmt(100.0 * f['x_intercept']) if f['x_intercept'] is not None else '-'))
+    rep = curve.get('repeat')
+    if rep:
+        print('repeat of rung %d: thermopile delta %s -> %s (%s, %s%%), '
+              'hv %s; baseline walked %s over the ladder'
+              % (rep['rung'], _fmt(rep.get('tp_delta_first')),
+                 _fmt(rep.get('tp_delta_again')), _fmt(rep.get('tp_delta_change')),
+                 _fmt(rep.get('tp_delta_change_pct')), _fmt(rep.get('hv_change')),
+                 _fmt(rep.get('baseline_walk'))))
+
+
+def drill_pcurve(g):
+    feed = int(sys.argv[2]) if len(sys.argv) > 2 else PCURVE_FEED
+    length = float(sys.argv[3]) if len(sys.argv) > 3 else PCURVE_LEN
+    model = conf_get('laser_power_model') or 'density'
+    if len(sys.argv) > 4:
+        pcts = tuple(int(x) for x in sys.argv[4].split(',') if x.strip())
+    else:
+        pcts = PCURVE_DENSITY_PCT if model == 'density' else PCURVE_ANALOG_PCT
+    if not pcts or min(pcts) < 1 or max(pcts) > 100:
+        print('rungs must be percents in 1..100')
+        return 2
+    print('=== laser performance curve: %s model, %d rungs + repeat, F%d, %g mm each ==='
+          % (model, len(pcts), feed, length))
+    print('constant power (M3): the commanded level is the tested level.')
+    levels, (rpm_max, rpm_min, floor, ceil) = pcurve_levels(g, pcts)
+    if levels is None:
+        print('PRECONDITION FAILED: cannot read $30/$31/$35/$36 (%s/%s/%s/%s)'
+              % (rpm_max, rpm_min, floor, ceil))
+        return 2
+    print('mapping: $30=%g $31=%g $35=%g $36=%g' % (rpm_max, rpm_min, floor, ceil))
+    if floor > 0.0:
+        print('a floor is set, so the low rungs land on it: this run records')
+        print('the shipping mapping. To measure the curve itself set $35=0')
+        print('and restart the controller first.')
+    unit = 'density' if model == 'density' else 'duty'
+    # The drift witness is a mid-ladder rung drawn again at the end: it
+    # has real signal (the bottom rung sits at the threshold and reads
+    # nothing twice) and it is not full power, so it adds little heat.
+    witness = len(levels) // 2
+    print('rungs (each a +X line from the block\'s X0, stepping +Y %g mm; rung'
+          % PCURVE_PITCH)
+    print('%d is drawn again at the end, running -X, as the drift witness;'
+          % (witness + 1))
+    print('the next run\'s block starts %g mm further along X):' % length)
+    for i, (pct, sval, level) in enumerate(levels):
+        print('  %2d: %3d%% -> S%-4d  %s %.2f%%' % (i + 1, pct, sval, unit, 100.0 * level))
+    sampler = Sampler(PCURVE_SAMPLE_HZ)
+    if sampler.local:
+        print('sampling sysfs on the board at a target %d Hz: %s'
+              % (PCURVE_SAMPLE_HZ, ' '.join(attr for _k, attr in PCURVE_CHANNELS)))
+    else:
+        print('NOT on the board: sampling forgectrl /status at ~8 Hz instead.')
+        print('That carries the current and the emission witness only; the')
+        print('thermopile is not in /status, so this run yields no curve.')
+    print('connect: %s' % prepare(g))
+    print('pre-fire: %s' % sample_forgectrl())
+    arm_cue()
+    print('>>> This ladder reaches FULL power for %.0f s per line. Use'
+          % (length / feed * 60.0))
+    print('>>> something you are willing to cut through and that will not')
+    print('>>> flame: scrap tile, firebrick, thick draftboard on a')
+    print('>>> sacrificial layer. The thermopile is in the head, so the')
+    print('>>> material is not part of the measurement.\n')
+    print('G91/G21: %s / %s' % (g.cmd('G91'), g.cmd('G21')))
+    order = list(range(len(levels))) + [witness]
+    line_s = length / feed * 60.0
+    sampler.start()
+    rungs = []
+    aborted = None
+    try:
+        for n, idx in enumerate(order):
+            pct, sval, level = levels[idx]
+            repeat = n == len(order) - 1
+            # Every line runs +X from the block's X0 at one Y and the rungs
+            # step +Y, so a run occupies a block `length` wide by
+            # PCURVE_PITCH x rungs tall and the next run's block starts
+            # `length` further along X. The drift witness runs the other
+            # way, from the far end back to X0: a swing that reverses with
+            # direction is head position along the gantry; one that repeats
+            # is time.
+            if repeat:
+                g.s.sendall(('G0 X%g\n' % length).encode())
+                g.wait_state('Idle', 30)
+            t_gap0 = time.time()
+            time.sleep(PCURVE_GAP_S)             # laser off: the baseline
+            t_m3 = time.time()
+            job = ['M3 S%d' % sval,
+                   'G1 X%g F%d' % (-length if repeat else length, feed),
+                   'M5']
+            for ln in job:
+                g.s.sendall(ln.encode() + b'\n')
+            st = g.wait_state('Run', 240 if n == 0 else 60)
+            if not st.startswith('Run'):
+                aborted = ('rung %d never ran (state=%s): arm refused, no '
+                           'press, or the controller alarmed' % (idx + 1, st))
+                break
+            t_run0 = time.time()
+            st = g.wait_state('Idle', line_s + 30.0, poll=0.05)
+            t_run1 = time.time()
+            if not st.startswith('Idle'):
+                aborted = 'rung %d did not finish (state=%s)' % (idx + 1, st)
+                break
+            if t_run1 - t_run0 < line_s - 1.5:
+                # A line that ended early was cancelled by the operator or
+                # the controller, and a cancel may have moved the head
+                # (the controller returns to machine zero). From here every
+                # relative move is aimed from a position this drill no
+                # longer knows, so send nothing more.
+                aborted = ('rung %d ran %.1f s of %.1f: cancelled; no further '
+                           'moves sent' % (idx + 1, t_run1 - t_run0, line_s))
+                break
+            rungs.append({'rung': idx + 1, 'repeat': repeat, 'pct': pct,
+                          's': sval, 'level': level, 't_gap0': t_gap0,
+                          't_m3': t_m3, 't_run0': t_run0, 't_run1': t_run1})
+            print('  rung %2d%s: S%-4d ran %.1f s' % (idx + 1, 'r' if repeat else ' ',
+                                                    sval, t_run1 - t_run0))
+            back = '' if repeat else 'G0 X%g\n' % -length
+            g.s.sendall((back + 'G0 Y%g\n' % PCURVE_PITCH).encode())
+            g.wait_state('Idle', 30)
+    finally:
+        try:
+            g.cmd('M5', timeout=1)
+        except Exception:
+            pass
+        if aborted:
+            g.rt(b'\x18')                   # abort out of whatever it is in
+        else:
+            g.s.sendall(b'G90\nM2\n')       # program end closes the window
+        time.sleep(1.5)
+        sampler.stop()
+    if aborted:
+        print('ABORTED: %s' % aborted)
+    print('\nsampler: %d samples, %.1f Hz achieved, %d read errors'
+          % (len(sampler.samples), sampler.rate(), sampler.errors))
+    if not rungs:
+        return 1
+    res = pcurve_analyze(sampler.samples, rungs)
+    pcurve_report(res, model)
+    record = {
+        'drill': 'pcurve', 'date': time.strftime('%Y-%m-%dT%H:%M:%S'),
+        'model': model, 'feed': feed, 'length_mm': length,
+        'gap_s': PCURVE_GAP_S, 'pitch_mm': PCURVE_PITCH,
+        'settings': {'$30': rpm_max, '$31': rpm_min, '$35': floor, '$36': ceil},
+        'sampler': {'local': sampler.local, 'hz': sampler.rate(),
+                    'samples': len(sampler.samples), 'errors': sampler.errors},
+        'aborted': aborted, 'rungs': res['rungs'], 'curve': res['curve'],
+        'trace': sampler.samples,
+    }
+    ddir = os.environ.get('FORGETEST_BENCH_DATA') or ('/tmp' if sampler.local else os.getcwd())
+    path = os.path.join(ddir, 'pcurve_%s_%s.json' % (model, time.strftime('%Y%m%d-%H%M%S')))
+    try:
+        with open(path, 'w') as f:
+            json.dump(record, f, indent=1)
+        print('record: %s' % path)
+    except OSError as e:
+        print('record not written: %s' % e)
+    print('\nRead it in this order. First the instrument: the thermopile')
+    print('delta must rise with the level on every rung that fired, settle')
+    print('inside the line (small drift), return to its baseline between')
+    print('rungs, and the repeat rung must agree with its first run. Any')
+    print('miss there is a fact about the sensor, not the tube. Then the')
+    print('curve: under analog the current column is the supply and the')
+    print('thermopile is the tube; under density the current is only a')
+    print('presence witness and the thermopile is the whole story. A knee')
+    print('where the delta stops rising before 100%% is the ceiling S1000')
+    print('should map to. The material remains the witness that it lased.')
+    return res
+
+
+# --- the rapids after an M5 ship dark ----------------------------------------
+
+# One constant-power line, M5, then two rapids over it with dwells between,
+# the shape every ladder above uses between rungs. M5 executes with the
+# planner drained and the kernel run over, and the core issues no
+# per-segment laser update for moves made with the spindle off, so only the
+# stream's wanted fire state decides whether those rapids fire.
+# S1000 is a certain strike and, under the density model, the worst case
+# for the bug: full duty pinned, so a rapid that inherited fire would run
+# at full power.
+M5DARK_JOB = ['G91', 'G21', 'M3', 'S400',
+              'G1 X20 F600',
+              'M5', 'G4 P2.5',
+              'G0 X-20', 'G4 P2.5',
+              'G0 X20', 'G4 P2.5',
+              'G90', 'M2']
+HV_DARK_MAX = 20                        # hv_current reads 0 with the tube off
+
+
+def drill_m5dark(g):
+    print('=== the rapids after an M5 ship dark: M3 S400, 20 mm line, M5, two rapids ===')
+    sampler = Sampler(PCURVE_SAMPLE_HZ)
+    if not sampler.local:
+        print('run this on the board: the witnesses are sysfs at 25 Hz')
+        return 2
+    print('connect: %s' % prepare(g))
+    print('pre-fire: %s' % sample_forgectrl())
+    arm_cue()
+    print('>>> 20 mm of free +X travel at the head. One 20 mm line at S400,')
+    print('>>> then the head rapids back over it and forward again, dark.\n')
+    sampler.start()
+    for ln in M5DARK_JOB:
+        g.s.sendall(ln.encode() + b'\n')
+    st = g.wait_state('Run', 240)
+    if not st.startswith('Run'):
+        print('FAIL: the job never ran (state=%s)' % st)
+        g.rt(b'\x18')
+        sampler.stop()
+        return 1
+    # The controller reports Idle inside a G4 dwell, so Idle is no sign the
+    # job is over; the armed window closing at M2 is.
+    t0 = time.time()
+    seen_armed = False
+    while time.time() - t0 < 90:
+        smp = sample_forgectrl()
+        if smp and smp['armed']:
+            seen_armed = True
+        elif smp and seen_armed and not smp['armed']:
+            break
+        time.sleep(0.2)
+    time.sleep(1.5)
+    sampler.stop()
+    tr = sampler.samples
+    # Discharge segments from the current, 1 s hysteresis: the line is one;
+    # a rapid that fired is another.
+    segs, cur = [], None
+    for s in tr:
+        on = s['hv'] is not None and s['hv'] > 30
+        if on and cur is None:
+            cur = [s['t'], s['t']]
+        elif on:
+            cur[1] = s['t']
+        elif cur is not None and s['t'] - cur[1] > 1.0:
+            segs.append(cur)
+            cur = None
+    if cur:
+        segs.append(cur)
+    print('\n--- results (%d samples, %.1f Hz) ---' % (len(tr), sampler.rate()))
+    if not segs:
+        print('FAIL: no discharge seen at all (arm refused, no press, or no fire)')
+        return 1
+    t_end = segs[0][1]
+    base = _stats(_window(tr, segs[0][0] - 2.0, segs[0][0] - 0.2, 'tp'))['mean']
+    print('line: %.2f s of discharge; %d discharge segment(s) in the run%s'
+          % (t_end - segs[0][0], len(segs),
+             '' if len(segs) == 1 else ': the extra ones are rapids that FIRED'))
+    hv_after = max((s['hv'] for s in tr if s['t'] > t_end + 0.3 and s['hv'] is not None),
+                   default=0)
+    lon_after = [s for s in tr if s['t'] > t_end + 0.3 and s.get('lon')]
+    # laser_on_sampled lags a window: the first zero past the line is the
+    # dark point, and nothing after it may be nonzero.
+    zeros = [s['t'] for s in tr if s['t'] > t_end and s.get('lon') == 0]
+    relit = [s for s in tr if zeros and s['t'] > zeros[0] and s.get('lon')]
+    print('after the M5: hv max %d (dark <= %d); laser_on_sampled nonzero samples %d, '
+          'after its first zero %d' % (hv_after, HV_DARK_MAX, len(lon_after), len(relit)))
+    print('trace from 0.2 s before the line ended, 40 ms steps (hv / thermopile delta):')
+    row = [s for s in tr if t_end - 0.2 <= s['t'] <= t_end + 9.0]
+    for i in range(0, len(row), 25):
+        chunk = row[i:i + 25]
+        print('  +%4.1fs hv: %s' % (chunk[0]['t'] - t_end, ' '.join('%d' % (s['hv'] or 0) for s in chunk)))
+        print('         tp: %s' % ' '.join('%d' % ((s['tp'] or 0) - (base or 0)) for s in chunk))
+    covered = tr[-1]['t'] - t_end
+    if covered < 7.0:
+        print('M5DARK INCONCLUSIVE: the trace ends %.1f s after the line, before '
+              'the rapids (the job runs ~8 s past the M5)' % covered)
+        return 1
+    ok = len(segs) == 1 and hv_after <= HV_DARK_MAX and not relit
+    print('M5DARK %s' % ('PASS: the rapids after the M5 shipped dark (%.1f s sampled past the line)'
+                         % covered if ok else 'FAIL: the laser fired after the M5'))
+    return 0 if ok else 1
+
+
 def post_ctrl(action):
     # http.client preserves the header-name case exactly as given.
     import http.client
@@ -825,6 +1468,7 @@ def main():
     drills = {'witness': drill_witness, 'hold': drill_hold,
               'faultpos': drill_faultpos, 'ircut': drill_ircut,
               'pthresh': drill_pthresh, 'dladder': drill_dladder,
+              'pcurve': drill_pcurve, 'm5dark': drill_m5dark,
               'expstop': drill_expstop, 'ctrlstart': drill_ctrlstart}
     if drill not in drills:
         print(__doc__)

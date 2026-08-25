@@ -46,6 +46,18 @@ over TCP, then checks the dumps against the kernel feeder contract:
      next run: a standalone S word between moves, from a sender slow
      enough to drain the planner, must still cut at the level it asked
      for rather than dark at a stale duty
+ 16. and the off transition survives the same way: an M5 executed with
+     the planner drained and the kernel run over must darken the rapids
+     that follow it, and a bare G0 sent with the spindle off must ship
+     dark, under both dose models - the stream's wanted fire state is
+     the only thing those moves consult, and a stale true there lights
+     the next run at the last level (full duty under density)
+ 17. and a job's first cut at the level the previous job ended at
+     fires: S is modal across M2, the core records the level a set_state
+     carries and skips the per-segment update while it is unchanged, so
+     the M3 that opens the next job is the only thing that can light its
+     first move - set_state must push the whole state, fire included,
+     never the duty alone
 
 Usage: laser_stream_test.py [path-to-binary]   (default ./build-native/grblHAL_glowforge)
 """
@@ -175,6 +187,47 @@ for _i, _s in enumerate(IDLE_S_LEVELS):
     JOB_IDLE_S.append("G1 X%g F%d" % (IDLE_S_MM if _i % 2 == 0 else -IDLE_S_MM,
                                       IDLE_S_FEED))
 JOB_IDLE_S.append("M5")
+
+
+# Session J: the bench ladder's shape. M5 executes with the planner
+# drained and the kernel run over, and the rapids that follow start a
+# new run; the core issues no per-segment laser update for moves made
+# with the spindle off, so the stream's wanted state is all that decides
+# whether those rapids fire. A bare G0 with no M3 since the M5 is the
+# same case one step further.
+M5_IDLE_MM = 5.0
+M5_IDLE_FEED = 600
+M5_IDLE_TICKS = M5_IDLE_MM / (M5_IDLE_FEED / 60.0) * 28160
+JOB_M5_IDLE = [
+    "G91", "G21",
+    "M3 S500",
+    "G1 X%g F%d" % (M5_IDLE_MM, M5_IDLE_FEED),
+    WAIT_IDLE, ("sleep", 0.5),
+    "M5", ("sleep", 0.5),
+    "G0 X%g" % -M5_IDLE_MM, "G0 Y1",
+    WAIT_IDLE,
+    "G0 X%g" % M5_IDLE_MM,
+    WAIT_IDLE,
+    "M3 S500",
+    "G1 X%g" % -M5_IDLE_MM,
+    WAIT_IDLE, ("sleep", 0.5),
+    "M5",
+]
+
+
+# Session K: two jobs in one controller process, the second at the level
+# the first ended at. M2 leaves S modal and resets the motion mode to G1,
+# so the next job's M3 executes at that S; the core records it and issues
+# no per-segment update for a G1 at the same level, so the set_state is
+# the only thing that can light it. The parser starts in G0, which is why
+# a process's FIRST job never shows this: its M3 runs at rpm 0.
+JOB_NEXT = [
+    "G91", "G21", "M3", "S500",
+    "G1 X%g F%d" % (M5_IDLE_MM, M5_IDLE_FEED),
+    WAIT_IDLE, ("sleep", 0.5),
+    "M5", "G0 X%g" % -M5_IDLE_MM, "G0 Y1",
+    WAIT_IDLE, "G90", "M2", ("sleep", 1.0),
+]
 
 
 def fail(msg):
@@ -551,6 +604,30 @@ def count_fire(data):
     return sum(1 for b in tick_bytes(data) if b & 0x10)
 
 
+def check_cut_spans(name, ticks, n, cut_ticks, what):
+    """Exactly n fire spans, each one cutting move long, none stepping
+    at a rapid's rate: FIRE rode nothing but the G1s."""
+    spans = fire_spans(ticks)
+    if len(spans) != n:
+        fail("[%s] %d fire spans, expected exactly %d (%s) (spans %s)"
+             % (name, len(spans), n, what, spans))
+    for s0, s1 in spans:
+        if not 0.8 * cut_ticks <= s1 - s0 <= 1.25 * cut_ticks:
+            fail("[%s] fire span of %d ticks, expected ~%d (one G1): FIRE "
+                 "carried into the move after it" % (name, s1 - s0, cut_ticks))
+        # A G1 at F600 steps once per ~53 ticks; a rapid at 200 mm/s
+        # steps every ~2.6. Any 100-tick window under FIRE with more
+        # than a handful of steps is a rapid being cut.
+        worst = 0
+        for i in range(s0, max(s0 + 1, s1 - 100), 50):
+            worst = max(worst, sum(1 for b in ticks[i:i + 100]
+                                   if (b & 0x10) and (b & 0x25)))
+        if worst > 8:
+            fail("[%s] %d steps in a 100-tick window under FIRE: a rapid "
+                 "was cut" % (name, worst))
+    return spans
+
+
 def main():
     # --- session A: M4 dynamic power, rules 1-6 + 7-8 -------------------
     data = run_session("m4", JOB_M4, conf=ANALOG_CONF)
@@ -672,6 +749,35 @@ def main():
     check_termination("idle-s", idle_s)
     print("PASS [idle-s]: standalone S across idle gaps -> fire ticks per duty %s"
           % {duty_for(l): fire_by_duty[duty_for(l)] for l in IDLE_S_LEVELS})
+
+    # --- session J: M5 executed while idle darkens the next run (rule 16) ---
+    for model, conf in (("analog", ANALOG_CONF), ("density", DENSITY_CONF)):
+        name = "m5-idle-" + model
+        data = run_session(name, JOB_M5_IDLE, conf=conf)
+        spans = check_cut_spans(name, tick_bytes(data), 2, M5_IDLE_TICKS,
+                                "the two G1 moves: FIRE rode a rapid after M5, "
+                                "or the bare G0 sent with the spindle off")
+        check_termination(name, data)
+        print("PASS [%s]: M5 at idle -> the rapids after it and a bare G0 ship "
+              "dark; 2 fire spans of %s ticks"
+              % (name, [s1 - s0 for s0, s1 in spans]))
+
+    # --- session K: the next job, at the same level, fires (rule 17) ---
+    for model, conf in (("analog", ANALOG_CONF), ("density", DENSITY_CONF)):
+        name = "next-job-" + model
+        data = run_session(name, JOB_NEXT + JOB_NEXT, conf=conf)
+        text = run_session.text
+        if text.count("laser armed") != 2 or text.count("laser disarmed") != 2:
+            fail("[%s] expected two armed windows closed by M2 (armed %d, "
+                 "disarmed %d)" % (name, text.count("laser armed"),
+                                   text.count("laser disarmed")))
+        spans = check_cut_spans(name, tick_bytes(data), 2, M5_IDLE_TICKS,
+                                "one G1 per job: the second job's M3 at the "
+                                "first job's S lit nothing, or a rapid fired")
+        check_termination(name, data)
+        print("PASS [%s]: the next job's M3 at the previous job's S fires its "
+              "G1; 2 fire spans of %s ticks"
+              % (name, [s1 - s0 for s0, s1 in spans]))
 
     print("PASS: all stream emission rules hold")
 

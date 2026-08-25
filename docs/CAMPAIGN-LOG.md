@@ -4045,6 +4045,86 @@ open question, whether ForgeFIRM's load wants the heatsink the factory's
 never did, closes with this entry: it does not. The per-job SoC range and
 the throttle log line stay as the running record.
 
+## 2026-08-25: the performance-curve ladders, and the rapids that fired after M5
+
+The day opened with a new instrument. The head carries a thermopile that
+reads scatter off the beam inside the head, upstream of the mirror that turns
+it down to the work, so it sees the beam and not the material. A ladder of
+100 mm lines at 10 mm/s, one per level, sampled from sysfs at 25 Hz along
+with the HV current, is a performance curve for this tube and supply, and the
+`pcurve` drill in `scripts/bench/live_fire_drills.py` runs it.
+
+- **Analog ladder (E1), `$35` = 0, 13 rungs from 16 to 100 percent plus a
+  repeat of rung 7:** the current is proportional to duty above 30 percent
+  (slope 959 counts per 100 percent, r-squared 0.9999) and reaches 990 at
+  full, so this PSU's ADC does not clip; below 30 percent the discharge is
+  unstable. The thermopile is monotonic to 85 percent and puts the lasing
+  knee between 19.7 and 22.8 percent duty, not at 16, with the strike spot
+  showing as a first-second spike on the low rungs; its baseline holds within
+  50 counts over the ladder and the repeat rung reads 3.5 percent high. It
+  does not settle inside a line above about 50 percent (swings of 20 to 30
+  percent at constant current), so the top of the analog curve is not yet a
+  measurement. Record `pcurve_analog_20260825-195947.json`.
+- **Density ladder (E3), `$35` = 0, period 20, minimum 3, 13 rungs from 1 to
+  100 percent:** the dose is strongly convex in density at a 710 us period
+  (80 percent of density reads 0.53 of full, 60 reads 0.37, 45 reads 0.21,
+  30 reads 0.07), while `laser_on_sampled` tracked the commanded on-fraction
+  exactly, so the drive delivered what was asked and the light did not
+  follow. Whether that is the per-pulse strike deficit or the sensor is the
+  next ladder's question. Lines were flat inside to within a few percent.
+  Record `pcurve_density_20260825-202317.json`.
+
+**The rapids fired after `M5`.** Seen by the operator on the density block
+and confirmed in both traces: the pulsed current ran on through the `G0`
+back and the `G0` up after every line, at the rung's level, and through a
+bare `G0` sent with no `M3` at all. Under density that is full-power light
+where nothing was commanded. `M5` executed with the stream idle only stored
+the off state; the stream re-asserts its wanted fire state at the first byte
+of every run, and the wanted state was still the last cut's true. Live fire
+stopped.
+
+**The first fix made the second job dark.** Pushing `fire=false` on `M5`
+darkened the rapids (bench run 1 passed: the current fell from 393 to 0
+inside one 40 ms sample) and then every following job in the same controller
+process shipped no fire at all (runs 2 and 3, HV 0..0, motion ran). That was
+first read as hardware, with the `laser power-good degraded` warning as the
+suspect. It was software, and it reproduces on the null sink with two jobs
+in one process: the second G1 ships zero FIRE ticks under both models.
+
+**The root cause is a core contract.** grblHAL's per-segment laser update is
+edge-triggered on rpm: `set_state(on, rpm)` records the rpm, and a block at
+that same rpm gets no `update_pwm`, because the core takes the driver's
+`set_state` as having lit the laser. Our `spindleSetState` pushed the duty
+only. A process's first job always fired because the parser starts in G0,
+where the `M3` and `S` words run at rpm 0 and the first G1 differs; after
+`M2` the motion mode is G1 and S is modal, so the next job's `M3` runs at the
+old level, the core records it, and nothing lights the G1 except the stale
+wanted state. The old build fired job 2 by that accident, the same stale flag
+that lit the rapids; removing the accident exposed the hole.
+
+**The fix, and its proof.** `spindleSetState` now computes the pwm for the
+state it is given (the off value when off, refused, or rpm 0) and pushes it
+through `spindleUpdatePWM`, the whole state through the same armed and
+coolant gates; the duty-only stream call is gone. Harness rule 17 and the
+`next-job` sessions (two jobs in one process, `M2` between, same S) join
+rule 16 and the `m5-idle` sessions; the build that went dark fails the new
+session with one fire span, and the fix passes all 14 stream sessions, the
+13 lifecycle cases and the arm test. On the bench, with the corrected
+controller hot-installed: `m5dark` run 4 (the process's first job) and run 5
+(its second, the case that went dark) both passed, 2.00 s of discharge, the
+`M5` taking the current to 0 inside one sample, both rapids and every dwell
+dark over 11.4 s of sampling, the operator confirming by eye. The catalog
+gains `laser.m5-rapid-dark` (46 tests).
+
+**Power-good is not a witness of anything here.** The factory 2.6.0 binary
+carries no power-good string at all; ForgeFIRM warns on it once per armed
+window and reports it in `/status`, and nothing gates fire on it. On this PSU
+it reads not-good at full tube current.
+
+A bench note for the next hot install: a file copied to the board with `scp`
+lands without its execute bit, and busybox `cp` keeps that, so the supervisor
+loops on exit 127 until a `chmod 755`.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

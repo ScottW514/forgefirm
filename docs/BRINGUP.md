@@ -48,7 +48,7 @@ hardware-validated.**
   modes (cancel-and-return on a lid or interlock open, button pause/resume),
   bench-validated 2026-08-17.
 - **Releases are gated by the acceptance tool** (`forgetest`, dev image only):
-  a 45-test catalog, domain-scoped inheritance, an always-required safety core,
+  a 46-test catalog, domain-scoped inheritance, an always-required safety core,
   a bench actuator that works the lid, the interlock and the button so most of
   the operator's part runs unattended, and a release gate that reads the
   exported artifact. The latest full campaign, on dev image `20260824230512`,
@@ -588,7 +588,7 @@ the export reads "Release authorized: YES" for that image's manifest. That
 authorizes a release; it is not one until `releases/v<version>/acceptance.json`
 is committed.
 
-- **Catalog: 45 tests** in `forgetest/forgetest/suite/`, every one a port of a
+- **Catalog: 46 tests** in `forgetest/forgetest/suite/`, every one a port of a
   proven bench drill or a bench-verified check: the always-required core
   (`image.health`, `kernel.latch-locked-idle`, `kernel.k1-k2`,
   `kernel.fire-line`), `forgectrl.*`, `logs.*`, `update.*`, `motion.*`
@@ -597,14 +597,14 @@ is committed.
   quiet after motion, a gate setting tripping and off by value, a fan under
   its floor), `camera.*`,
   `laser.*` (emission witness, arm-wait lid, disarm-in-hold, armed kill,
-  pause/resume/lid-cancel) and `cloud.*` (the service protocol answered by
+  pause/resume/lid-cancel, the rapids after an M5 shipping dark) and `cloud.*` (the service protocol answered by
   the emulator in this machine's identity, with only the app to drive; the
   mode round trip with the lid-open hunt and the web-service homing on it;
   one real print; and the job-behavior tests under the offline service:
   the cloud client driven from a local socket with a synthesized
   laser-free job, no account, no network, nothing on the bed). Tests that
   share a setup are merged; the `auto` tests stay separate for failure
-  isolation. 28 are `auto`, 9 `operator`, 8 `live`; with the bench actuator up,
+  isolation. 28 are `auto`, 9 `operator`, 9 `live`; with the bench actuator up,
   eight of the operator tests run in the unattended queue.
 - **The operator's part is asked for by name, not by popup**
   (`docs/ACCEPTANCE.md` "The operator's part"): a Ready prompt before a
@@ -614,8 +614,8 @@ is committed.
   emission witness's mark). The head accelerometer, the beam detector, the
   button LEDs, and a lid-lamp toggle between two snapshots replaced the
   other eyeball confirmations; `kernel.fire-line` and `camera.snapshot` are
-  `auto`. With the bench actuator up the attended block is the nine tests
-  that need a person (four laser live, five cloud): 12 minutes on dev image
+  `auto`. With the bench actuator up the attended block is the ten tests
+  that need a person (five laser live, five cloud): 12 minutes on dev image
   `20260824230512`. A test's implementation hash is its own function plus its
   module's shared code, so a fix inside one test re-requires that test
   alone.
