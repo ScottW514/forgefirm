@@ -4020,6 +4020,31 @@ status section is the record of what changed). Their texts, as they stood,
 are in "Superseded status notes" below; what stays open went into BRINGUP
 items 12, 13, 16 and the new item 20.
 
+## 2026-08-24: the SoC under a full core, and where it settles
+
+The die read 65.6 C (150 F) with the camera stream running and nothing
+else, in a 30 C chassis, which was enough of a number to ask what a full
+core does to it. The drill: `openssl speed -seconds 50 sha256` on the one
+core for 300 s, on top of the live stream, cloud mode at idle with the
+laser locked, a monitor sampling the thermal zone, `cpufreq-cpu0`, both GPU
+cooling devices and the load average every 5 s. The die climbed 2.9 C in
+the first 30 s and 4.6 C by 2.5 minutes, then sat at **70.8 C (159 F)** from
+3.5 minutes to the end, at 0 percent idle and a load average near 3. No
+cooling device left state 0, the core stayed at 996 MHz, `/status` read
+`soc_throttle 0` throughout, and the driver's grade line in dmesg is the
+one the facts bank quotes: `Commercial CPU temperature grade - max:95C
+critical:90C passive:85C`. Thirty-five seconds after the load ended the
+die was back at 67.9 C.
+
+Read: the bare SoC, no heatsink, holds **14 C of headroom to the passive
+trip and 19 C to the poweroff** under the worst load the one core can
+produce, in a 30 C chassis. The die-to-chassis delta at full load is about
+41 C, so by arithmetic, not measurement, a chassis above roughly 44 C is
+what reaches the passive trip; the load alone does not. The facts bank's
+open question, whether ForgeFIRM's load wants the heatsink the factory's
+never did, closes with this entry: it does not. The per-job SoC range and
+the throttle log line stay as the running record.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

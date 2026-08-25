@@ -714,9 +714,13 @@ is committed.
   both GPU cooling devices; the critical trip is the kernel's orderly
   poweroff. A throttle slows the engine, the camera and the protocol thread
   before the step stream (the ring is in hand). The factory board carries
-  **no heatsink or fan on the SoC**, only the mounting holes for one; the
-  factory's load never needed it, and ForgeFIRM's may, which is what the
-  per-job SoC range and the throttle log line are there to show.
+  **no heatsink or fan on the SoC**, only the mounting holes for one, and
+  needs none: under a full core for five minutes on top of the live camera
+  stream, in a 30 C chassis, the bare die plateaus at **70.8 C**, 14 C under
+  the passive trip, with the core at 996 MHz and no cooling device off
+  state 0. The die-to-chassis delta at full load is about 41 C, so the
+  passive trip is a hot-chassis case (above roughly 44 C), not a load case.
+  The per-job SoC range and the throttle log line are the running record.
 - **Fan speeds at the cut profile** (exhaust duty 65535, intake 43278, air
   assist 1023; sampled at 1 Hz over 120 s from idle, the exhaust duct's
   inline booster fan off): exhaust **11640 rpm** steady (spread 11444 to
