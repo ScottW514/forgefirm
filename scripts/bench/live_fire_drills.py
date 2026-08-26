@@ -96,6 +96,15 @@ Drills (pass a name):
             nonzero again after its first zero past the line. Prints the
             9 s after the line at 40 ms steps. The catalog's
             laser.m5-rapid-dark is its port.
+  dpatch    Depth witness for the density curve: two rows of small
+            engraved patches (serpentine G1 fills) on the stock. Row A
+            is CW (S1000) at feeds giving relative doses 1.0 to 0.25;
+            row B is density 100/80/60/45/30 %% at F600. Match each
+            row-B patch to the row-A patch of equal depth by eye: that
+            reads the density's light fraction off the material, next
+            to what the thermopile says it should be. Samples sysfs at
+            25 Hz like pcurve; JSON record in the bench data directory.
+              dpatch [F] [pitch] [length]   e.g. dpatch 1500 0.3 30
   expstop   Armed kill on the EXPECTED-stop path: start a mark job,
             then mid-burn POST /controller/stop (the supervisor stops
             the controller: SIGTERM, reap, exit safing). PASS: emission
@@ -1280,6 +1289,231 @@ def drill_pcurve(g):
     return res
 
 
+# --- the depth witness: CW patches at speed against density patches ---------
+
+# The thermopile reads 80 % density as half the light of CW, and the
+# material decides whether that is the tube or the sensor. A patch is a
+# serpentine of G1 lines at one level and one feed; under constant power
+# (M3) the dose per unit area is light x time, so a row of CW patches
+# (S1000: the discharge continuous) at feeds F600/dose is a reference
+# ladder of known relative dose, and a row of density patches at F600 is
+# matched to it by engrave depth. The CW patch a density patch matches
+# reads that density's light fraction straight off the stock, with the
+# thermopile's prediction printed beside it. The lines alternate
+# direction so no rapid crosses a fill; judge the middle of each patch,
+# since under constant power the ends carry the acceleration and read
+# darker at the fast feeds.
+# Defaults, all overridable on the command line (dpatch [F] [pitch] [length]).
+# The dose has to be an engrave, not a burn: CW at 10 mm/s with 0.2 mm lines
+# turned thick draftboard to charcoal that no longer cuts (2026-08-25), so the
+# reference is 25 mm/s at 0.3 mm, about a quarter of that energy density,
+# and the lines are long enough that the fastest CW patch (100 mm/s) still
+# has a plateau in its middle after the 7 mm acceleration at each end.
+DPATCH_W = 30.0                          # mm, the line length (X)
+DPATCH_H = 4.0                           # mm, the fill height (Y)
+DPATCH_PITCH = 0.3                       # mm between lines
+DPATCH_GAP_X = 3.0                       # mm between patches along X
+DPATCH_ROW_GAP = 3.0                     # mm between the two rows
+DPATCH_FEED = 1500                       # the reference feed, 25 mm/s
+DPATCH_CW_DOSES = (1.0, 0.8, 0.6, 0.5, 0.35, 0.25)   # row A: S1000 at F600/dose
+DPATCH_DENSITY_PCT = (100, 80, 60, 45, 30)            # row B: at F600
+DPATCH_SETTLE_S = 2.0                    # laser off before each patch
+# The cooling engine interrogates the flow for cool_flow_check_s (50 s)
+# from the moment the window arms, on a heater pulse judged by its rise;
+# a CW patch under that window puts the tube's heat into the same loop
+# and reads as a blocked flow (15.1 C against a 14.4 limit, 2026-08-25),
+# which holds the job. The first patch therefore waits, spindle on and
+# dark, until the check has finished on the heater alone. The mid-run
+# re-check (cool_flow_recheck_s, 150 s by default) has to be pushed past
+# the run's length for the session, or it lands on a patch the same way.
+DPATCH_ARM_DWELL_S = 60.0
+# The period-20 thermopile curve, light as a fraction of CW, for the labels.
+DPATCH_TP_P20 = {100: 1.0, 80: 0.53, 60: 0.37, 45: 0.21, 30: 0.07}
+
+
+def dpatch_gcode(feed, width, pitch, n):
+    """One patch's cut moves and where they leave the head relative to
+    the patch origin: serpentine G1 lines, the Y steps cut at the edge."""
+    lines = []
+    x = y = 0.0
+    for i in range(n):
+        dx = width if i % 2 == 0 else -width
+        lines.append('G1 X%g F%d' % (dx, feed))
+        x += dx
+        if i < n - 1:
+            lines.append('G1 Y%g F%d' % (pitch, feed))
+            y += pitch
+    return lines, x, y
+
+
+def drill_dpatch(g):
+    feed_ref = int(sys.argv[2]) if len(sys.argv) > 2 else DPATCH_FEED
+    pitch = float(sys.argv[3]) if len(sys.argv) > 3 else DPATCH_PITCH
+    width = float(sys.argv[4]) if len(sys.argv) > 4 else DPATCH_W
+    if feed_ref < 60 or not 0.05 <= pitch <= 2.0 or not 5.0 <= width <= 200.0:
+        print('usage: dpatch [F mm/min >= 60] [pitch 0.05..2 mm] [length 5..200 mm]')
+        return 2
+    model = conf_get('laser_power_model') or 'density'
+    if model != 'density':
+        print('this witness is for the density model (laser_power_model is %s)' % model)
+        return 2
+    levels, (rpm_max, rpm_min, floor, ceil) = pcurve_levels(g, DPATCH_DENSITY_PCT)
+    if levels is None:
+        print('PRECONDITION FAILED: cannot read $30/$31/$35/$36 (%s/%s/%s/%s)'
+              % (rpm_max, rpm_min, floor, ceil))
+        return 2
+    n_lines = int(round(DPATCH_H / pitch))
+    period = conf_get('laser_pulse_ticks') or 'driver default'
+    print('=== depth witness: CW patches at speed against density patches at F%d ==='
+          % feed_ref)
+    print('mapping: $30=%g $31=%g $35=%g $36=%g; density base period %s ticks'
+          % (rpm_max, rpm_min, floor, ceil, period))
+    patches = []
+    for dose in DPATCH_CW_DOSES:
+        feed = int(round(feed_ref / dose))
+        patches.append({'row': 'A', 'pct': 100, 's': int(rpm_max), 'feed': feed,
+                        'dose': dose, 'tp_says': None,
+                        'label': 'CW, dose %.2f' % dose})
+    for pct, sval, level in levels:
+        patches.append({'row': 'B', 'pct': pct, 's': sval, 'feed': feed_ref,
+                        'dose': None, 'tp_says': DPATCH_TP_P20.get(pct),
+                        'label': '%d%% density (level %.2f%%), thermopile says %.2f of CW'
+                        % (pct, 100.0 * level, DPATCH_TP_P20.get(pct, float('nan')))})
+    n_a = len(DPATCH_CW_DOSES)
+    print('patches %g x %g mm, %d lines at %g mm pitch, %g mm apart along +X;'
+          % (width, DPATCH_H, n_lines, pitch, DPATCH_GAP_X))
+    print('row A starts at the head, row B %g mm above it:' % (DPATCH_H + DPATCH_ROW_GAP))
+    for i, p in enumerate(patches):
+        print('  %s%d: S%-4d F%-5d %s' % (p['row'], i + 1, p['s'], p['feed'], p['label']))
+    sampler = Sampler(PCURVE_SAMPLE_HZ)
+    print('connect: %s' % prepare(g))
+    print('pre-fire: %s' % sample_forgectrl())
+    arm_cue()
+    print('>>> A fresh area of the stock: %g mm along +X by %g mm along +Y'
+          % (n_a * (width + DPATCH_GAP_X), 2 * DPATCH_H + DPATCH_ROW_GAP))
+    print('>>> from the head. After your press the head waits %g s dark while the'
+          % DPATCH_ARM_DWELL_S)
+    print('>>> flow check runs. Row A is CW at full power, up to %.0f s per patch.\n'
+          % (n_lines * (width / feed_ref * 60.0 + 0.1)))
+    print('G91/G21: %s / %s' % (g.cmd('G91'), g.cmd('G21')))
+    sampler.start()
+    done = []
+    aborted = None
+    row_x = 0.0
+    try:
+        for i, p in enumerate(patches):
+            if i == n_a:
+                # Row B starts above row A's first patch.
+                g.s.sendall(('G0 X%g Y%g\n' % (-row_x, DPATCH_H + DPATCH_ROW_GAP)).encode())
+                g.wait_state('Idle', 30)
+                row_x = 0.0
+            lines, dx, dy = dpatch_gcode(p['feed'], width, pitch, n_lines)
+            est_s = n_lines * (width / p['feed'] * 60.0 + 0.25) + 2.0
+            time.sleep(DPATCH_SETTLE_S)
+            t_m3 = time.time()
+            dwell = ['G4 P%g' % DPATCH_ARM_DWELL_S] if i == 0 else []
+            for ln in ['M3 S%d' % p['s']] + dwell + lines + ['M5']:
+                g.s.sendall(ln.encode() + b'\n')
+            # The controller reports Idle inside the dwell, so the first Run
+            # seen after the press is the first line of the first patch, and
+            # the wait covers the button timeout plus the dwell.
+            if i == 0:
+                print('  waiting for the press, then %g s dark for the flow check'
+                      % DPATCH_ARM_DWELL_S)
+            st = g.wait_state('Run', 300 + DPATCH_ARM_DWELL_S if i == 0 else 60)
+            if not st.startswith('Run'):
+                aborted = ('patch %d never ran (state=%s): arm refused, no press, '
+                           'or the controller alarmed' % (i + 1, st))
+                break
+            t_run0 = time.time()
+            st = g.wait_state('Idle', est_s + 60.0, poll=0.05)
+            t_run1 = time.time()
+            if not st.startswith('Idle'):
+                cs = sample_forgectrl() or {}
+                aborted = ('patch %d did not finish (state=%s; cooling verdict %s, %r)'
+                           % (i + 1, st, cs.get('verdict'), cs.get('reason')))
+                break
+            if t_run1 - t_run0 < 0.5 * est_s:
+                # Cut short: cancelled, and a cancel may have moved the
+                # head, so every relative move from here is aimed blind.
+                aborted = ('patch %d ran %.1f s of ~%.0f: cancelled; no further '
+                           'moves sent' % (i + 1, t_run1 - t_run0, est_s))
+                break
+            p.update({'t_m3': t_m3, 't_run0': t_run0, 't_run1': t_run1})
+            done.append(p)
+            print('  %s%d: S%-4d F%-5d ran %.1f s' % (p['row'], i + 1, p['s'], p['feed'],
+                                                     t_run1 - t_run0))
+            # Back to the patch origin, then along to the next one.
+            g.s.sendall(('G0 X%g Y%g\n' % (-dx, -dy)).encode())
+            g.s.sendall(('G0 X%g\n' % (width + DPATCH_GAP_X)).encode())
+            row_x += width + DPATCH_GAP_X
+            g.wait_state('Idle', 30)
+    finally:
+        try:
+            g.cmd('M5', timeout=1)
+        except Exception:
+            pass
+        if aborted:
+            g.rt(b'\x18')                   # abort out of whatever it is in
+        else:
+            g.s.sendall(b'G90\nM2\n')       # program end closes the window
+        time.sleep(1.5)
+        sampler.stop()
+    if aborted:
+        print('ABORTED: %s' % aborted)
+    tr = sampler.samples
+    print('\nsampler: %d samples, %.1f Hz achieved, %d read errors'
+          % (len(tr), sampler.rate(), sampler.errors))
+    if not done:
+        return 1
+    print('\n--- per patch (steady window: first 1 s and last 0.5 s dropped) ---')
+    print('  patch  S     F      hv mean   max  | tp delta   base   | lon')
+    for i, p in enumerate(done):
+        base = _stats(_window(tr, p['t_m3'] - DPATCH_SETTLE_S + 0.5, p['t_m3'], 'tp'))['mean']
+        hv = _stats(_window(tr, p['t_run0'] + 1.0, p['t_run1'] - 0.5, 'hv'))
+        tp = _stats(_window(tr, p['t_run0'] + 1.0, p['t_run1'] - 0.5, 'tp'))
+        lon = max(_window(tr, p['t_run0'], p['t_run1'], 'lon') or [0])
+        p['hv_mean'], p['hv_max'], p['tp_base'] = hv['mean'], hv['max'], base
+        p['tp_delta'] = None if (tp['mean'] is None or base is None) else tp['mean'] - base
+        p['lon_peak'] = lon
+        print('  %s%-2d    %-5d %-6d %7s  %5s | %8s  %7s | %3d'
+              % (p['row'], i + 1, p['s'], p['feed'], _fmt(hv['mean']), _fmt(hv['max'], 0),
+                 _fmt(p['tp_delta']), _fmt(base), lon))
+    row_a = [p['tp_delta'] for p in done if p['row'] == 'A' and p['tp_delta'] is not None]
+    if len(row_a) >= 2:
+        print('row A thermopile (CW at six feeds, the beam does not know the speed): '
+              'min %.0f max %.0f, spread %.1f%% of the mean'
+              % (min(row_a), max(row_a), 100.0 * (max(row_a) - min(row_a)) / (sum(row_a) / len(row_a))))
+    print('\n--- the match to make by eye, in the middle of each patch ---')
+    doses = [(p['dose'], i + 1) for i, p in enumerate(done) if p['row'] == 'A']
+    for i, p in enumerate(done):
+        if p['row'] != 'B' or p['tp_says'] is None:
+            continue
+        nearest = min(doses, key=lambda d: abs(d[0] - p['tp_says'])) if doses else None
+        print('  B%d (%d%% density): the thermopile says it should match A%d (dose %.2f); '
+              'deeper than that and the tube gives more than the sensor reads'
+              % (i + 1, p['pct'], nearest[1], nearest[0]) if nearest else
+              '  B%d (%d%% density): no row A to match' % (i + 1, p['pct']))
+    record = {
+        'drill': 'dpatch', 'date': time.strftime('%Y-%m-%dT%H:%M:%S'),
+        'model': model, 'period': period, 'feed_ref': feed_ref,
+        'patch_mm': [width, DPATCH_H], 'pitch_mm': pitch,
+        'settings': {'$30': rpm_max, '$31': rpm_min, '$35': floor, '$36': ceil},
+        'sampler': {'local': sampler.local, 'hz': sampler.rate(),
+                    'samples': len(tr), 'errors': sampler.errors},
+        'aborted': aborted, 'patches': done, 'trace': tr,
+    }
+    ddir = os.environ.get('FORGETEST_BENCH_DATA') or ('/tmp' if sampler.local else os.getcwd())
+    path = os.path.join(ddir, 'dpatch_%s.json' % time.strftime('%Y%m%d-%H%M%S'))
+    try:
+        with open(path, 'w') as f:
+            json.dump(record, f, indent=1)
+        print('record: %s' % path)
+    except OSError as e:
+        print('record not written: %s' % e)
+    return 0
+
+
 # --- the rapids after an M5 ship dark ----------------------------------------
 
 # One constant-power line, M5, then two rapids over it with dwells between,
@@ -1469,6 +1703,7 @@ def main():
               'faultpos': drill_faultpos, 'ircut': drill_ircut,
               'pthresh': drill_pthresh, 'dladder': drill_dladder,
               'pcurve': drill_pcurve, 'm5dark': drill_m5dark,
+              'dpatch': drill_dpatch,
               'expstop': drill_expstop, 'ctrlstart': drill_ctrlstart}
     if drill not in drills:
         print(__doc__)
