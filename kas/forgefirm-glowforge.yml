@@ -2,8 +2,9 @@
 # ForgeFIRM — kas build configuration  (factory Glowforge control board)
 # ============================================================================
 # The forgefirm repo is the BASE: it controls the build, the output firmware
-# images land here (build/tmp/deploy/images/glowforge/), and the build/install
-# docs live here (BUILD.md, INSTALL.md, SERIAL.md, kas/README.md).
+# images land here (build/tmp/deploy/images/glowforge/), and the install docs
+# live here (INSTALL.md, SERIAL.md). The build and release procedure is on the
+# documentation site: https://docs.forgefirm.org/developers/
 #
 # Target : Yocto Scarthgap (5.0 LTS) + linux-fslc 6.12 (mainline LTS)
 # Machine: glowforge  (i.MX6 Solo SOM inside Basic/Plus/Pro)
@@ -83,8 +84,8 @@ repos:
       meta-openglow-core:
       meta-glowforge-bsp:
   #
-  # Pinned-remote alternative for a fully self-contained clone (see
-  # kas/README.md "Push & release order"):
+  # Pinned-remote alternative for a fully self-contained clone (see the site,
+  # Developers, "Release flow"):
   #   meta-openglow:
   #     url: https://github.com/ScottW514/meta-openglow.git
   #     branch: scarthgap          # pin via kas lock / a tag at release
@@ -105,7 +106,7 @@ local_conf_header:
 
   # The kernel defaults to linux-fslc 6.12 in conf/machine/glowforge.conf
   # (with the factory drivers forward-ported — EPIT/SDMA/OV5648/glowforge.ko —
-  # see kas/README.md backlog #2). This explicit pin is redundant but harmless.
+  # see the site, Developers, "Build"). This explicit pin is redundant but harmless.
   kernel: |
     PREFERRED_PROVIDER_virtual/kernel = "linux-fslc"
     PREFERRED_VERSION_linux-fslc = "6.12%"

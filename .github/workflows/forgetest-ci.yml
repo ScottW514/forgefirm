@@ -11,7 +11,7 @@
 #  - coverage lint: every source path of every component pinned by the
 #    recipes must be selected by some catalog test's coverage globs (the
 #    tree manifest is generated from the pins with git - no Yocto build);
-#    enforced: an uncovered path fails the job (docs/ACCEPTANCE.md).
+#    enforced: an uncovered path fails the job (https://docs.forgefirm.org/developers/acceptance/).
 
 name: forgetest-ci
 

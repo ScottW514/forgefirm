@@ -24,7 +24,8 @@
 #   RELEASE_STAGING_DIR  where release assets are staged
 #                        (default: <repo>/release-staging)
 #   FORGEFIRM_ACCEPTANCE_SKIP  set to 1 to bypass the acceptance gate
-#                        deliberately (never the default; docs/ACCEPTANCE.md)
+#                        deliberately (never the default; see the site,
+#                        Developers, "Acceptance")
 #
 # Version contract: <version> == FORGEFIRM_RELEASE in forgefirm-image.bb
 # == /etc/forgefirm-version ("v<version>") in the built rootfs == .fw
@@ -142,7 +143,8 @@ STAMP=$(debugfs -R "cat /etc/forgefirm-version" "$EXT4" 2>/dev/null)
 # Acceptance gate: the committed acceptance artifact must authorize THIS
 # build. scripts/acceptance-gate.py recomputes every catalog test's domain
 # fingerprint from the manifest inside the release rootfs and requires the
-# recorded PASS to match (docs/ACCEPTANCE.md). A release is never signed
+# recorded PASS to match (https://docs.forgefirm.org/developers/acceptance/).
+# A release is never signed
 # without it; FORGEFIRM_ACCEPTANCE_SKIP=1 bypasses deliberately and loudly.
 ART="$REPO/releases/v$VERSION/acceptance.json"
 if [ -n "${FORGEFIRM_ACCEPTANCE_SKIP:-}" ]; then
@@ -202,7 +204,8 @@ fi
 
 echo "== stage assets =="
 cp -L "$DEPLOY/forgefirm-image-glowforge.rootfs.wic.gz" "$STAGE/forgefirm-image-glowforge.rootfs.wic.gz"
-# The acceptance artifact travels with the release (docs/ACCEPTANCE.md).
+# The acceptance artifact travels with the release (see the site,
+# Developers, "Acceptance").
 ASSETS="forgefirm.fw sha256sums.txt forgefirm-image-glowforge.rootfs.wic.gz"
 if [ -f "$ART" ]; then
   cp "$ART" "$STAGE/acceptance.json"
@@ -219,7 +222,7 @@ cat <<EOF
 
 == release v$VERSION staged ==
 
-Pre-publish checklist (kas/README.md "Push & release order" step 4):
+Pre-publish checklist (docs.forgefirm.org, Developers, "Release flow"):
   - meta-openglow pushed; kas config flipped to the pinned-remote block
   - kas lock refreshed
   - self-containment proven from a fresh clone

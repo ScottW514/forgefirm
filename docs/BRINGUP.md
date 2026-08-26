@@ -1,6 +1,6 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-08-17**.
+Last updated: **2026-08-26**.
 
 This is the present state of the machine, the bench runbook, the measured
 hardware facts, and the authoritative list of open work. **The dated record —
@@ -15,9 +15,9 @@ Read together with:
 | `kernel-module-glowforge/UAPI.md` | the pulse-stream feeder contract, sysfs attributes, sensor conversions |
 | `forgectrl/docs/SERVICES.md` | the machine-services contract: switch map, hardware ownership, cooling channels, mode supervision, pulse-device ownership, logging |
 | `docs/SAFETY.md` | the hardware safing chain, decoded |
-| `docs/ACCEPTANCE.md` | the release acceptance contract |
 | `docs/VIDEO.md` | the cameras as users meet them: endpoints, delivered geometry, and what the sensors can do that ForgeFIRM does not send |
-| `docs/LIGHTBURN.md`, `docs/UPDATE-SYSTEM.md`, `INSTALL.md`, `BUILD.md`, `kas/README.md` | sender setup, A/B update system, install, build |
+| `docs/LIGHTBURN.md`, `docs/UPDATE-SYSTEM.md`, `INSTALL.md` | sender setup, A/B update system, install |
+| [docs.forgefirm.org/developers](https://docs.forgefirm.org/developers/) | build, release flow, tests, the bench runbook |
 | `python3-gfhardware/forgefirm-app/docs/CLOUD.md` | cloud mode, including its own open items |
 
 ## Where the project stands
@@ -88,7 +88,8 @@ dev image (eMMC slot 1 = factory 2024, slot 2 = ForgeFIRM v0.1.0, archives in
   batched**, and a `.ko` or overlay change is validated on the image that ships
   it, never hot-swapped onto a board about to be reflashed.
 - **Build host**: a Linux build environment (a WSL2 distro works) holding the
-  `forgefirm` + `meta-openglow` sibling checkout (`BUILD.md`); the ForgeFIRM
+  `forgefirm` + `meta-openglow` sibling checkout (the site, Developers,
+  "Build"); the ForgeFIRM
   source repos are fetched by pinned `SRCREV`. Build:
   `cd forgefirm && kas shell kas/forgefirm-glowforge.yml -c 'bitbake
   forgefirm-image forgefirm-image-dev'`. Artifacts:
@@ -304,7 +305,7 @@ factory 2.6.0-2228 session; measured numbers in the facts bank).
   alike: the retrace is sized to `cnc/max_backtrack` and the lead follows it,
   so a pause with little history behind it shortens both rather than failing.
   GRBL mode uses feed hold / cycle start, so a resumed GRBL cut picks up where
-  the deceleration ended (item 18). A pause is not a cancel: the latch
+  the deceleration ended (item 17). A pause is not a cancel: the latch
   stays unlocked and the window open across it. There is no resume dwell: the
   safing chain re-arms ~216 ms before the first step (facts bank).
 - **`lid_policy = hold`** selects stock grblHAL door behavior instead (park in
@@ -579,7 +580,7 @@ e-mails with stable placeholders). Design and contract: `SERVICES.md`
 
 The release acceptance tool — catalog, campaigns, domain fingerprints,
 inheritance, the always-required core, invalidate-all, the release gate and the
-coverage currency rule — is specified in `docs/ACCEPTANCE.md`; the tool lives in
+coverage currency rule — is specified on the site (Developers, "Acceptance"); the tool lives in
 `forgetest/` and ships only on the dev image (`/etc/init.d/forgetest`, HTTP
 :8090). It is **bench-validated**: the full campaign on dev image
 `20260824230512` (`c-20260824231028-b7ca`) satisfied 45 of 45 from nothing,
@@ -607,7 +608,7 @@ is committed.
   isolation. 28 are `auto`, 9 `operator`, 9 `live`; with the bench actuator up,
   eight of the operator tests run in the unattended queue.
 - **The operator's part is asked for by name, not by popup**
-  (`docs/ACCEPTANCE.md` "The operator's part"): a Ready prompt before a
+  (the site, Developers, "Acceptance", "The operator's part"): a Ready prompt before a
   timed step, a standing notice the test takes down when the machine shows
   the action done (`ctx.act("lid", "open")` and its kin, the seam a bench
   actuator will plug into), and one confirm by eye left in the catalog (the
@@ -1097,8 +1098,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
    until it lands); printable brackets are in `3d-models/`. Also: calibrate
    `gfcloud_home_x/y` against a jog to a known reference if the factory corner
    offset matters.
-6. **Cameras.** Lens calibration / bed alignment (the fisheye needs LightBurn's
-   camera calibration pass); **first light on an 8 MP (OV8856) machine** — the
+6. **Cameras.** **First light on an 8 MP (OV8856) machine**: the
    whole path is written but nothing has run on one, and only that hardware can
    answer whether the 2-lane RAW8 full-resolution mode locks the D-PHY at
    720 Mbps/lane and what exposure/gain the sensor wants; the details, the
@@ -1211,8 +1211,8 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     release is item 13.
 13. **Publish.** The first release: `releases/v<version>/acceptance.json`
     from the authorized export, `scripts/release.sh`, the kas flip and the
-    first GitHub release, per `kas/README.md` ("Pins, pushes, and the release
-    flow"), once ready to publish. Repoint the core submodule to
+    first GitHub release, per the site (Developers, "Release flow"), once
+    ready to publish. Repoint the core submodule to
     upstream if the `step_us_min` sizing fix merges.
 14. **Update system Phase 5 — recovery refresh.** The remaining phase of
     `docs/UPDATE-SYSTEM.md` (a refreshed recovery image in boot0); Phases 0–4
@@ -1233,52 +1233,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     log EV_SW head-bit edges plus `head/beam_detect_digital|_analog` while
     firing.
 
-16. **Step timing under CPU contention.** The board runs one core. The producer
-    thread advances virtual time and stamps every step onto the pulse grid, so
-    any interval it is kept off the CPU is an interval the grid does not
-    advance; events after it map behind the ship cursor, where
-    `gf_stream_pulse` clamps them forward and the backlog ships one step per
-    machine tick — 28 160 steps/s against the 1 778 that 2000 mm/min asks for,
-    a ~16× velocity burst no motor follows. `cnc/underruns` reads 0 throughout,
-    because the ring never goes dry: the stream is continuous and only its
-    timing is wrong, which is exactly what the kernel counters cannot see.
-
-    The margin absorbing a stall is **not** the 200 ms queue depth. The
-    shipper's due index carries the same `+ gf.depth` the producer's base
-    starts at, so the two cancel and the producer's lead over the cursor is the
-    only slack there is. It was 2 ms. It is now `GFSINK_LEAD_MS`, default 10,
-    and the per-run `LOG_DEBUG` line reports the measured `min margin` in ms
-    against it rather than leaving it to be derived. The ceiling is the
-    cycle-churn path: `gf_stream_wakeup` re-bases production onto the wall
-    cursor only when the cursor has passed it, so a lead that survives an idle
-    gap skips the re-base and accumulates as dark padding — 2 and 10 ms give an
-    identical 64 790-byte churn stream, 15 ms and above inflate it to ~225 k.
-    **Owed:** make the re-base reclaim the overshoot, which is what unlocks a
-    lead beyond 10 ms.
-
-    Done: the producer runs `SCHED_FIFO` one below the shipper, `core_mx`
-    carries priority inheritance to bound the inversion that promotion would
-    otherwise create, and the clamp count is reported per run at `WARNING`.
-    **Still owed: gate or throttle the camera while a job runs.** Priority
-    alone does not cover it — bench runs 90 s apart on one image show a nice-5
-    CPU hog passing clean (20 legs, 0 clamps) while the camera streaming
-    clamped 7 runs, because its per-frame cache maintenance over a 4.8 MB
-    non-coherent capture buffer is kernel-context work no userspace priority
-    can preempt. Measured stall: 3.9–4.4 ms. Capture resolution is the lever
-    that shortens it (the mainline `ov5648` offers 1280×960 and 640×480 binned
-    modes, 4.1× and 16.4× fewer bytes); frame rate only spaces the stalls out,
-    and the existing `FORGECTRL_STREAM_FPS` cap skips demosaic and encode but
-    still dequeues every frame. Shares the bench slot with item 8.
-
-    The kernel is now UP (no SMP locking) with the performance governor as
-    the only governor (no 396 MHz idle floor, no ondemand sampling delay),
-    and the video offload's hardware frame skip halves the dequeues the
-    cache maintenance rides on. On that image the campaign's
-    `motion.step-timing-under-load` (a nice-5 hog against a job) passed with
-    no clamped events. Still to measure: the same drill with the stream live
-    (the run's `clamped` count and `min margin`), which decides whether the
-    camera gate is still owed or the item closes.
-17. **Laser power model: dose by FIRE-bit density.** grblHAL maps S onto the
+16. **Laser power model: dose by FIRE-bit density.** grblHAL maps S onto the
     analog PWM duty (`$30`/`$31` → `$35`/`$36`, written raw into PWMSAR against
     the 127-count period). `$35` now ships at 16, the measured lasing
     threshold (facts bank), which keeps M4's velocity-scaled power out of the
@@ -1417,7 +1372,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     byte in the stream today, and the feeder contract forbids back-to-back
     power bytes, while under FIRE dithering the duty is a constant sent once
     per run and a per-pixel level change costs no stream byte at all.
-18. **Gapless pause and resume in GRBL mode (planned).** A pause leaves a mark
+17. **Gapless pause and resume in GRBL mode (planned).** A pause leaves a mark
     in the cut. With laser mode on, the core stops the beam at the start of the
     hold (`disable_laser_during_hold`, on by default), so the head travels the
     whole deceleration dark, and the resume re-accelerates from a standstill at
@@ -1451,7 +1406,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     line does to it, and how it composes with the armed window's disarm grace
     across a long hold.
 
-19. **Head crash and rail-contact detector (planned).** The head
+18. **Head crash and rail-contact detector (planned).** The head
     accelerometer is the motion-liveness probe and nothing more; the
     factory runs two tiers off the same sensor (a per-axis alert that
     pauses, a per-axis abort), and its thresholds arrive in every pulse
@@ -1463,7 +1418,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     are established. A pause on contact, on the factory's shape, would be
     the first use.
 
-20. **Image trims not taken.** Two rootfs reductions the kernel review left
+19. **Image trims not taken.** Two rootfs reductions the kernel review left
     on the table, each wanting a check before it lands. The `python3`
     meta-package installs `python3-modules` (tkinter, idle, 2to3, pydoc,
     ensurepip, venv, the debugger, doctest, asyncio, multiprocessing,
@@ -1490,7 +1445,7 @@ covers the warm-up hold), the supply temperature window (the service sends
 the whole ADC range and the factory binds it to nothing; the supply is
 watched per job instead), the head, lid, interconnect and fused temperature
 ceilings (no sensor at those locations; the chassis is watched per job), the
-head accelerometer thresholds (item 19), the lid IR thresholds (item 4), the
+head accelerometer thresholds (item 18), the lid IR thresholds (item 4), the
 HV current caps (the sampled emission witness covers the idle case, and HV
 current is ranged per job), the thermal report upload conditions and the
 pump flag. Beam detect stays with item 15.

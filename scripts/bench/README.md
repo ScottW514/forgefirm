@@ -4,7 +4,7 @@ Hardware-verification tools for the ForgeFIRM bench. All run ON the
 target board (dev image, python3 present) unless noted. The dev image
 installs them under `/usr/share/forgetest/bench/`, and the acceptance
 tool's **Bench diagnostics** tab (`http://<machine>:8090/#bench`,
-`docs/ACCEPTANCE.md`) runs them with their arguments and the output on
+the site, Developers, "Acceptance") runs them with their arguments and the output on
 the page - takeover and scope tools get forgectrl and the controller
 stopped and started around the run, live tools need the operator
 acknowledgment; the acceptance catalog itself is built from ports of

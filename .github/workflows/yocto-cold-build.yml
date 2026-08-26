@@ -31,7 +31,7 @@ jobs:
           path: forgefirm
 
       # The kas config references meta-openglow as a local sibling
-      # (kas/README.md "Push & release order" step 4 flips it to the
+      # (the release flow on the documentation site flips it to the
       # pinned-remote block at release time). Every source repo the recipes
       # build is fetched by pinned SRCREV; no other sibling is needed.
       - name: Checkout meta-openglow (sibling)

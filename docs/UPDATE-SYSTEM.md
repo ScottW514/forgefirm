@@ -153,7 +153,7 @@ demonstrably untouched.*
   factory-era fwup (0.14.2) verification of the packed archive, and the
   **release acceptance gate**: `releases/v<version>/acceptance.json`
   (exported by forgetest on the bench) must authorize the built rootfs
-  per `docs/ACCEPTANCE.md` - the gate recomputes every catalog test's
+  per the site (Developers, "Acceptance") - the gate recomputes every catalog test's
   domain fingerprint from `/etc/forgefirm-manifest.json` inside the
   release ext4. The artifact is attached to the GitHub release.
 - One version source: `FORGEFIRM_RELEASE` = git tag =

@@ -6,7 +6,7 @@ decides which results still apply to the image that is running, exports
 the release artifact `scripts/release.sh` gates on, and serves the bench
 diagnostics page. The contract - catalog, campaigns, fingerprints,
 inheritance, the gate, the coverage rule - is
-[`docs/ACCEPTANCE.md`](../docs/ACCEPTANCE.md).
+[the Acceptance page of the documentation site](https://docs.forgefirm.org/developers/acceptance/).
 
 ## Run the host tests
 

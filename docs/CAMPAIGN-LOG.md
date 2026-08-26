@@ -4125,6 +4125,19 @@ A bench note for the next hot install: a file copied to the board with `scp`
 lands without its execute bit, and busybox `cp` keeps that, so the supervisor
 loops on exit 127 until a `chmod 755`.
 
+## 2026-08-26: step timing under CPU contention closed
+
+The operator closed BRINGUP "Next work" item 16, step timing under CPU
+contention: the video work resolved it. The basis is above (2026-08-24, "the
+SoC under a full core"): the kernel runs UP with the performance governor as
+the only governor, the hardware frame skip of the video offload halves the
+dequeues that the cache maintenance rides on, and the catalog test
+`motion.step-timing-under-load` passed on that image with no clamped events.
+The stream-live re-measure and the camera gate that the item still listed
+are not owed. The item is removed from BRINGUP, and the items after it are
+renumbered: 17 to 20 are now 16 to 19. `GFSINK_LEAD_MS` (default 10) and
+the per-run margin report stay as shipped.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
