@@ -138,6 +138,13 @@ TOOLS = [
              "with both sensors at 25 Hz, and scores the common-mode step at every edge and the level "
              "toggling inside every dwell; every value is restored on exit. The pump stops once for "
              "8 s with the tube dark and the heater off. About five minutes."},
+    {"id": "aa-offset-check", "title": "Coolant offset correction under the run airflow", "script": "aa_offset_check.py",
+     "safety": "dry", "where": "board", "ported": True,
+     "args": [_arg("dwell", "float", 20.0, "seconds to read under the run profile")],
+     "desc": "M8 brings the fans to the run profile (no laser-on, no press) while the raw coolant "
+             "counts, /status and the engine's readings are averaged before, during and after: with "
+             "cool_aa_offset_counts at the machine's value the readings hold still while the raw counts "
+             "step; at zero they drop by about a degree. About a minute."},
     {"id": "critical-tier", "title": "Coolant critical-tier warm-loop drill", "script": "critical_tier_drill.py",
      "safety": "dry", "where": "board", "ported": True,
      "args": [_arg("max_seconds", "int", 1200, "give up after this long without CRITICAL", flag="--max-seconds")],

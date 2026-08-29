@@ -4492,6 +4492,38 @@ two sensor lines during a cut is the next instrument. Its size is 0.6 to
 1.1 C either way, inside the over-temperature ceiling's 2 C hysteresis,
 and the flow check reads means.
 
+## 2026-08-29: the air-assist offset taken off the coolant readings, on the bench
+
+forgectrl `cool_aa_offset_counts` (f9b4893, the status link fix 25cf969),
+image 20260829214735 flashed by the operator. The correction is in ADC
+counts, keyed to the air-assist duty the engine commands, taken off both
+raw readings in the engine and in `/status` (more counts read colder, so
+the fan's ground lift reads as a drop and the correction subtracts; the
+host test caught the first cut adding it).
+
+**The calibrate tool** (`aa-offset-calibrate`, the panel's "Calibrate
+coolant offset") ran end to end on the bench: three idle-to-run cycles,
+six edges reading 12.7/18.3, -15.8/-18.5, 16.3/16.8, -12.5/-10.3,
+15.7/17.8, -15.7/-21.0 counts (down/up), mean 16.0. It refused its own
+result on the spread (10.7 counts against its 8-count limit): 1.5 s at
+4 Hz is six samples a side against about 5 counts of single-sample noise.
+The tool now reads 3 s at 8 Hz a side (forgectrl 42cdb71, the next
+image); the value was applied directly, `cool_aa_offset_counts = 16`, this
+machine's number.
+
+**The proof** (`scripts/bench/aa_offset_check.py`, dark, no press: M8
+brings the fans to the run profile, the raw counts, `/status` and the
+engine's readings averaged before, during and after). Uncorrected, the
+upstream reading dropped 1.02 C under the run profile (raw +15.2 counts).
+Corrected, with the flow check off for the session so its heater stayed
+out of the downstream sensor: the raw counts stepped +15.4 / +13.3 and
+`/status` read 23.96 / 23.94 against 23.87 / 23.96 before, +0.09 and
+-0.02 C; the engine's own readings +0.31 / +0.25 inside the same window.
+The readings hold still while the fan runs. A first run of the check had
+left `cool_flow_check_s` at 0 (the script's restore posted an empty value
+and got a 400; fixed); the setting was put back to 50 and the engine
+re-read it at the next session.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

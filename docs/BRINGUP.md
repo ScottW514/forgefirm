@@ -1476,9 +1476,10 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     gates read the coolant about 1.2 C cooler than it is while the air
     assist runs unless `cool_aa_offset_counts` carries the machine's value
     (the `aa-offset-calibrate` diagnostic measures it, the panel's Apply
-    writes it; zero is the factory's uncorrected reading). Owed: the
-    calibrate run on this machine and its value applied, a second
-    machine's value when one is on the bench; and the mid-run
+    writes it; zero is the factory's uncorrected reading; the bench
+    machine carries 16). Owed: the calibrate tool's recommendation
+    accepted on an image (its first sampling refused its own result), a
+    second machine's value when one is on the bench; and the mid-run
     toggling between two levels (0.6 to 1.1 C, both sensors together),
     which comes only with the tube lit: not with the fans alone, not under
     motion, not in an armed dark window. The HV supply's input current on
