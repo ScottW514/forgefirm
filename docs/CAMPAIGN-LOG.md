@@ -4357,6 +4357,37 @@ on and holds it better with the pump off, so `cool_flow_rise` needs no
 warm-end value through 25 C; above that is not measured. Records:
 `bench-data/flow_warm_log_20260829.txt`, `flow_warm_results_20260829.json`.
 
+## 2026-08-29: the arm-skip and RX-overrun fix on the bench
+
+Two live-fire drills on image 20260829190323, both new in
+`scripts/bench/live_fire_drills.py`, both passed.
+
+**`senderchg`** (record `bench-data/senderchg_20260829-195933.json`): a
+20 mm line at F60 lit on the press, the connection dropped 5.0 s in with
+the tube lit, a new session, the move finishing dark, then a fresh M3 and
+a 5 mm line. The engine's window closed 1.3 s after the drop; `hv_current`
+read dark within one 40 ms sample of it and the thermopile fell to its
+floor by 0.4 s; the head ran the remaining 15 mm without a sender (the
+Grbl expectation, BRINGUP item 21); the fresh M3 prompted for the button
+again, the second press armed, and the 5 mm line marked. Lit samples:
+177 on the first line, 0 between the drop and the second press, 31 on the
+second line. `cnc/laser_on_sampled` is a one-second window count and reads
+nonzero for up to a second after the beam stops, so the drills open their
+"nothing lit" window 2.5 s after the event and read `hv_current` and the
+thermopile for the instant.
+
+**`overrun`** (record `bench-data/overrun_20260829-200256.json`): the same
+first line, and 3 s in a 93-line fill (1270 bytes) written at once against
+the 1023-byte ring. `RX overrun: the sender ignored flow control (Bf:);
+job aborted` 0.3 s after the blast, `ALARM:3`, the disarm and the reset
+banner; `hv_current` dark 0.11 s after the blast; the engine's window
+closed within the second. After `$X` the fresh M3 prompted again and the
+second press cut the 5 mm line. Lit samples: 134 before the alarm, 0
+between the alarm and the second press, 87 on the second line. The report
+and the reset came twice, 0.1 s apart: the tail of the blast arrived after
+the first reset had flushed the ring and overran it again. Harmless, the
+job was already stopped.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
@@ -5760,6 +5791,28 @@ Modules (27): `glowforge`, `wl18xx`, `wlcore`, `wlcore_sdio`, `mac80211`, `cfg80
 
 All of 1 through 4 ride one image flash (kernel/BSP changes batch), and every item here is
 a platform change under the acceptance model.
+
+### Arm skipped on a stale spindle state (item 20), closed 2026-08-29
+
+Closed: the arm is decided by the window alone (grblHAL-glowforge a7dcdca), an RX overrun drops the overrunning line whole and stops the job, both on image 20260829190323; proven by `tests/laser_arm_test.c` case H, `tests/serial_test.c`, the null-sink scenarios `sender-change-mid-job` and `rx-overrun`, and the bench drills `senderchg` and `overrun` (the 2026-08-29 entries above). The catalog's `laser.*` covers name `grblhal-glowforge/src/**`, which holds both files. The mid-job sender-change discussion is its own item.
+20. **Arm skipped on a stale spindle state (safety, fix before the next
+    image).** `glowforge_laser.c` arms on the first laser-on of a job only
+    while its own record of the spindle state reads off
+    (`state.on && !cur.on && !laser_ok` in `spindleSetState`), and
+    `gflaser_disarm` does not clear that record. A job whose M5 never
+    executes leaves the record on, and the next job's M3 runs with no arm:
+    no button wait, no run report to forgectrl, no run airflow. Fire stays
+    suppressed at the stream, so no energy leaves the tube, but the head
+    runs the whole job without the operator's consent. Seen on the bench:
+    a sender wrote a 93-line job at once, the RX ring (1023 bytes)
+    overflowed, and the serial layer drops bytes on a full ring (`serial.c`,
+    the overflow flag is set and never read), so the job's M5 and M2 were
+    lost, the window stayed open until the sender disconnected, and the
+    following job ran unarmed. Owed: the driver fix on an image (the arm
+    decided by the window alone, an RX overrun dropping the overrunning
+    line whole and aborting the job), one bench drill of each scenario,
+    and the catalog's `covers` widened to `glowforge_laser.c` and
+    `serial.c`.
 
 
 ## Reference notes

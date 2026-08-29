@@ -1434,25 +1434,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     (`KPROBES`, `PERF_EVENTS`, `BPF_SYSCALL`, `DEBUG_FS`, `DEVMEM`,
     `MAGIC_SYSRQ`: no runtime cost unused, root-only exposure, and root can
     load modules anyway).
-20. **Arm skipped on a stale spindle state (safety, fix before the next
-    image).** `glowforge_laser.c` arms on the first laser-on of a job only
-    while its own record of the spindle state reads off
-    (`state.on && !cur.on && !laser_ok` in `spindleSetState`), and
-    `gflaser_disarm` does not clear that record. A job whose M5 never
-    executes leaves the record on, and the next job's M3 runs with no arm:
-    no button wait, no run report to forgectrl, no run airflow. Fire stays
-    suppressed at the stream, so no energy leaves the tube, but the head
-    runs the whole job without the operator's consent. Seen on the bench:
-    a sender wrote a 93-line job at once, the RX ring (1023 bytes)
-    overflowed, and the serial layer drops bytes on a full ring (`serial.c`,
-    the overflow flag is set and never read), so the job's M5 and M2 were
-    lost, the window stayed open until the sender disconnected, and the
-    following job ran unarmed. Owed: the driver fix on an image (the arm
-    decided by the window alone, an RX overrun dropping the overrunning
-    line whole and aborting the job), one bench drill of each scenario,
-    and the catalog's `covers` widened to `glowforge_laser.c` and
-    `serial.c`.
-21. **A sender change while a job runs: discussion.** Today a sender that
+20. **A sender change while a job runs: discussion.** Today a sender that
     disconnects mid-job leaves the motion running to the end of what the
     controller holds, with the window closed and fire suppressed (the
     consent belonged to the displaced session), so the job finishes dark
@@ -1471,7 +1453,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     running on leaves a clean stop position but wastes the piece. Decide
     with the gapless pause and resume item (17), which owns the resume
     mechanics.
-22. **The flow check while the tube is lit.** The arm-time heater check
+21. **The flow check while the tube is lit.** The arm-time heater check
     starts at the session open, so with a prompt press the tube is lit
     for most of its window, and a lit CW window adds about 1.5 C to the
     rise (0.5 C at 45 % density) against a 1.6 C margin; on top of that the
@@ -1493,7 +1475,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     the ADC is the other candidate and a shared path could show both; a
     scope on the two sensor lines through a session, fans and tube
     switched separately, decides.
-23. **Laser power-good: what the line means.** `cnc/laser_pgood` and its
+22. **Laser power-good: what the line means.** `cnc/laser_pgood` and its
     sampled count are defined in the UAPI (active low, one sample every
     ~3.9 ms), the facts bank records that the sampled count reads 0 through
     real cutting, and the cooling engine warns

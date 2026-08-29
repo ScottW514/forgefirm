@@ -124,6 +124,18 @@ Drills (pass a name):
             margin. `fit` reads every t2 record in the bench data dir
             and fits rise against dose. JSON records like dpatch.
               flowload t1 | flowload t2 <secs> [pct] | flowload fit
+  senderchg A sender change mid-job: a 20 mm line at F60 lit on the
+            press, the connection dropped five seconds in, a reconnect,
+            the move finishing dark, then a fresh M3 and a 5 mm line that
+            must prompt for the button again. PASS: two prompts, two arms,
+            no lit sample between the drop and the second press, the
+            second line marks. Two presses; JSON record.
+  overrun   An RX overrun mid-job: a 20 mm line at F60 lit on the press,
+            a 93-line fill written at once three seconds in (about 1270
+            bytes against the 1023-byte ring). PASS: the controller
+            reports the overrun, stops in alarm with the window closed
+            and emission ending at the alarm; after $X a fresh M3 prompts
+            for the button again and a 5 mm line marks. Two presses.
   expstop   Armed kill on the EXPECTED-stop path: start a mark job,
             then mid-burn POST /controller/stop (the supervisor stops
             the controller: SIGTERM, reap, exit safing). PASS: emission
@@ -2338,6 +2350,291 @@ def drill_flowload(g):
     return 0 if rec['outcome'] == 'done' else 1
 
 
+# --- a sender change mid-job closes the window; the next laser-on prompts ----
+
+# The driver arms at a laser-on only while the window is closed, and a
+# sender change closes it whatever the spindle state (the consent belonged
+# to the displaced session). This drill lights a 20 mm line at F60, drops
+# the connection five seconds in with the tube lit, reconnects, lets the
+# move finish dark (the Grbl expectation: the controller runs what it
+# holds), then sends a fresh M3 and a 5 mm line: the controller must prompt
+# for the button again, and nothing may fire between the drop and the
+# second press. The material is the witness: the first mark ends where the
+# connection dropped, the second line marks whole.
+SENDERCHG_S = 400
+SENDERCHG_LINE1 = 'G1 X20 F60'            # 20 s of motion
+SENDERCHG_DROP_S = 5.0                    # lit seconds before the drop
+SENDERCHG_LINE2 = 'G1 X5 F600'
+
+
+def senderchg_wait_reply(g, needle, timeout):
+    """Poll the socket until a reply containing `needle` arrives."""
+    end = time.time() + timeout
+    seen = len(g.log)
+    while time.time() < end:
+        g.drain()
+        for _t, ln in g.log[seen:]:
+            if needle in ln:
+                return True
+        seen = len(g.log)
+        time.sleep(0.1)
+    return False
+
+
+def drill_senderchg(g):
+    print('=== sender change mid-job: the next laser-on must prompt again ===')
+    print('connect: %s' % prepare(g))
+    print('spindle off: %s' % g.cmd('M5'))
+    pre = sample_forgectrl()
+    if pre is None or pre.get('armed'):
+        print('REFUSED: the armed window is still open (or forgectrl is unreachable)')
+        return 2
+    sampler = Sampler(PCURVE_SAMPLE_HZ)
+    poller = CoolPoller()
+    sampler.start()
+    poller.start()
+    arm_cue()
+    print('>>> Scrap with 25 mm of free +X travel from the head. TWO presses: one')
+    print('>>> for the first line, and a second one after the reconnect, when the')
+    print('>>> prompt comes again. The line goes dark at the drop and the head')
+    print('>>> finishes the move without a sender; that is expected.\n')
+    print('G91/G21: %s / %s' % (g.cmd('G91'), g.cmd('G21')))
+    t_m3 = time.time()
+    for ln in ('M3 S%d' % SENDERCHG_S, SENDERCHG_LINE1, 'M5'):
+        g.s.sendall(ln.encode() + b'\n')
+    prompt1 = senderchg_wait_reply(g, 'press the button', 10)
+    print('  first prompt: %s' % prompt1)
+    st = g.wait_state('Run', FLOWLOAD_PRESS_WAIT_S)
+    if not st.startswith('Run'):
+        print('ABORTED: the first job never ran (%s)' % st)
+        g.rt(b'\x18')
+        sampler.stop()
+        poller.stop()
+        return 1
+    t_run1 = time.time()
+    time.sleep(SENDERCHG_DROP_S)
+    t_drop = time.time()
+    replies_a = list(g.log)
+    g.s.close()                              # the sender goes away, mid-line, lit
+    print('  connection dropped %.1f s into the first line' % (t_drop - t_run1))
+    time.sleep(1.0)
+    g2 = Grbl(HOST, PORT)                    # a new session
+    t_reconnect = time.time()
+    st = g2.wait_state('Idle', 40)
+    t_idle1 = time.time()
+    print('  reconnected; the first move ended dark %.1f s after the drop (state %s)'
+          % (t_idle1 - t_drop, st))
+    cs = sample_forgectrl() or {}
+    print('  engine after the drop: armed=%s verdict=%s' % (cs.get('armed'), cs.get('verdict')))
+    outcome = 'done'
+    t_run2 = None
+    try:
+        for ln in ('M3 S%d' % SENDERCHG_S, SENDERCHG_LINE2, 'M5'):
+            g2.s.sendall(ln.encode() + b'\n')
+        prompt2 = senderchg_wait_reply(g2, 'press the button', 10)
+        print('  second prompt after the reconnect: %s' % prompt2)
+        if not prompt2:
+            outcome = 'no-prompt'
+            g2.rt(b'\x18')
+        else:
+            st = g2.wait_state('Run', FLOWLOAD_PRESS_WAIT_S)
+            if not st.startswith('Run'):
+                outcome = 'no-run'
+                g2.rt(b'\x18')
+            else:
+                t_run2 = time.time()
+                g2.wait_state('Idle', 30)
+                print('  M2: %s' % g2.cmd('G90\nM2', timeout=10))
+    finally:
+        try:
+            g2.cmd('M5', timeout=1)
+        except Exception:
+            pass
+        time.sleep(3.0)
+        sampler.stop()
+        poller.stop()
+    tr = sampler.samples
+    lit = [s['t'] for s in tr if (s.get('lon') or 0) > 0 or (s.get('hv') or 0) > HV_DARK_MAX]
+    # laser_on_sampled is a one-second window count: it reads nonzero for
+    # up to a second after the beam stops, so the gap opens 2.5 s after
+    # the drop; hv_current and the thermopile answer within a sample.
+    lit1 = [t for t in lit if t_run1 - 1 <= t <= t_drop + 2.5]
+    lit_gap = [t for t in lit if t_drop + 2.5 < t < (t_run2 or time.time()) - 0.5]
+    lit2 = [t for t in lit if t_run2 and t >= t_run2] if t_run2 else []
+    hv_off = [s['t'] - t_drop for s in tr if s['t'] > t_drop and (s.get('hv') or 0) <= HV_DARK_MAX]
+    print('  hv_current read dark %.2f s after the drop' % (hv_off[0] if hv_off else -1))
+    print('\n--- replies (t from the first M3) ---')
+    for t, ln in replies_a + g2.log:
+        if ln != 'ok' and not re.match(r'\$\d+=', ln):
+            print('  %+7.1f s  %s' % (t - t_m3, ln))
+    print('--- engine armed transitions ---')
+    last = None
+    for p in poller.samples:
+        if 'armed' in p and p['armed'] != last:
+            print('  %+7.1f s  armed=%s' % (p['t'] - t_m3, p['armed']))
+            last = p['armed']
+    print('--- emission (lit samples at 25 Hz) ---')
+    print('  first line, press to drop:  %d samples (%.1f s)' % (len(lit1), len(lit1) / 25.0))
+    print('  drop to second press:       %d samples  <- must be 0' % len(lit_gap))
+    print('  second line:                %d samples (%.1f s)' % (len(lit2), len(lit2) / 25.0))
+    ok = outcome == 'done' and prompt1 and len(lit1) > 25 and not lit_gap and len(lit2) > 5
+    print('\n%s: %s' % ('PASS' if ok else 'FAIL',
+                        'the drop closed the window, nothing fired until the second press, '
+                        'and the second laser-on prompted and armed' if ok else outcome))
+    rec = {'drill': 'senderchg', 'date': time.strftime('%Y-%m-%dT%H:%M:%S'),
+           't_m3': t_m3, 't_run1': t_run1, 't_drop': t_drop, 't_reconnect': t_reconnect,
+           't_run2': t_run2, 'outcome': outcome, 'pass': bool(ok),
+           'replies': replies_a + g2.log, 'poll': poller.samples, 'trace': tr}
+    ddir = os.environ.get('FORGETEST_BENCH_DATA') or ('/tmp' if sampler.local else os.getcwd())
+    path = os.path.join(ddir, 'senderchg_%s.json' % time.strftime('%Y%m%d-%H%M%S'))
+    try:
+        with open(path, 'w') as f:
+            json.dump(rec, f, indent=1)
+        print('record: %s' % path)
+    except OSError as e:
+        print('record not written: %s' % e)
+    return 0 if ok else 1
+
+
+# --- an RX overrun mid-job stops the job and closes the window ---------------
+
+# A sender that writes past the RX ring (Bf: is the contract) loses lines,
+# and the driver now drops the overrunning line whole, reports the overrun
+# and stops the job the way a ^X does: alarm, latch relocked, window
+# closed. This drill lights a 20 mm line at F60 on the press, writes a
+# 93-line fill at once three seconds in (about 1270 bytes against the
+# 1023-byte ring), and expects the report, the alarm and the disarm, with
+# emission ending at the alarm; then $X, a fresh M3 and a 5 mm line must
+# prompt for the button again and mark.
+OVERRUN_S = 400
+OVERRUN_LINE1 = 'G1 X20 F60'
+OVERRUN_BLAST_S = 3.0                     # lit seconds before the blast
+OVERRUN_LINE2 = 'G1 X5 F600'
+
+
+def drill_overrun(g):
+    print('=== RX overrun mid-job: report, alarm, disarm; the next laser-on prompts ===')
+    print('connect: %s' % prepare(g))
+    print('spindle off: %s' % g.cmd('M5'))
+    pre = sample_forgectrl()
+    if pre is None or pre.get('armed'):
+        print('REFUSED: the armed window is still open (or forgectrl is unreachable)')
+        return 2
+    lines, _dx, _dy = dpatch_gcode(1500, 30.0, 0.3, 46)
+    blast = ''.join(ln + '\n' for ln in lines + ['M5']).encode()
+    sampler = Sampler(PCURVE_SAMPLE_HZ)
+    poller = CoolPoller()
+    sampler.start()
+    poller.start()
+    arm_cue()
+    print('>>> Scrap with 25 mm of free +X and 15 mm of +Y travel from the head.')
+    print('>>> TWO presses: one for the first line, and a second one after the')
+    print('>>> overrun alarm has been cleared, when the prompt comes again. The')
+    print('>>> blast is %d bytes written at once %.0f s into the line.\n'
+          % (len(blast), OVERRUN_BLAST_S))
+    print('G91/G21: %s / %s' % (g.cmd('G91'), g.cmd('G21')))
+    t_m3 = time.time()
+    for ln in ('M3 S%d' % OVERRUN_S, OVERRUN_LINE1):
+        g.s.sendall(ln.encode() + b'\n')
+    prompt1 = senderchg_wait_reply(g, 'press the button', 10)
+    print('  first prompt: %s' % prompt1)
+    st = g.wait_state('Run', FLOWLOAD_PRESS_WAIT_S)
+    if not st.startswith('Run'):
+        print('ABORTED: the first job never ran (%s)' % st)
+        g.rt(b'\x18')
+        sampler.stop()
+        poller.stop()
+        return 1
+    t_run1 = time.time()
+    time.sleep(OVERRUN_BLAST_S)
+    t_blast = time.time()
+    g.s.sendall(blast)
+    reported = senderchg_wait_reply(g, 'RX overrun', 10)
+    t_report = time.time()
+    st = g.wait_state('Alarm', 10)
+    t_alarm = time.time()
+    print('  overrun reported: %s (%.1f s after the blast); state %s' % (reported, t_report - t_blast, st))
+    outcome = 'done'
+    t_run2 = None
+    prompt2 = False
+    try:
+        if not reported or not st.startswith('Alarm'):
+            outcome = 'no-report' if not reported else 'no-alarm'
+            g.rt(b'\x18')
+        else:
+            time.sleep(2.0)
+            g.drain()
+            print('  unlock: %s' % g.cmd('$X'))
+            for ln in ('M3 S%d' % OVERRUN_S, OVERRUN_LINE2, 'M5'):
+                g.s.sendall(ln.encode() + b'\n')
+            prompt2 = senderchg_wait_reply(g, 'press the button', 10)
+            print('  second prompt after the alarm: %s' % prompt2)
+            if not prompt2:
+                outcome = 'no-prompt'
+                g.rt(b'\x18')
+            else:
+                st = g.wait_state('Run', FLOWLOAD_PRESS_WAIT_S)
+                if not st.startswith('Run'):
+                    outcome = 'no-run'
+                    g.rt(b'\x18')
+                else:
+                    t_run2 = time.time()
+                    g.wait_state('Idle', 30)
+                    print('  M2: %s' % g.cmd('G90\nM2', timeout=10))
+    finally:
+        try:
+            g.cmd('M5', timeout=1)
+        except Exception:
+            pass
+        time.sleep(3.0)
+        sampler.stop()
+        poller.stop()
+    tr = sampler.samples
+    lit = [s['t'] for s in tr if (s.get('lon') or 0) > 0 or (s.get('hv') or 0) > HV_DARK_MAX]
+    # laser_on_sampled is a one-second window count (see senderchg): the
+    # gap opens 2.5 s after the alarm; hv_current answers within a sample.
+    lit1 = [t for t in lit if t_run1 - 1 <= t <= t_alarm + 2.5]
+    lit_gap = [t for t in lit if t_alarm + 2.5 < t < (t_run2 or time.time()) - 0.5]
+    lit2 = [t for t in lit if t_run2 and t >= t_run2] if t_run2 else []
+    hv_off = [s['t'] - t_blast for s in tr if s['t'] > t_blast and (s.get('hv') or 0) <= HV_DARK_MAX]
+    print('  hv_current read dark %.2f s after the blast' % (hv_off[0] if hv_off else -1))
+    last_lit_after_blast = max([t for t in lit if t <= (t_run2 or time.time())], default=t_blast)
+    print('\n--- replies (t from the first M3) ---')
+    for t, ln in g.log:
+        if ln != 'ok' and not re.match(r'\$\d+=', ln):
+            print('  %+7.1f s  %s' % (t - t_m3, ln))
+    print('--- engine armed transitions ---')
+    last = None
+    for p in poller.samples:
+        if 'armed' in p and p['armed'] != last:
+            print('  %+7.1f s  armed=%s' % (p['t'] - t_m3, p['armed']))
+            last = p['armed']
+    print('--- emission (lit samples at 25 Hz) ---')
+    print('  first line, press to alarm:  %d samples (%.1f s); last lit sample %.2f s after the blast'
+          % (len(lit1), len(lit1) / 25.0, last_lit_after_blast - t_blast))
+    print('  alarm to second press:       %d samples  <- must be 0' % len(lit_gap))
+    print('  second line:                 %d samples (%.1f s)' % (len(lit2), len(lit2) / 25.0))
+    ok = outcome == 'done' and prompt1 and prompt2 and reported and not lit_gap and len(lit2) > 5
+    print('\n%s: %s' % ('PASS' if ok else 'FAIL',
+                        'the overrun was reported, the job stopped in alarm with the window '
+                        'closed, nothing fired until the second press, and the next laser-on '
+                        'prompted and armed' if ok else outcome))
+    rec = {'drill': 'overrun', 'date': time.strftime('%Y-%m-%dT%H:%M:%S'),
+           't_m3': t_m3, 't_run1': t_run1, 't_blast': t_blast, 't_report': t_report,
+           't_alarm': t_alarm, 't_run2': t_run2, 'blast_bytes': len(blast),
+           'outcome': outcome, 'pass': bool(ok),
+           'replies': g.log, 'poll': poller.samples, 'trace': tr}
+    ddir = os.environ.get('FORGETEST_BENCH_DATA') or ('/tmp' if sampler.local else os.getcwd())
+    path = os.path.join(ddir, 'overrun_%s.json' % time.strftime('%Y%m%d-%H%M%S'))
+    try:
+        with open(path, 'w') as f:
+            json.dump(rec, f, indent=1)
+        print('record: %s' % path)
+    except OSError as e:
+        print('record not written: %s' % e)
+    return 0 if ok else 1
+
+
 # --- the rapids after an M5 ship dark ----------------------------------------
 
 # One constant-power line, M5, then two rapids over it with dwells between,
@@ -2528,6 +2825,7 @@ def main():
               'pthresh': drill_pthresh, 'dladder': drill_dladder,
               'pcurve': drill_pcurve, 'm5dark': drill_m5dark,
               'dpatch': drill_dpatch, 'flowload': drill_flowload,
+              'senderchg': drill_senderchg, 'overrun': drill_overrun,
               'expstop': drill_expstop, 'ctrlstart': drill_ctrlstart}
     if drill not in drills:
         print(__doc__)
