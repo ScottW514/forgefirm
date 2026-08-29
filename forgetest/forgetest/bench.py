@@ -128,6 +128,16 @@ TOOLS = [
               _arg("warm_min", "float", 20.0, "warm-up budget per check, minutes")],
      "desc": "Runs the real check (40 percent / 50 s, cut-profile fans) from a heater-warmed baseline, alternating "
              "flow and no-flow; results to the bench data directory. Slow: about 15 minutes per cycle."},
+    {"id": "offset-probe", "title": "Coolant-sensor offset probe", "script": "offset_probe.py",
+     "safety": "dry", "where": "board", "ported": True,
+     "args": [_arg("mode", "choice", "survey", "survey: one actuator at a time; ladder: the air-assist "
+                   "duty ladder; jog: the air assist at run duty while the gantry jogs",
+                   ["survey", "ladder", "jog"])],
+     "desc": "Which actuator moves both coolant thermistors together? Switches the exhaust (100/50/25 "
+             "percent), intakes, air assist, purge, heater, pump, TEC and lid lamp one at a time, dark, "
+             "with both sensors at 25 Hz, and scores the common-mode step at every edge and the level "
+             "toggling inside every dwell; every value is restored on exit. The pump stops once for "
+             "8 s with the tube dark and the heater off. About five minutes."},
     {"id": "critical-tier", "title": "Coolant critical-tier warm-loop drill", "script": "critical_tier_drill.py",
      "safety": "dry", "where": "board", "ported": True,
      "args": [_arg("max_seconds", "int", 1200, "give up after this long without CRITICAL", flag="--max-seconds")],

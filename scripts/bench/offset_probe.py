@@ -357,7 +357,7 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == 'armed':
         return run_armed()
     ladder = len(sys.argv) > 1 and sys.argv[1] == 'ladder'
-    repeat = int(sys.argv[1]) if len(sys.argv) > 1 and not ladder else 2
+    repeat = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 2
     attrs = {
         'exhaust': SYSFS + 'thermal/exhaust_pwm',
         'intake': SYSFS + 'thermal/intake_pwm',
