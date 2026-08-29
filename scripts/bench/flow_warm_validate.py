@@ -68,41 +68,53 @@ def pump(on):
     board('echo %d > /sys/glowforge/thermal/water_pump_on' % (1 if on else 0))
 
 
+WARM_ROUND_S = 180          # heater on per round, then a mix and a bulk reading
+WARM_MIX_S = 45
+WARM_PLATEAU_C = 0.15       # a round that lifts the bulk less than this is the end
+
+
 def warm_to(target, log):
-    """Warm with the loop heater, pump circulating, fans off."""
+    """Warm with the loop heater in rounds, pump circulating, fans off:
+    heater on for WARM_ROUND_S, heater off and WARM_MIX_S of circulation,
+    then the bulk read as the two sensors' mean. Judged on that mixed
+    bulk, never on the upstream sensor beside the heater, which reaches
+    any target within two minutes while the bulk has barely moved (the
+    2026-08-29 run stopped at 24.5 C that way). 50 % is the practical
+    heater ceiling: the downstream sensor sits at the element and 100 %
+    drives it past 50 C in 30 s."""
     pump(True)
     board(FANS_OFF)
-    # 50% is the practical ceiling: the downstream sensor sits AT the
-    # heater element, so 100% drives it past 50 C within 30 s while the
-    # bulk has barely moved. At 50% it plateaus near 41 C, leaving the
-    # bulk free to climb for as long as we let it.
-    heater(50)
     t0 = time.time()
-    # Plateau detection compares against the reading two minutes back:
-    # with the pump circulating, the bulk climbs only ~0.5-0.8 C/min, so
-    # a per-sample threshold mistakes normal warming for a plateau (it
-    # did exactly that on the first attempt and the whole run executed
-    # at ambient).
-    hist = []
+    last_bulk = None
     while time.time() - t0 < WARM_MAX_S:
+        heater(50)
+        r0 = time.time()
+        abort = False
+        while time.time() - r0 < WARM_ROUND_S and time.time() - t0 < WARM_MAX_S:
+            d, u = temps()
+            if d >= ABORT_C:
+                log('    warm abort: downstream %.2f C' % d)
+                abort = True
+                break
+            time.sleep(15)
+        heater(0)
+        if abort:
+            break
+        time.sleep(WARM_MIX_S)
         d, u = temps()
+        bulk = (d + u) / 2.0
         el = (time.time() - t0) / 60
-        if u >= target:
-            log('    warm target reached: up=%.2f at %.1f min' % (u, el))
+        log('      warming: %.1f min  bulk %.2f (down %.2f, up %.2f)' % (el, bulk, d, u))
+        if bulk >= target:
+            log('    warm target reached: bulk %.2f at %.1f min' % (bulk, el))
             break
-        if d >= ABORT_C:
-            log('    warm abort: downstream %.2f at %.1f min' % (d, el))
+        if last_bulk is not None and bulk - last_bulk < WARM_PLATEAU_C:
+            log('    (warming plateaued at %.2f C after %.1f min)' % (bulk, el))
             break
-        hist.append(u)
-        if len(hist) % 4 == 0:
-            log('      warming: %.1f min  down=%.2f  up=%.2f' % (el, d, u))
-        if len(hist) > 8 and u - hist[-9] < 0.3:
-            log('    (warming plateaued at %.2f C after %.1f min)' % (u, el))
-            break
-        time.sleep(15)
+        last_bulk = bulk
     heater(0)
     pump(True)
-    time.sleep(45)          # mix so the bulk is uniform before measuring
+    time.sleep(WARM_MIX_S)  # mix so the bulk is uniform before measuring
     d, u = temps()
     log('    warmed to down=%.2f up=%.2f in %.1f min' % (d, u, (time.time() - t0) / 60))
     return u

@@ -1045,11 +1045,10 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
 
 1. **Laser commissioning leftovers.** Verify the hardware button latch persists
    across kernel-run gaps mid-job (if OK_2_FIRE drops between motion bursts, the
-   fix is a stream keepalive across armed gaps); the flow check's bands from
-   a loop warmer than 25 C (the bands hold from 19 to 25 C with the margin
-   widening warm; the warm-up in `flow_warm_validate.py` must be judged on
-   the mixed bulk, not the upstream sensor beside the heater, to reach 28 C
-   and above).
+   fix is a stream keepalive across armed gaps). The flow check's bands
+   hold from 19 to 27 C, the loop heater's ceiling in a 20 C room, with the
+   margin widening warm; above that only a running tube warms the loop,
+   and the check takes the tube's share off.
 2. **Low-temperature gates and warm-up (planned).** Two keys in the Cooling
    card: `cool_temp_min` (hard floor, default ~5 °C, a fire gate) and
    `cool_temp_start` (warm-up gate, default ~16 °C) — a job starting below the

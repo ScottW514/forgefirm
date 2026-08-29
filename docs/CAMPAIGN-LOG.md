@@ -4535,6 +4535,30 @@ compensation's whole path stands on the bench: the tool measures the
 machine's number, Apply writes it, and both coolant readings hold within
 0.1 C when the run airflow comes on.
 
+## 2026-08-29: the flow check from a warm loop, to the heater's ceiling
+
+`flow_warm_validate.py` with its warm-up rewritten to judge the mixed bulk
+(the heater at 50 % for three minutes, off, 45 s of circulation, the two
+sensors' mean; a round that lifts the bulk under 0.15 C ends the warm-up),
+run from the bench page as the `flow-warm` takeover with a 28 C target and
+a 20 min budget, three checks pump on and three pump off, alternating.
+The bulk plateaus at 27.2 C in this room, so the checks ran at 26.2 to
+27.2 C baselines, the most the loop heater can give.
+
+| case | rises (C) | band |
+|---|---|---|
+| pump on | 11.08, 11.89, 10.98 | max 11.89 |
+| pump off | 18.69, 18.42, 18.00 | min 18.00 |
+
+Every verdict correct; the 14.4 C limit sits 2.51 C above the warm flow
+band and 3.60 C below the warm no-flow band. With the 19 to 23 C
+characterization (12.75 / 16.04) and the 24 to 25 C run earlier in the
+day (12.15 / 18.07), the bands hold from 19 to 27 C with the margin
+widening warm. Above 27 C only a running tube warms this loop, and the
+check takes the tube's share off; `cool_flow_rise` needs no warm-end
+value. Records `bench-data/flow_warm_log_20260829b.txt`,
+`flow_warm_results_20260829b.json`.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
