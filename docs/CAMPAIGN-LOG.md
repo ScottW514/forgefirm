@@ -4524,6 +4524,17 @@ left `cool_flow_check_s` at 0 (the script's restore posted an empty value
 and got a 400; fixed); the setting was put back to 50 and the engine
 re-read it at the next session.
 
+## 2026-08-29: the calibrate tool's recommendation, on image 20260829220329
+
+forgectrl 42cdb71 (each edge read over 3 s at 8 Hz a side), image
+20260829220329 flashed by the operator. `aa-offset-calibrate` from the
+panel's API, dark: six edges 15.5/16.1, -14.3/-14.2, 16.2/17.3,
+-13.8/-14.8, 17.8/17.4, -18.1/-18.3 counts (down/up), mean 16.2, spread
+4.5, recommendation 16.2, which is the value already applied. The
+compensation's whole path stands on the bench: the tool measures the
+machine's number, Apply writes it, and both coolant readings hold within
+0.1 C when the run airflow comes on.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
