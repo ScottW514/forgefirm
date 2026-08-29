@@ -4138,6 +4138,94 @@ are not owed. The item is removed from BRINGUP, and the items after it are
 renumbered: 17 to 20 are now 16 to 19. `GFSINK_LEAD_MS` (default 10) and
 the per-run margin report stay as shipped.
 
+## 2026-08-29: the flow check under laser load, Tests 1 and 2
+
+The 2026-08-25 flow-check trip (heater rise 15.1 C against the 14.4 C limit,
+dT 9.4, while the first `dpatch` patch fired CW through the check window) was
+run down with a new drill, `flowload` in `scripts/bench/live_fire_drills.py`.
+`flowload t1` puts the three check keys at their defaults for the run and
+fires two 30 x 4 mm CW fills (F1500, 0.3 mm pitch, about 35 s lit) on the
+press with no dark dwell; `flowload t2 <secs> [pct]` writes
+`cool_flow_check_s = 0` for the run and fires one fill sized to the lit
+seconds at CW or at a density level; `flowload fit` fits rise against dose
+over the t2 records. The sampler is the `dpatch` one plus
+`thermal/heater_pwm`, `/cool/status` is polled at 1 Hz with the fan gates,
+and every controller reply is kept. Every key the drill writes goes back to
+what stood before when the run ends. The pump was never commanded off.
+Records: `bench-data/flowload_t1_20260829-*.json` and
+`bench-data/flowload_t2_*_20260829-*.json` in the tree.
+
+**Test 1, three runs.** The check starts at the session open (the heater
+comes on about one second after the M3, not at the press), so the press must
+come at once for the fire to overlap the window. Runs 1 and 2 ended their
+windows early (the drill closed the session on M2 before the 50 s were up;
+fixed: the drill now holds the window open until the heater trace ends).
+Run 3 ran the full window with the tube lit for 70 % of it, and the engine
+read `coolant flow verified (heater rise 14.1 C, dT 9.5 C)`: 0.3 C from a
+SUSPECT, where the same loop reads 11.7 to 12.1 C dark. The trip is
+reproduced in kind, and it is not flow. Two things stack:
+
+- **A common-mode ADC offset while the run airflow profile is on.** One
+  sample after the session opens (fans to run duty) both coolant sensors
+  drop 1.0 to 1.9 C together; they step back up when the fans return to
+  idle; in between the readings toggle between two levels 0.6 to 1.1 C apart,
+  both sensors in lockstep, up to 22 times in a run, with every fan steady
+  at speed. The one session in which the air-assist fan never left idle
+  showed no step and no toggling, the only pointer to a source so far. The
+  engine captures `flow_base_down` from one sample at its first tick after
+  the heater starts, inside that offset, so every rise carries about +1.1
+  to +1.4 C from the offset and about +-0.5 C of single-sample scatter, dark
+  or lit.
+- **The tube's heat at the sensors.** Test 2 below: about 1.5 C inside a
+  fully lit 50 s CW window.
+
+Dark 11.7 plus the tube's 1.5 plus one low base sample reaches 14.1; the
+15.1 trip is the tail of the same distribution.
+
+**Test 2, the tube's signature, check off.** CW bursts of 20.8, 40.8, 47.9
+and 59.0 s and one 59.4 s burst at 45 % density (S450). With the ADC offset
+steps masked (a step is both sensors' half-second mean levels changing by
+0.45 C or more the same way, agreeing within 0.4 C, subtracted from all
+later samples), the downstream rise at burst end against the `hv_current`
+integral is linear through the origin: **k = 3.06e-5 C per raw-second**
+(r2 0.981, intercept 0.04 C), 0.030 C per lit second at hv 971, so **a fully
+lit 50 s CW check window adds 1.49 C** against the 1.6 C margin; the rise
+50 s after fire start read 1.43 to 1.49 C on every burst long enough. The
+lag from first emission to the first sensor response is 10 to 20 s, a
+smooth ramp on both sensors together, never a step at fire start. At 45 %
+density the same window adds 0.46 C, and the heat per raw-second is 0.77 of
+CW: the current integral overstates density heat, so a tracer needs one k
+per power model.
+
+**Events on the way.** One `t2 40` run held at +7 s on the airflow gate
+(`air_assist 1895 under the 6000 floor for 3 s`): the air-assist fan never
+left its idle reading inside the 15 s grace, the first air-assist trip on
+record; it spun up normally in every other session. The first `t2 60` run
+was written to the controller as one 93-line block, about 1270 bytes
+against the 1023-byte RX ring, and the serial layer drops bytes on a full
+ring, so the fill ran 46 s instead of 60 and the job's M5 and M2 were lost:
+the window stayed open (engine phase `run`, `armed` true) until the drill
+exited and dropped the connection. The next `t2 60` then ran its whole fill
+with no arm, no button wait, no run report and no airflow: the driver's
+spindle-state record was still on from the lost M5, and the arm at the
+first laser-on is skipped when that record reads on. Fire stayed suppressed
+at the stream (no HV, no emission, thermopile flat), so no energy left the
+tube, but the head ran a full job without the operator's press. This is
+BRINGUP "Next work" item 20 (arm on `state.on && !laser_ok`, clear the
+spindle state in `gflaser_disarm`, consume the RX overflow flag), a fix
+owed before the next image. The drill now feeds the job against the `Bf:`
+free-character count, sends and acknowledges M5 before every run, refuses
+to start while `/cool/status` shows the window armed, acknowledges M2 and
+waits for the window to close, and prints the controller's replies: the
+last three runs show `press the button to start the laser job`,
+`laser armed (density)` on the press, and `Pgm End` with
+`laser disarmed - latch locked` on the M2.
+
+**Also seen.** `laser power-good degraded during the armed window` is
+warned by the engine at every session open, a separate item. The check
+window's own baseline and the tube term are the two candidates the fix
+chooses between; nothing is built yet.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

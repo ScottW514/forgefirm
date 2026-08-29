@@ -1434,6 +1434,26 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     (`KPROBES`, `PERF_EVENTS`, `BPF_SYSCALL`, `DEBUG_FS`, `DEVMEM`,
     `MAGIC_SYSRQ`: no runtime cost unused, root-only exposure, and root can
     load modules anyway).
+20. **Arm skipped on a stale spindle state (safety, fix before the next
+    image).** `glowforge_laser.c` arms on the first laser-on of a job only
+    while its own record of the spindle state reads off
+    (`state.on && !cur.on && !laser_ok` in `spindleSetState`), and
+    `gflaser_disarm` does not clear that record. A job whose M5 never
+    executes leaves the record on, and the next job's M3 runs with no arm:
+    no button wait, no run report to forgectrl, no run airflow. Fire stays
+    suppressed at the stream, so no energy leaves the tube, but the head
+    runs the whole job without the operator's consent. Seen on the bench:
+    a sender wrote a 93-line job at once, the RX ring (1023 bytes)
+    overflowed, and the serial layer drops bytes on a full ring (`serial.c`,
+    the overflow flag is set and never read), so the job's M5 and M2 were
+    lost, the window stayed open until the sender disconnected, and the
+    following job ran unarmed. Fix, in this order: arm on
+    `state.on && !laser_ok` (the consent question does not depend on the
+    previous spindle state); clear the spindle state in `gflaser_disarm`;
+    consume the RX overflow flag (report the error and drop the client, so
+    a sender that ignores flow control cannot leave a half job behind).
+    Each part gets a regression test in the null-sink harness with the fix,
+    and the catalog's `covers` widens to `glowforge_laser.c` and `serial.c`.
 
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the
