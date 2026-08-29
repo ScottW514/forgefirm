@@ -123,7 +123,9 @@ TOOLS = [
      "desc": "Long run of the real re-check cadence via M8: verdicts, false faults, loop heat accumulation."},
     {"id": "flow-warm", "title": "Coolant warm-baseline validation", "script": "flow_warm_validate.py",
      "safety": "takeover", "where": "board", "ported": True,
-     "args": [_arg("cycles", "int", 3, "cycles per case (flow / no-flow)")],
+     "args": [_arg("cycles", "int", 3, "cycles per case (flow / no-flow)"),
+              _arg("target_c", "float", 28.0, "warm the upstream sensor to this before each check"),
+              _arg("warm_min", "float", 20.0, "warm-up budget per check, minutes")],
      "desc": "Runs the real check (40 percent / 50 s, cut-profile fans) from a heater-warmed baseline, alternating "
              "flow and no-flow; results to the bench data directory. Slow: about 15 minutes per cycle."},
     {"id": "critical-tier", "title": "Coolant critical-tier warm-loop drill", "script": "critical_tier_drill.py",

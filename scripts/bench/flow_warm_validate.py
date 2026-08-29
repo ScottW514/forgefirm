@@ -15,7 +15,10 @@ controller stopped (the bench page's takeover does that; from a host,
 stop them first). Runs on the board or from a host (gfbench: GF_HOST).
 Results and the log go to the bench data directory (gfbench.data_path).
 
-Usage: flow_warm_validate.py [cycles_per_case]   (default 3)
+Usage: flow_warm_validate.py [cycles_per_case] [target_c] [warm_budget_min]
+       (defaults 3, 28.0, 20: the loop's own heater at 50 percent plateaus
+       near 28 to 29 C in a 20 C room, the most a warm baseline can be
+       without the tube)
 """
 import json
 import statistics
@@ -29,8 +32,8 @@ RESULTS = data_path('flow_warm_results.json')
 DUTY = 40
 CHECK_S = 50
 THRESHOLD = float(setting('cool_flow_rise', 14.4))    # forgectrl's configured threshold
-WARM_TARGET_C = 25.5        # what a ~19-20 C room permits at 50% duty
-WARM_MAX_S = 780
+WARM_TARGET_C = float(sys.argv[2]) if len(sys.argv) > 2 else 28.0
+WARM_MAX_S = 60.0 * (float(sys.argv[3]) if len(sys.argv) > 3 else 20.0)
 ABORT_C = 48.0
 
 FANS_RUN = ('echo 65535 > /sys/glowforge/thermal/exhaust_pwm; '

@@ -4308,6 +4308,55 @@ absurd coefficient is bounded at 3 C and no flow is still SUSPECT (17.2);
 under the density model the density coefficient applies (1.1 off). The
 `flowload` drill's verdict parser accepts the new suffix.
 
+## 2026-08-29: image 20260829190323, the flow check under load on the bench
+
+Pins forgefirm d577629 (grblHAL-glowforge a7dcdca, forgectrl 2f18b16),
+both images built rc=0 from the committed trees, the dev image flashed by
+the operator at 19:11. Three `flowload t1` runs from the installed drill,
+each a prompt press with the tube lit for 58 to 63 percent of the check
+window, the check opening 4 to 7 s after the fire (about 15 s after the
+session open, from the fresh history):
+
+| run | engine line | lit |
+|---|---|---|
+| 191517 | `verified (heater rise 11.3 C, dT 9.6 C; laser 0.8 off 12.0)` | 58 % |
+| 192051 | `verified (heater rise 11.1 C, dT 9.4 C; laser 0.7 off 11.9)` | 63 % |
+| 192439 | `verified (heater rise 11.8 C, dT 9.8 C; laser 0.7 off 12.5)` | 58 % |
+
+The judged rise sits in the loop's dark band, 2.6 to 3.3 C under the
+14.4 C limit, where the same conditions read 14.1 in the morning. The arm
+sequence on the new driver was clean in every run (prompt, armed on the
+press, `Pgm End` and the disarm at program end, the window closed with
+the M2, all 55 lines queued at once). The power-good warning at the session
+open persists (BRINGUP item 23). Board left idle, heater off, conf
+restored, nothing under `/data`; records in `bench-data/`.
+
+## 2026-08-29: the flow check from a warm loop (Test 3)
+
+The plan's third test: the check's bands from a heater-warmed loop, the
+tube dark, run from the bench page as the `flow-warm` takeover
+(`flow_warm_validate.py 3`, forgectrl and the controller stopped for the
+run and restarted on its exit), three checks with the pump on and three
+with it commanded off, alternating, each from a fresh warm-up. The tool's
+warm target reads the upstream sensor, which sits near the heater and
+reaches 28 C within two minutes while the mixed bulk settles near 24.5, so
+the baselines landed at 23.6 to 24.9 C rather than the 28 to 30 the plan
+asked for; the tree's copy now takes the target and the warm-up budget as
+arguments (defaults 28 C, 20 min, registered on the bench page), and a
+warm-up judged on the mixed bulk is the follow-up.
+
+| case | rises (C) | band |
+|---|---|---|
+| pump on | 11.54, 12.15, 11.78 | max 12.15 (cold data: 12.75) |
+| pump off | 18.97, 18.70, 18.07 | min 18.07 (cold data: 16.04) |
+
+Every verdict correct; the 14.4 C limit sits 2.25 C above the warm flow
+band and 3.67 C below the warm no-flow band, a 5.9 C gap where the cold
+data has 3.3. A warmer loop sheds the heater's heat no worse with the pump
+on and holds it better with the pump off, so `cool_flow_rise` needs no
+warm-end value through 25 C; above that is not measured. Records:
+`bench-data/flow_warm_log_20260829.txt`, `flow_warm_results_20260829.json`.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

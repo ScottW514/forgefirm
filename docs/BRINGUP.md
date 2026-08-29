@@ -1045,11 +1045,11 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
 
 1. **Laser commissioning leftovers.** Verify the hardware button latch persists
    across kernel-run gaps mid-job (if OK_2_FIRE drops between motion bursts, the
-   fix is a stream keepalive across armed gaps); characterize warm-baseline
-   flow-check behavior under real laser heating (all flow characterization used
-   19–23 °C baselines; physics argues the dependence is weak — ΔT = P/(ṁ·c)
-   carries no absolute-temperature term — but that is reasoning, not
-   measurement).
+   fix is a stream keepalive across armed gaps); the flow check's bands from
+   a loop warmer than 25 C (the bands hold from 19 to 25 C with the margin
+   widening warm; the warm-up in `flow_warm_validate.py` must be judged on
+   the mixed bulk, not the upstream sensor beside the heater, to reach 28 C
+   and above).
 2. **Low-temperature gates and warm-up (planned).** Two keys in the Cooling
    card: `cool_temp_min` (hard floor, default ~5 °C, a fire gate) and
    `cool_temp_start` (warm-up gate, default ~16 °C) — a job starting below the
@@ -1479,13 +1479,13 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     carries a common-mode offset of about 1 C that steps in when the
     airflow goes to the run profile, steps out when it returns to idle,
     and toggles between two levels in between. Together they put an
-    ordinary job's check within a few tenths of the limit. Owed, in order:
-    the engine's reading (means for the baseline and the end, the tube's
-    share taken off from the `hv_current` integral, one coefficient per
-    power model) on an image; three `flowload t1` runs to show the
-    engine's rise back in the dark band; a `cooling.*` catalog case with
-    an armed CW load; and if that is not enough, the void-on-emission
-    design with the tube as its own flow tracer.
+    ordinary job's check within a few tenths of the limit. The engine now
+    reads means and takes the tube's share off (`cool_laser_heat_cw`,
+    `cool_laser_heat_density`). Owed: a `cooling.*` catalog case with an
+    armed CW load; a re-measure of the two coefficients once a second
+    machine is on the bench (one tube, one supply so far); and if a lit
+    check still trips, the void-on-emission design with the tube as its
+    own flow tracer.
     Open question, the offset's source: the timing points at the airflow
     drive (the step lands one sample after the fans go to run duty, before
     any HV, and lifts when they go idle, long after the tube is dark), but
