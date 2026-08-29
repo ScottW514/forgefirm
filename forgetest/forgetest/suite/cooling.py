@@ -71,6 +71,58 @@ def flow_verify(ctx):
     ctx.check(fc.wait_idle(120, abort=ctx.aborted), "machine did not return to idle after the diagnostic")
 
 
+@test("cooling.aa-offset-calibrate", title="The air-assist ground shift on the coolant readings measures cleanly",
+      subsystem="cooling", kind="auto", est_min=2,
+      covers=_COOL_COVERS, requires=["kernel.latch-locked-idle"],
+      steps=["Coolant loop normal (pump on); the machine idle. The controller is suspended by "
+             "forgectrl for the duration (about a minute); the air assist cycles three times."],
+      description="forgectrl's aa-offset-calibrate diagnostic: the air-assist fan stepped idle to "
+                  "run and back three times with the tube dark and the heater off, both coolant "
+                  "sensors read at every edge. The fan's return current shifts both readings by "
+                  "a number of ADC counts the engine adds back (cool_aa_offset_counts). PASS = the "
+                  "tool reports a recommendation, the six edges agree within its spread limit, and "
+                  "the value sits inside the setting's legal range. The setting is not written.")
+def aa_offset_calibrate(ctx):
+    fc = ctx.forgectrl
+    ev = ctx.evidence
+    st, body = fc.get("/diag/status")
+    ctx.check(st == 200 and isinstance(body, dict), "GET /diag/status -> %s", st)
+    ctx.check(not body.get("running"), "a diagnostic is already running (%s)", body.get("tool"))
+    st, body = fc.post("/diag/aa-offset-calibrate")
+    ctx.log("POST /diag/aa-offset-calibrate -> %s %s", st, body if isinstance(body, dict) else "")
+    ctx.check(st == 202 and isinstance(body, dict) and body.get("started") is True,
+              "could not start aa-offset-calibrate (%s %s)", st, body)
+    result = None
+    last_phase = None
+    t0 = time.time()
+    try:
+        while time.time() - t0 < 300:
+            ctx.checkpoint()
+            st, d = fc.get("/diag/status")
+            if st == 200 and isinstance(d, dict):
+                if d.get("phase") != last_phase:
+                    last_phase = d.get("phase")
+                    ctx.log("phase: %s", last_phase)
+                if not d.get("running") and d.get("result") is not None:
+                    result = d.get("result")
+                    for line in d.get("log", [])[-10:]:
+                        ctx.log("  diag: %s", line)
+                    break
+            time.sleep(2)
+    except BaseException:
+        fc.post("/diag/abort")
+        raise
+    ctx.check(result is not None, "aa-offset-calibrate did not finish within 5 minutes")
+    ev["result"] = result
+    ctx.check("error" not in result, "aa-offset-calibrate error: %s", result.get("error"))
+    ctx.log("offset %s counts, spread %s, recommend %s, edges %s", result.get("offset_counts"),
+            result.get("spread_counts"), result.get("recommend"), result.get("steps"))
+    ctx.check("recommend" in result, "no recommendation in %s", result)
+    ctx.check(0 <= float(result["recommend"]) <= 60,
+              "recommendation %s outside the setting's range 0..60", result["recommend"])
+    ctx.check(fc.wait_idle(120, abort=ctx.aborted), "machine did not return to idle after the diagnostic")
+
+
 IDLE_DUTY = {"thermal/exhaust_pwm": 0, "thermal/intake_pwm": 0}   # forgectrl's idle posture
 TACH_KEYS = ("exhaust", "intake_1", "intake_2")
 SAMPLE_S = 5                # tach sampling period (the big exhaust fan coasts for tens of seconds)

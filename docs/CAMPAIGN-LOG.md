@@ -4420,6 +4420,78 @@ head jogged back by the baseline; the case now brings the head back
 itself. The case rides the next image; its campaign standing comes with
 that image's campaign.
 
+## 2026-08-29: the coolant ADC offset is the air-assist fan's return current
+
+The common-mode offset on the two coolant sensors (about 1 C low while the
+run airflow profile is on, BRINGUP item 21) was run down differentially,
+dark, with `scripts/bench/offset_probe.py`: forgectrl idle, one actuator
+switched at a time, both sensors at 25 Hz, the step at every edge scored
+as the 1.5 s means after minus before. Records
+`bench-data/offset_probe_20260829-205928.json` (the survey) and
+`offset_probe_20260829-210233.json` (the ladder).
+
+The wiring first, from the OpenGlow board's netlist (pin-compatible with
+the factory board): the thermistors enter on J2 pins 3 and 4 with the pump
+enable (2), the TEC enable (1), the TEC thermistor (6), the heater PWM (7),
+the exhaust tach (8) and the exhaust PWM (9) beside them, then 12 V, the
+beam-detect lines, Z step and direction, the head I2C and the head camera
+lanes; the intake fans, the HV lines, `LASER_ON` and `HV_EN` are on J1;
+the air assist is driven on the head. The run profile drives the exhaust
+at 65535 (100 %, no PWM edges) and the intakes at 43278.
+
+The survey: exhaust at 100 %, 50 % and 25 %, the intakes at their run
+duty, purge, the TEC enable and the lid lamp each move both sensors by
+0.1 C or less; the heater and the pump edges move the downstream sensor
+only (thermal). The air assist from its idle 204 to its run 1023 steps
+both sensors together, -1.37 and -1.25 C in one sample, and back +1.18 and
++1.13; "all run fans" gives the same -1.28 and -1.23. The ladder: 256
+-0.03, 512 -0.27, 768 -0.6, 1023 -1.2 C cumulative, both sensors alike,
+each step reversed on the way down, and -1.2 to -1.3 C on two full on and
+off repeats. The offset is proportional to the air-assist fan's current: a
+ground-return drop on a path the thermistor reference shares, not
+crosstalk on J2 and not HV (the `flowload` traces already show the step
+before any HV and no further step at emission). Both sensors read low by
+the same amount whenever the air assist runs, so the flow check's rise is
+untouched now that its baseline is taken under the run profile, and the
+over-temperature gates read the coolant about 1.2 C cooler than it is
+during a job. The mid-run toggling between two levels is not reproduced by
+a steady fan (0 toggles in every dwell); the fan's own current variation
+under motion is the remaining candidate.
+
+## 2026-08-29: the toggling is not motion
+
+`offset_probe.py jog` (record `bench-data/offset_jog_20260829-211710.json`),
+dark, no press: the air assist steady at its run duty while the gantry
+jogged 30 mm in X and 8 mm in Y for 40 s, then the same jog with the fan
+idle. Zero level toggles in every phase; with the fan on the readings sat
+1.1 C low and as quiet while jogging (sd 0.26 C) as while still (0.32),
+and the fan's tach held 677 to 678 under motion. Motion and the head's
+pogo contacts under vibration are out. The toggling seen in the day's
+`flowload t2` traces sits inside the armed windows only (from the moment
+`armed` went true, past the burst's end, gone when the fans went idle), and
+the dark runs with the fans at run duty show none, which leaves the HV
+supply's enable, asserted from the press to the disarm, as the candidate;
+an armed dark dwell (`M3 S0`, the window open, no emission) is the test.
+
+## 2026-08-29: the toggling needs the tube lit
+
+`offset_probe.py armed` (record `bench-data/offset_armed_20260829-212245.json`):
+`M3 S0`, the press 0.3 s after the M3, the window open 73 s with the head
+still, the flow check's heater running inside it, no emission (0 lit
+samples on the LASER_ON witness and the tube current), then M2. Zero level
+toggles on both sensors through the armed window; the one step after M2
+is the fans returning to idle. The `hv_enable` switch read false
+throughout, so it does not follow the arm. Every toggle in the day's
+`flowload t2` traces sits inside a lit period (seven between +7 and +34 s
+around a burst lit from +7 to +27; thirteen under a 41 s burst;
+twenty-two under a 48 s burst), and none appear dark, with the fans
+alone, under motion, or in an armed dark window. The jitter comes with
+tube current: the HV supply's input current on a return the thermistor
+reference shares, or its switching, is what remains, and a scope on the
+two sensor lines during a cut is the next instrument. Its size is 0.6 to
+1.1 C either way, inside the over-temperature ceiling's 2 C hysteresis,
+and the flow check reads means.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

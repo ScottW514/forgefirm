@@ -1468,13 +1468,24 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     second machine is on the bench (one tube, one supply so far); and if a
     lit check still trips, the void-on-emission design with the tube as
     its own flow tracer.
-    Open question, the offset's source: the timing points at the airflow
-    drive (the step lands one sample after the fans go to run duty, before
-    any HV, and lifts when they go idle, long after the tube is dark), but
-    high-voltage energy coupling into the lines between the sensors and
-    the ADC is the other candidate and a shared path could show both; a
-    scope on the two sensor lines through a session, fans and tube
-    switched separately, decides.
+    The offset's source is the air-assist fan's return current on a ground
+    path the thermistor reference shares (about 1.2 C at the run duty,
+    proportional to the fan's current, both sensors alike; not crosstalk
+    on the sensor cable and not HV). The check cancels it now that its
+    baseline is taken under the run profile, but the over-temperature
+    gates read the coolant about 1.2 C cooler than it is while the air
+    assist runs unless `cool_aa_offset_counts` carries the machine's value
+    (the `aa-offset-calibrate` diagnostic measures it, the panel's Apply
+    writes it; zero is the factory's uncorrected reading). Owed: the
+    calibrate run on this machine and its value applied, a second
+    machine's value when one is on the bench; and the mid-run
+    toggling between two levels (0.6 to 1.1 C, both sensors together),
+    which comes only with the tube lit: not with the fans alone, not under
+    motion, not in an armed dark window. The HV supply's input current on
+    a return the thermistor reference shares, or its switching, is what
+    remains; a scope on the two sensor lines during a cut is the next
+    instrument. It sits inside the ceiling's 2 C hysteresis and the flow
+    check reads means, so it is a measurement item, not a gate item.
 22. **Laser power-good: what the line means.** `cnc/laser_pgood` and its
     sampled count are defined in the UAPI (active low, one sample every
     ~3.9 ms), the facts bank records that the sampled count reads 0 through
@@ -1487,6 +1498,22 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     scope against `hv_current` through an armed cut, its meaning written
     into the facts bank and the UAPI, and then either a warning that means
     something or no warning.
+23. **Initial commissioning: measure and set the machine's own numbers
+    methodically.** Every tunable that was measured on the bench machine
+    and shipped as a default varies from machine to machine: the flow
+    check's bands and `cool_flow_rise`, the tube's heat coefficients
+    (`cool_laser_heat_cw`, `cool_laser_heat_density`), the air-assist
+    ground offset on the coolant readings, the laser's striking and lasing
+    thresholds and the duty floor, the fan floors, the thermistor curve
+    itself. Owed: one commissioning procedure, run once on a new machine
+    from the panel or the bench page, that measures each of these in
+    order with the tube dark wherever it can be, fires only where it
+    must, and writes the results as that machine's settings with a
+    record; and a reading of what the cloud sets for the same machine,
+    taken from cloud cuts (the pulse header carries the factory's
+    per-machine values), so the commissioning can start from the
+    factory's own numbers where they exist and note where they differ
+    from the measured ones.
 
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the
