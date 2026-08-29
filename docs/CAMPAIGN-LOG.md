@@ -4226,6 +4226,88 @@ warned by the engine at every session open, a separate item. The check
 window's own baseline and the tube term are the two candidates the fix
 chooses between; nothing is built yet.
 
+## 2026-08-29: the arm-skip and RX-overrun fix, host-proven
+
+The driver fix for BRINGUP "Next work" item 20 is written in
+grblHAL-glowforge and proven on the host; it is not yet on an image.
+
+**The arm.** `spindleSetState` now arms on `state.on && !laser_ok`: the
+consent question reads the window alone, never the previous spindle state.
+`gflaser_disarm` leaves the spindle-state record alone, since it is the
+core's own view (`spindleGetState`, the `A:S` field, planner sync) and the
+condition no longer depends on it. `tests/laser_arm_test.c` gained case H:
+arm through the press, bump the sender generation, `gflaser_poll` closes
+the window with the record still on, the next laser-on must run the button
+wait again and arm; and case I: a laser-on inside the open window does not
+re-prompt. On the old condition case H fails three checks; on the new one
+the whole harness passes.
+
+**The ring.** In `serial.c`, `rx_byte` on a full ring now drops the
+overrunning line whole: what the ring already holds of it is unwritten back
+to the last newline, the rest is discarded through the line's own newline,
+real-time characters keep passing (they are taken before the ring), and
+the overrun is latched. The driver's realtime hook takes it once, logs it,
+reports `RX overrun: the sender ignored flow control (Bf:); job aborted` to
+the sender and enqueues `^X`, the same stop as the lid cancel: controlled
+deceleration, latch relocked, alarm. `tests/serial_test.c` (new, in CMake
+and CI) pushes 73 lines of 14 bytes, overruns on the 74th with a `?` in
+the middle, and checks: one byte free after 1022, the `?` taken, the
+overrun reported once and only once, every line that fit delivered whole,
+no fragment left behind, the next line after the overrun whole, and the
+same with the overrun landing mid-line; 11 checks pass.
+
+**The null-sink harness** (`laser_lifecycle_test.py`, over TCP, no
+hardware) gained two scenarios and passes 15 of 15: `sender-change-mid-job`
+(M4, a 5 s move, the socket closed at 1 s with the spindle on, reconnect,
+`M3 S100` must prompt and re-arm; the disarm message itself is written while
+no client is connected and is discarded, so the re-arm is the evidence) and
+`rx-overrun` (an armed job, then 120 lines written at once: the overrun
+report arrives, the state goes to Alarm, the window closes, and after `$X`
+a clean job arms again). `laser_stream_test.py` still passes.
+
+**What a sender change means in Grbl terms**, for BRINGUP item 21: neither
+Grbl nor grblHAL knows a sender is present; a lost connection leaves the
+controller executing what its planner and RX ring hold, then waiting; the
+core's `stream_disconnect` only switches streams; senders treat the loss as
+a failed job. ForgeFIRM keeps that for the motion and adds the disarm.
+
+## 2026-08-29: the flow check's reading, host-proven
+
+The cooling engine's flow check (forgectrl `cool.c`) now reads its rise
+from means and takes the tube's share off before the limit; written and
+proven on the host, not yet on an image (BRINGUP item 22).
+
+**The reading.** The baseline is the mean of the settled window the gate
+has just verified (15 samples at 1 Hz), and that history restarts when the
+run airflow profile is applied, so the window is taken entirely under the
+profile and the ADC offset that comes with it sits on both sides of the
+rise; the arm-time check therefore starts about 15 s after the session
+opens instead of one second after. The end reading is the mean of the
+check's last 5 s. The tube's share is one coefficient per power model
+(`cool_laser_heat_cw` 3.06e-5, `cool_laser_heat_density` 2.36e-5 C per
+raw-second of `pic/hv_current`, the numbers of the 2026-08-29 burst runs)
+times the current integral from 15 s before the window to 15 s before its
+end (the heat's lag to the sensor; emission later than that has not
+arrived, so it is not counted, the safe side), bounded at 3 C so no setting
+can subtract the check away. The verdict lines carry the share and the raw
+rise: `coolant flow verified (heater rise 11.8 C, dT 10.7 C; laser 1.5 off
+13.2)`. The two keys are validated in `main.c` (0 to 2e-4) and described in
+`SERVICES.md`; the diagnostics' own flow-verify and flow-calibrate are
+untouched, since they run with the tube dark.
+
+**The proof.** `tests/cool_flow_test.c` (new, in CMake and CI) includes the
+engine source against a fake sysfs tree and a fake clock, with a loop model
+that carries the run-profile offset (-1 C stepping in at the session open
+and toggling 0.6 C), the heater's rise with flow (12 C plateau) or without
+(0.4 C per second) and the tube's heat arriving 15 s after emission. Fifteen
+checks pass: a dark check with flow is verified with no share and its
+baseline is the window's mean; a dark check without flow is SUSPECT; a lit
+CW check with flow is verified with about 1.5 C taken off (raw 13.2, judged
+11.8); a lit check without flow is SUSPECT (20.2 raw, 18.8 judged); an
+absurd coefficient is bounded at 3 C and no flow is still SUSPECT (17.2);
+under the density model the density coefficient applies (1.1 off). The
+`flowload` drill's verdict parser accepts the new suffix.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

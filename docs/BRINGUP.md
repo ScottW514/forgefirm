@@ -1447,13 +1447,64 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     overflowed, and the serial layer drops bytes on a full ring (`serial.c`,
     the overflow flag is set and never read), so the job's M5 and M2 were
     lost, the window stayed open until the sender disconnected, and the
-    following job ran unarmed. Fix, in this order: arm on
-    `state.on && !laser_ok` (the consent question does not depend on the
-    previous spindle state); clear the spindle state in `gflaser_disarm`;
-    consume the RX overflow flag (report the error and drop the client, so
-    a sender that ignores flow control cannot leave a half job behind).
-    Each part gets a regression test in the null-sink harness with the fix,
-    and the catalog's `covers` widens to `glowforge_laser.c` and `serial.c`.
+    following job ran unarmed. Owed: the driver fix on an image (the arm
+    decided by the window alone, an RX overrun dropping the overrunning
+    line whole and aborting the job), one bench drill of each scenario,
+    and the catalog's `covers` widened to `glowforge_laser.c` and
+    `serial.c`.
+21. **A sender change while a job runs: discussion.** Today a sender that
+    disconnects mid-job leaves the motion running to the end of what the
+    controller holds, with the window closed and fire suppressed (the
+    consent belonged to the displaced session), so the job finishes dark
+    and the material is left with an unfinished cut. This is the stock
+    Grbl and grblHAL expectation for the motion: the controller has no
+    notion of sender presence, executes what its planner and RX ring hold,
+    and then waits; the core's stream code (`stream.c`,
+    `stream_disconnect`) only switches streams, with no hold and no
+    alarm, and senders treat a lost connection as a failed job (LightBurn
+    stops its own side and resumes nothing). ForgeFIRM adds only the
+    disarm on top. The open question is whether the disarm should also
+    feed-hold the job, so a reconnecting sender can press and resume where
+    the cut stopped instead of finding the head at the end of a dark pass:
+    a hold parks the head over hot material with the assist air on the run
+    profile, and the grace then closes the window in Hold as it does today;
+    running on leaves a clean stop position but wastes the piece. Decide
+    with the gapless pause and resume item (17), which owns the resume
+    mechanics.
+22. **The flow check while the tube is lit.** The arm-time heater check
+    starts at the session open, so with a prompt press the tube is lit
+    for most of its window, and a lit CW window adds about 1.5 C to the
+    rise (0.5 C at 45 % density) against a 1.6 C margin; on top of that the
+    engine takes its baseline from one sample while the coolant ADC
+    carries a common-mode offset of about 1 C that steps in when the
+    airflow goes to the run profile, steps out when it returns to idle,
+    and toggles between two levels in between. Together they put an
+    ordinary job's check within a few tenths of the limit. Owed, in order:
+    the engine's reading (means for the baseline and the end, the tube's
+    share taken off from the `hv_current` integral, one coefficient per
+    power model) on an image; three `flowload t1` runs to show the
+    engine's rise back in the dark band; a `cooling.*` catalog case with
+    an armed CW load; and if that is not enough, the void-on-emission
+    design with the tube as its own flow tracer.
+    Open question, the offset's source: the timing points at the airflow
+    drive (the step lands one sample after the fans go to run duty, before
+    any HV, and lifts when they go idle, long after the tube is dark), but
+    high-voltage energy coupling into the lines between the sensors and
+    the ADC is the other candidate and a shared path could show both; a
+    scope on the two sensor lines through a session, fans and tube
+    switched separately, decides.
+23. **Laser power-good: what the line means.** `cnc/laser_pgood` and its
+    sampled count are defined in the UAPI (active low, one sample every
+    ~3.9 ms), the facts bank records that the sampled count reads 0 through
+    real cutting, and the cooling engine warns
+    `laser power-good degraded during the armed window` whenever fewer
+    than half the samples read low, so the warning fires at every session
+    open and carries no information. Nobody knows what the line reports
+    on this PSU: whether it is the supply's own power-good, an HV-present
+    flag, a polarity we have inverted, or unconnected. Owed: the line on a
+    scope against `hv_current` through an armed cut, its meaning written
+    into the facts bank and the UAPI, and then either a warning that means
+    something or no warning.
 
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the

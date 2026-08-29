@@ -1585,7 +1585,7 @@ FLOWLOAD_PRESS_WAIT_S = 300.0            # the operator's button timeout
 FLOWLOAD_CHANNELS = PCURVE_CHANNELS + (('htr', 'thermal/heater_pwm'),)
 # The engine's own verdict lines, as /cool/status "reason" carries them.
 FLOWLOAD_RISE_RE = re.compile(
-    r'heater rise ([0-9.]+) C(?: \(limit ([0-9.]+), dT ([0-9.]+)\)|, dT ([0-9.]+) C)')
+    r'heater rise ([0-9.]+) C(?: \(limit ([0-9.]+), dT ([0-9.]+)|, dT ([0-9.]+) C)')
 
 
 class CoolPoller:

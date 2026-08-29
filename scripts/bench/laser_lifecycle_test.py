@@ -291,11 +291,85 @@ def test_job_window():
         s.close()
 
 
+def test_sender_change_mid_job():
+    """Rule 3, the hard case: the sender changes while the job is still
+    running with the spindle on, so the core never turns the spindle off
+    between the two sessions. The next laser-on from the new sender must
+    still prompt: the arm decision reads the window, not the spindle-state
+    record (a job whose M5 was lost leaves that record on the same way).
+    M3 after M4 is a state change the core always pushes through
+    set_state, planner-synced, so it lands once the first job's move ends."""
+    s = Session("sender-change-mid-job", disarm_s=60)
+    try:
+        send_line(s.sock, "M4 S100", s.log)
+        send_line(s.sock, "G1 X5 F60", s.log)             # 5 s of motion
+        if not wait_for(s.log, ARMED, 5, s.sock):
+            fail("[sender-change-mid-job] first laser-on did not arm")
+        time.sleep(1.0)
+        s.sock.close()                                     # mid-move, spindle on
+        time.sleep(0.5)
+        # The disarm message is written while no client is connected, and
+        # output with no client is discarded, so the new session cannot
+        # see it; the re-arm below is the evidence the window closed.
+        s.sock = s.connect()
+        before = s.armed_count()
+        s.send_raw("M3 S100")                              # laser-on against a closed window
+        end = time.time() + 15
+        while time.time() < end and s.armed_count() != before + 1:
+            read_avail(s.sock, s.log, 0.2)
+        if s.armed_count() != before + 1:
+            fail("[sender-change-mid-job] a laser-on after a mid-job sender change did not "
+                 "re-arm: the arm read the stale spindle state instead of the window")
+        send_line(s.sock, "M5", s.log)
+        wait_idle(s.sock, s.log)
+        print("PASS [sender-change-mid-job]: a laser-on against a window closed mid-job "
+              "prompted and re-armed")
+    finally:
+        s.close()
+
+
+def test_rx_overrun_aborts():
+    """A sender that writes past the RX ring (Bf: is the contract) loses
+    lines, and a job with lines missing is not the job the sender wrote:
+    the controller reports the overrun, stops the way a ^X stops it
+    (alarm, window closed) and never runs on with a hole in it. A clean
+    job after the reset arms again."""
+    s = Session("rx-overrun", disarm_s=60)
+    try:
+        send_line(s.sock, "M4 S100", s.log)
+        send_line(s.sock, "G1 X1 F600", s.log)
+        if not wait_for(s.log, ARMED, 5, s.sock):
+            fail("[rx-overrun] first laser-on did not arm")
+        job = "".join("G1 X%d F60\n" % (2 + (i % 2)) for i in range(120))   # ~1.3 KB at once
+        s.sock.sendall(job.encode())
+        if not wait_for(s.log, "RX overrun", 10, s.sock):
+            fail("[rx-overrun] the overrun was not reported to the sender")
+        if not s.wait_state("Alarm", 5):
+            fail("[rx-overrun] the overrun did not stop the job (state %s)" % s.state())
+        if s.disarmed_count() < 1:
+            read_avail(s.sock, s.log, 1.0)
+        if s.disarmed_count() < 1:
+            fail("[rx-overrun] the overrun did not close the armed window")
+        send_line(s.sock, "$X", s.log)
+        before = s.armed_count()
+        send_line(s.sock, "M4 S100", s.log)
+        send_line(s.sock, "G1 X0 F600", s.log)
+        end = time.time() + 5
+        while time.time() < end and s.armed_count() != before + 1:
+            read_avail(s.sock, s.log, 0.2)
+        if s.armed_count() != before + 1:
+            fail("[rx-overrun] a clean job after the overrun did not arm")
+        wait_idle(s.sock, s.log)
+        print("PASS [rx-overrun]: the overrun was reported, the job stopped in alarm with "
+              "the window closed, and the next clean job armed")
+    finally:
+        s.close()
+
+
 def test_sender_change():
     """Rule 3: a reconnected sender must re-arm. The grace is set far
     beyond the test horizon so only the sender change can close the
-    window, and the first job ends in M5 so the next M4 is a fresh
-    laser-on edge (the arm prompt fires on the off->on edge)."""
+    window; the first job ends in M5 and the next M4 is a fresh laser-on."""
     s = Session("sender-change", disarm_s=60)
     try:
         send_line(s.sock, "M4 S100", s.log)
@@ -651,6 +725,8 @@ def main():
         fail("controller binary not found at %s" % BIN)
     test_job_window()
     test_sender_change()
+    test_sender_change_mid_job()
+    test_rx_overrun_aborts()
     test_hold_grace()
     test_button_wait_arms()
     test_lid_open_in_wait()
