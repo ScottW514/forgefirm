@@ -1463,11 +1463,11 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     and toggles between two levels in between. Together they put an
     ordinary job's check within a few tenths of the limit. The engine now
     reads means and takes the tube's share off (`cool_laser_heat_cw`,
-    `cool_laser_heat_density`). Owed: a `cooling.*` catalog case with an
-    armed CW load; a re-measure of the two coefficients once a second
-    machine is on the bench (one tube, one supply so far); and if a lit
-    check still trips, the void-on-emission design with the tube as its
-    own flow tracer.
+    `cool_laser_heat_density`), and `cooling.flow-under-load` is the
+    catalog's case. Owed: a re-measure of the two coefficients once a
+    second machine is on the bench (one tube, one supply so far); and if a
+    lit check still trips, the void-on-emission design with the tube as
+    its own flow tracer.
     Open question, the offset's source: the timing points at the airflow
     drive (the step lands one sample after the fans go to run duty, before
     any HV, and lifts when they go idle, long after the tube is dark), but

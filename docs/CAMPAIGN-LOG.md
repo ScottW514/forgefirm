@@ -4388,6 +4388,38 @@ and the reset came twice, 0.1 s apart: the tail of the blast arrived after
 the first reset had flushed the ring and overran it again. Harmless, the
 job was already stopped.
 
+## 2026-08-29: the air-assist fan and the airflow gate, twice
+
+Twice in the day the airflow gate held a job at the end of its 15 s grace
+with the air-assist tach still at its idle reading (1895 at 17:09 in a
+`flowload t2 40` run, 2207 at 20:19 in the first bench run of
+`cooling.flow-under-load`; the floor is 6000 and every other session of the
+day read about 10,700 within 5 s of the run profile). The head probed clean
+and the kernel log carried no I2C error; the fan read normal at idle both
+times. The gate did what it is for: the hold came before the arm, the
+operator's press was refused, the session closed with the fans, and no job
+ran without air. The operator's reading is a bench hardware glitch, the
+head's pogo-pin connection to the air assist; the machine was powered down
+and the head reseated, and the case was run again. Not a project item.
+
+## 2026-08-29: `cooling.flow-under-load`, the catalog's case for the lit check
+
+The catalog case for BRINGUP item 21 (`forgetest/suite/cooling.py`, kind
+live, mode grbl, one press): two 30 x 4 mm fills at full power on the press,
+the window held open until the engine's verdict lands in the forgectrl log,
+then M2. PASS needs `coolant flow verified` with the laser's share on the
+line (at least 0.3 C, the proof the window and the fire overlapped) and the
+judged rise at least 1 C under `cool_flow_rise`; an arm refused by a gate
+names the gate. First run on image 20260829190323 (the module staged over
+the installed suite, forgetest restarted; the prerequisites overridden, no
+campaign results on this image yet): the airflow gate held before the arm
+(the entry above). Second run after the head reseat: **PASS**, the engine
+line `coolant flow verified (heater rise 11.9 C, dT 9.5 C; laser 0.6 off
+12.5)`, 66 s from job to verdict, the window closed 0.0 s after M2, the
+head jogged back by the baseline; the case now brings the head back
+itself. The case rides the next image; its campaign standing comes with
+that image's campaign.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
