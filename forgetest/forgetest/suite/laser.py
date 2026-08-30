@@ -1,7 +1,8 @@
 """laser.* - LIVE laser tests, ported from `scripts/bench/live_fire_drills.py`.
 
-Every test here can emit, except `laser.power-floor`, which only reads
-settings. The page starts a firing one only with the operator's
+Every test here can emit, except `laser.power-floor` and
+`laser.power-model-switch`, which only read and switch settings with the
+spindle off. The page starts a firing one only with the operator's
 eye-protection / fire-watch / exhaust acknowledgment; the test then
 prompts for the scrap and the button, streams a small job through the
 controller, and the machine fires only after the operator presses the
@@ -31,14 +32,41 @@ _LASER_COVERS = [("grblhal-glowforge", "src/**"), ("kernel-module-glowforge", "*
                  ("forgectrl", "src/super.c"), ("forgectrl", "src/cool.c"),
                  ("forgectrl", "src/status.c"), ("forgectrl", "src/main.c")]
 
-# boards/glowforge.h: DEFAULT_SPINDLE_PWM_MIN_VALUE against the hardware's
-# 127-count PWM period. Under the shipped FIRE-density dose model this is
-# a density floor: the bottom of the S range maps onto it, measured as
-# the lowest level that still marks. (Under the analog fallback the same
-# setting is a duty floor and wants ~16, the duty this tube lases at.)
-POWER_FLOOR_PCT = 10.0
+# The per-model S-range floors the controller loads into $35 at every
+# arm and switch (glowforge_laser.c: laser_floor_density /
+# laser_floor_analog, with these defaults when the config carries no
+# key). Density: the lowest pulse density that still marks. Analog: the
+# duty this tube lases at, against the hardware's 127-count PWM period.
+FLOOR_DEFAULT = {"density": 10.0, "analog": 16.0}
 PWM_PERIOD = 127
-PWMSAR_FLOOR_MIN = 12
+PWMSAR_FLOOR_MIN = {"density": 12, "analog": 20}
+
+
+def _model_floors(fc):
+    """(configured model, {model: floor percent}) from forgectrl's settings:
+    the config keys the controller derives $35 from, defaults applied."""
+    cfg = fc.settings()
+    model = (cfg.get("laser_power_model") or "density").strip() or "density"
+    floors = {}
+    for m in ("density", "analog"):
+        raw = (cfg.get("laser_floor_%s" % m) or "").strip()
+        try:
+            floors[m] = float(raw) if raw else FLOOR_DEFAULT[m]
+        except ValueError:
+            floors[m] = FLOOR_DEFAULT[m]
+    return model, floors
+
+
+def _grbl_settings(lines):
+    vals = {}
+    for ln in lines:
+        key, _, val = ln.partition("=")
+        if key.startswith("$"):
+            try:
+                vals[key] = float(val)
+            except ValueError:
+                pass
+    return vals
 
 ARM_CUE = ("LIVE FIRE. Eye protection on, exhaust running, fire watch and extinguisher in reach, "
            "scrap under the head with room to move (%s), lid closed. On Ready the job starts: "
@@ -281,27 +309,35 @@ def wait_disarm(ctx, timeout):
     return None
 
 
-@test("laser.power-floor", title="The shipped duty floor holds commanded power above the lasing threshold",
+@test("laser.power-floor", title="The configured model's floor is the one in force",
       subsystem="laser", kind="auto", mode="grbl", est_min=1,
-      covers=[("grblhal-glowforge", "src/**")],
-      description="$35 floors the bottom of the laser's output range, and unfloored the low end "
-                  "of S asks for pulses too far apart for the discharge to re-strike - a "
-                  "commanded 1 % would emit nothing. Reads $$ and checks the floor is the "
-                  "commissioned percent, that $31 is 0 (the floor, not $31, sets the bottom of "
-                  "the range), and that it lands at or above the measured minimum. Reports the "
-                  "stored setting, which is the one in force after any controller start.")
+      covers=[("grblhal-glowforge", "src/**"), ("forgectrl", "src/main.c")],
+      description="The controller derives $35 from the configured dose model's floor key "
+                  "(laser_floor_density / laser_floor_analog) at every arm and switch, and "
+                  "never from a typed value. Unfloored, the low end of S asks for pulses too "
+                  "far apart to re-strike (density) or a duty in the tube's dead band "
+                  "(analog), so a commanded 1 % would emit nothing. Reads the model and the "
+                  "floors from forgectrl, sends an M101 for the configured model so the "
+                  "derivation runs without a fire, then reads $$ and checks $35 is that "
+                  "model's floor, that it lands at or above the measured minimum, and that "
+                  "$31 is 0 (the floor, not $31, sets the bottom of the range).")
 def power_floor(ctx):
     ev = ctx.evidence
+    model, floors = _model_floors(ctx.forgectrl)
+    ev["configured"] = {"model": model, "floors": floors}
+    ctx.log("configured model %s, floors %s", model, floors)
     with ctx.grbl() as g:
+        # The switch for the model already selected: the derivation runs
+        # at the switch as at the arm, spindle off, nothing fires, and the
+        # program-scoped override is cleared by the M2 that follows.
+        reply = g.command("M101 P%d" % (1 if model == "density" else 0), timeout=5)
+        ev["m101"] = reply
+        ctx.check(any(ln.startswith("ok") for ln in reply) and
+                  not any(ln.startswith("error") for ln in reply),
+                  "M101 for the configured model was not accepted: %s", reply)
         lines = g.command("$$", timeout=5)
-    vals = {}
-    for ln in lines:
-        key, _, val = ln.partition("=")
-        if key.startswith("$"):
-            try:
-                vals[key] = float(val)
-            except ValueError:
-                pass
+        g.command("M2", timeout=5)
+    vals = _grbl_settings(lines)
     ctx.check(vals, "no $-settings in the response to $$")
 
     floor_pct = vals.get("$35")
@@ -313,17 +349,57 @@ def power_floor(ctx):
     ctx.log("$35=%.1f%% -> PWMSAR %d of %d ($31=%s, $32=%s, $36=%s)", floor_pct, counts,
             PWM_PERIOD, rpm_min, vals.get("$32"), vals.get("$36"))
 
-    ctx.check(abs(floor_pct - POWER_FLOOR_PCT) < 0.05,
-              "$35 is %.1f %%, expected the commissioned %.1f %% - a machine carrying stored "
-              "settings from before the floor needs `$35=16` (or `$RST=$`) and then a "
-              "controller restart, since the spindle mapping is precomputed at start",
-              floor_pct, POWER_FLOOR_PCT)
-    ctx.check(counts >= PWMSAR_FLOOR_MIN,
-              "the floor lands at PWMSAR %d, below the %d the tube needs",
-              counts, PWMSAR_FLOOR_MIN)
+    want = floors[model]
+    ctx.check(abs(floor_pct - want) < 0.05,
+              "$35 is %.1f %%, expected the %s floor %.1f %% from the machine config",
+              floor_pct, model, want)
+    ctx.check(counts >= PWMSAR_FLOOR_MIN[model],
+              "the %s floor lands at PWMSAR %d, below the %d the tube needs",
+              model, counts, PWMSAR_FLOOR_MIN[model])
     ctx.check(rpm_min == 0, "$31 is %s, not 0: the bottom of the S range is no longer the floor",
               rpm_min)
-    ctx.log("PASS: nonzero S never commands less than PWMSAR %d", counts)
+    ctx.log("PASS: under %s, nonzero S never commands less than PWMSAR %d", model, counts)
+
+
+@test("laser.power-model-switch", title="M101 switches the dose model and its floor, and reverts at M2",
+      subsystem="laser", kind="auto", mode="grbl", est_min=1,
+      covers=[("grblhal-glowforge", "src/glowforge_laser.c"), ("grblhal-glowforge", "src/driver.c"),
+              ("forgectrl", "src/main.c")],
+      description="A job selects its dose model with M101 P0 (analog) or M101 P1 (density) "
+                  "after an M5; the controller loads that model's floor into $35 on the spot "
+                  "and reverts to the configured default at program end unless the line "
+                  "carried Q1. With the spindle off and nothing armed: switches to each model "
+                  "and reads $35 back as that model's floor, checks the reported message names "
+                  "the model and the floor, then sends M2 and checks the configured model's "
+                  "floor is back. Nothing fires: the switch is refused with the spindle on, "
+                  "and no M3 is sent.")
+def power_model_switch(ctx):
+    ev = ctx.evidence
+    model, floors = _model_floors(ctx.forgectrl)
+    other = "analog" if model == "density" else "density"
+    ev["configured"] = {"model": model, "floors": floors}
+    with ctx.grbl() as g:
+        for m in (other, model, other):
+            reply = g.command("M101 P%d" % (1 if m == "density" else 0), timeout=5)
+            text = "\n".join(reply)
+            ctx.check(any(ln.startswith("ok") for ln in reply), "M101 -> %s not accepted: %s", m, reply)
+            ctx.check("laser power model set for this program (%s, floor %g %%)" % (m, floors[m]) in text,
+                      "the switch to %s was not reported with its floor: %s", m, reply)
+            vals = _grbl_settings(g.command("$$", timeout=5))
+            ev["after_%s" % m] = vals.get("$35")
+            ctx.check(vals.get("$35") is not None and abs(vals["$35"] - floors[m]) < 0.05,
+                      "after M101 -> %s, $35 is %s, expected %.1f", m, vals.get("$35"), floors[m])
+        reply = g.command("M2", timeout=5)
+        text = "\n".join(reply)
+        vals = _grbl_settings(g.command("$$", timeout=5))
+    ev["after_m2"] = vals.get("$35")
+    ctx.check("laser power model reverted (%s, floor %g %%)" % (model, floors[model]) in text,
+              "M2 did not report the revert to %s: %s", model, reply)
+    ctx.check(vals.get("$35") is not None and abs(vals["$35"] - floors[model]) < 0.05,
+              "after M2, $35 is %s, expected the configured %s floor %.1f",
+              vals.get("$35"), model, floors[model])
+    ctx.log("PASS: M101 loads %s's floor %g and %s's floor %g; M2 reverts to %s",
+            other, floors[other], model, floors[model], model)
 
 
 @test("laser.emission-witness", title="Live emission witness (S400 vector mark) and job-based disarm",

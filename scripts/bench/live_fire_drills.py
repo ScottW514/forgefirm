@@ -96,6 +96,16 @@ Drills (pass a name):
             nonzero again after its first zero past the line. Prints the
             9 s after the line at 40 ms steps. The catalog's
             laser.m5-rapid-dark is its port.
+  mswitch   The M101 dose-model switch on the machine, one armed run:
+            a 20 mm density line at S500, M5, M101 P0 (the reply and
+            the switch report are asserted), a 20 mm analog line back
+            at the same S, M5, M2. PASS when the arm names the model
+            and floor, the switch and the M2 revert are reported, $$
+            shows each model's floor while it is in force, exactly two
+            discharge segments appear with nothing after them, the
+            window never re-prompts, and the current character flips
+            (pulsed spikes under density, steady under analog).
+            Requires laser_power_model = density (the default).
   dpatch    Depth witness for the dose curve of the configured
             laser_power_model: two rows of small engraved patches
             (serpentine G1 fills) on the stock. Row A is CW (S1000) at
@@ -808,8 +818,8 @@ def drill_dladder(g):
                 line = []
         if line:
             print('  ' + '  '.join(line))
-    print('Check the controller said "laser armed (density)" - a plain')
-    print('"laser armed" means the analog path ran and this is a duty')
+    print('Check the controller said "laser armed (density, ...)" - an')
+    print('"(analog, ...)" arm means the analog path ran and this is a duty')
     print('ladder, not a density one.')
     print('\nRead the material: count rungs from the FIRST one drawn.')
     print('Two readings, and the second is the one only the bench can give:')
@@ -2745,6 +2755,151 @@ def drill_m5dark(g):
     return 0 if ok else 1
 
 
+MSWITCH_S = 500
+MSWITCH_MM = 20.0
+MSWITCH_FEED = 600
+
+
+def drill_mswitch(g):
+    print('=== M101 on the machine: density line, switch, analog line, revert ===')
+    sampler = Sampler(PCURVE_SAMPLE_HZ)
+    if not sampler.local:
+        print('run this on the board: the witnesses are sysfs at 25 Hz')
+        return 2
+    model = conf_get('laser_power_model') or 'density'
+    if model != 'density':
+        print('PRECONDITION FAILED: laser_power_model is %s, the drill asserts '
+              'the density default and its revert' % model)
+        return 2
+    fails = []
+
+    def check(cond, msg):
+        print('  %s: %s' % ('ok' if cond else 'FAIL', msg))
+        if not cond:
+            fails.append(msg)
+
+    def logged(needle):
+        return any(needle in ln for _t, ln in g.log)
+
+    def floor35(text):
+        for ln in text.splitlines():
+            if ln.startswith('$35='):
+                try:
+                    return float(ln[4:])
+                except ValueError:
+                    return None
+        return None
+
+    print('connect: %s' % prepare(g))
+    print('pre-fire: %s' % sample_forgectrl())
+    arm_cue()
+    print('>>> %g mm of free +X travel at the head, scrap under it: one line' % MSWITCH_MM)
+    print('>>> out under density, the switch, the same line back under analog.\n')
+    sampler.start()
+    aborted = False
+    try:
+        for ln in ('G91', 'G21'):
+            g.cmd(ln)
+        # Section 1: density. The M3 blocks in the arm until the press.
+        g.s.sendall(b'M3 S%d\n' % MSWITCH_S)
+        g.s.sendall(('G1 X%g F%d\n' % (MSWITCH_MM, MSWITCH_FEED)).encode())
+        st = g.wait_state('Run', 300)
+        if not st.startswith('Run'):
+            print('FAIL: the job never ran (state=%s)' % st)
+            g.rt(b'\x18')
+            return 1
+        g.wait_state('Idle', 60)
+        time.sleep(0.5)
+        g.drain()
+        check(logged('laser armed (density, floor 10 %)'),
+              'the arm names the density model and its floor')
+        # The switch, spindle off.
+        r = g.cmd('M5')
+        check('error' not in r, 'M5 accepted (%s)' % r.replace('\n', ' '))
+        r = g.cmd('M101 P0', timeout=10)
+        check('ok' in r and 'error' not in r, 'M101 P0 accepted (%s)' % r.replace('\n', ' '))
+        time.sleep(0.3)
+        g.drain()
+        check(logged('laser power model set for this program (analog, floor 16 %)'),
+              'the switch is reported with the analog floor')
+        f = floor35(g.cmd('$$', timeout=10))
+        check(f == 16.0, '$$ shows the analog floor in force ($35=%s)' % f)
+        # Section 2: analog, same S, no new press allowed.
+        presses = sum(1 for _t, ln in g.log if 'press the button' in ln)
+        g.s.sendall(b'M3 S%d\n' % MSWITCH_S)
+        g.s.sendall(('G1 X%g F%d\n' % (-MSWITCH_MM, MSWITCH_FEED)).encode())
+        st = g.wait_state('Run', 60)
+        check(st.startswith('Run'), 'the analog section ran (state=%s)' % st)
+        g.wait_state('Idle', 60)
+        time.sleep(0.5)
+        g.drain()
+        check(sum(1 for _t, ln in g.log if 'press the button' in ln) == presses,
+              'the open window carried across the switch: no re-prompt')
+        for ln in ('M5', 'G90'):
+            g.cmd(ln)
+        g.cmd('M2')
+        time.sleep(0.5)
+        g.drain()
+        check(logged('laser power model reverted (density, floor 10 %)'),
+              'M2 reverts to the density default and reports it')
+        f = floor35(g.cmd('$$', timeout=10))
+        check(f == 10.0, '$$ shows the density floor back ($35=%s)' % f)
+        # Let the disarm land before judging the trace.
+        t0 = time.time()
+        while time.time() - t0 < 90:
+            smp = sample_forgectrl()
+            if smp and not smp['armed']:
+                break
+            time.sleep(0.2)
+        time.sleep(1.5)
+    except Exception as e:
+        aborted = True
+        print('ABORTED: %s' % e)
+        g.rt(b'\x18')
+    finally:
+        sampler.stop()
+    if aborted:
+        return 1
+
+    tr = sampler.samples
+    segs, cur = [], None
+    for smp in tr:
+        on = smp['hv'] is not None and smp['hv'] > HV_DARK_MAX
+        if on and cur is None:
+            cur = [smp['t'], smp['t']]
+        elif on:
+            cur[1] = smp['t']
+        elif cur is not None and smp['t'] - cur[1] > 1.0:
+            segs.append(cur)
+            cur = None
+    if cur:
+        segs.append(cur)
+    print('\n--- results (%d samples, %.1f Hz) ---' % (len(tr), sampler.rate()))
+    check(len(segs) == 2, '%d discharge segment(s), expected exactly 2 (one per line)'
+          % len(segs))
+    if len(segs) == 2:
+        for name, (a, b) in zip(('density', 'analog'), segs):
+            hv = _stats(_window(tr, a + 0.3, b - 0.1, 'hv'))
+            print('  %s line: %.2f s, hv mean %.0f max %d (max-mean %.0f)'
+                  % (name, b - a, hv['mean'], hv['max'], hv['max'] - hv['mean']))
+        hv_d = _stats(_window(tr, segs[0][0] + 0.3, segs[0][1] - 0.1, 'hv'))
+        hv_a = _stats(_window(tr, segs[1][0] + 0.3, segs[1][1] - 0.1, 'hv'))
+        check(hv_a['max'] - hv_a['mean'] < 150,
+              'the analog line is a steady discharge (max-mean %.0f)'
+              % (hv_a['max'] - hv_a['mean']))
+        check(hv_d['max'] - hv_d['mean'] > 250,
+              'the density line is a pulsed discharge (max-mean %.0f)'
+              % (hv_d['max'] - hv_d['mean']))
+        t_end = segs[1][1]
+        hv_after = max((smp['hv'] for smp in tr if smp['t'] > t_end + 0.3
+                        and smp['hv'] is not None), default=0)
+        check(hv_after <= HV_DARK_MAX, 'dark after the second M5 (hv max %d)' % hv_after)
+    ok = not fails
+    print('MSWITCH %s' % ('PASS: the switch, the floors and the revert hold on the machine'
+                          if ok else 'FAIL: %d check(s) failed' % len(fails)))
+    return 0 if ok else 1
+
+
 def post_ctrl(action):
     # http.client preserves the header-name case exactly as given.
     import http.client
@@ -2833,6 +2988,7 @@ def main():
               'pthresh': drill_pthresh, 'dladder': drill_dladder,
               'pcurve': drill_pcurve, 'm5dark': drill_m5dark,
               'dpatch': drill_dpatch, 'flowload': drill_flowload,
+              'mswitch': drill_mswitch,
               'senderchg': drill_senderchg, 'overrun': drill_overrun,
               'expstop': drill_expstop, 'ctrlstart': drill_ctrlstart}
     if drill not in drills:

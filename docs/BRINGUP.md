@@ -206,31 +206,69 @@ of the first tick byte it covers, FIRE as bit 4 OR'd into tick bytes. The
 spindle PWM is precomputed to a period of exactly 127, so computed values ARE
 power bytes (`$30` default 1000 → S1000 = 127).
 
-**Dose model.** `laser_power_model` in the shared machine config selects how
-the shipper renders the per-segment value the core computes: `density` (the
-default) pins the duty at full and modulates the FIRE bit, `analog` ships the
-value as a power byte instead - a base period of `laser_pulse_ticks`
-(default 20 = 710 us at 28160 Hz, the factory's ~1.43 kHz) whose on-count is
-dithered between adjacent integers with the remainder carried, so densities
-finer than one tick per period average out. The model is selected per arm
-and reported (`laser armed (density)`). Density is what the tube's dead band
-below its lasing threshold requires: every pulse it emits is full-power, so
-no commanded level lands in the band, and a level change inside a run costs
-no stream byte at all. `laser_pulse_min_ticks` (default 3 = 106 us) is the
-shortest pulse it will emit: below it a period is skipped and its debt
-carried, so a faint level arrives as fewer full-width pulses instead of
-stubs the supply cannot strike - measured on the bench, a 36 us stub draws
-no discharge at all, and the factory never emits below one of its 100 us
-ticks. The debt is conserved, so the average density is unchanged: at level
-2 the stream goes from 444 one-tick bursts to 147 three-tick bursts, same
-density to four decimals. Under this model `$35` stops being a duty floor
-and becomes a density floor - the control that maps S onto the band that
-does useful work, which is what the factory does with its own scale. It
-ships at 10, putting a commanded 1 % at 10.2 % density; **selecting `analog`
-means raising it to ~16**, the duty this tube lases at, and the arm warns on
-either mismatch (a zero floor under density, a sub-lasing one under analog). Structurally the model is a
-mask on the core's fire state and never a source of one, so emission stays
-exactly where the core commanded it.
+**Dose model.** Two models render the per-segment value the core computes:
+`density` (the default) pins the duty at full and modulates the FIRE bit,
+`analog` ships the value as a power byte instead. Density uses a base
+period of `laser_pulse_ticks` (default 20 = 710 us at 28160 Hz, the
+factory's ~1.43 kHz) whose on-count is dithered between adjacent integers
+with the remainder carried, so densities finer than one tick per period
+average out. Density is what the tube's dead band below its lasing
+threshold requires: every pulse it emits is full-power, so no commanded
+level lands in the band, and a level change inside a run costs no stream
+byte at all. `laser_pulse_min_ticks` (default 3 = 106 us) is the shortest
+pulse it will emit: below it a period is skipped and its debt carried, so a
+faint level arrives as fewer full-width pulses instead of stubs the supply
+cannot strike - measured on the bench, a 36 us stub draws no discharge at
+all, and the factory never emits below one of its 100 us ticks. The debt is
+conserved, so the average density is unchanged: at level 2 the stream goes
+from 444 one-tick bursts to 147 three-tick bursts, same density to four
+decimals. Structurally the model is a mask on the core's fire state and
+never a source of one, so emission stays exactly where the core commanded
+it.
+
+**Selecting the model.** `laser_power_model` in the shared machine config
+(the control panel's GRBL tab) is the boot default. A job selects its own
+with the driver M-code `M101 P0` (analog) or `M101 P1` (density), sent with
+the spindle off: the switch is refused (`error:253`, reason reported) with
+the spindle commanded on or the controller not idle, because a model change
+under fire could pair density's pinned full duty with analog's continuous
+FIRE; between kernel runs, which end dark and lead with a power byte, there
+is no torn state to reach. The planner drains before the switch, the armed
+window stays open across it, so `M5` / `M101` / `M3` inside a job switches
+models between its sections with no new press. The switch is
+program-scoped: it reverts to the boot default at `M2`/`M30` and on a soft
+reset, so a job header can declare the model it needs without leaving the
+machine in it; `M101 P<n> Q1` sticks until the next switch or a controller
+restart. The stream leads the first run after a switch dark (duty 0) until
+the commanded power lands, so neither model's number is ever shipped under
+the other.
+
+**The floor is derived, never typed.** Each model has an S-range floor as a
+config key: `laser_floor_density` (default 10, the lowest density that
+still marks, putting a commanded 1 % at 10.2 % density) and
+`laser_floor_analog` (default 16, the duty this tube lases at; 3 to 14 % is
+a dead band). At every arm and every switch the controller loads the
+selected model's floor into `$35` in RAM and re-precomputes the PWM
+mapping; the stored `$35` is never written, `$$` reports the floor in
+force, and a `$35` typed by a sender is overwritten at the next arm. The
+arm and switch reports name both (`laser armed (density, floor 10 %)`,
+`laser power model set for this program (analog, floor 16 %)`), and a floor
+of 0 is honored with a note (the ladders run that way). The cooling report
+carries the model in force (`model=` on `POST /cool/state`) so the engine's
+tube-heat share follows an `M101` as well as the default.
+
+**Measured dose response (this bench, 2026-08-30, by the head thermopile,
+the tube current and the operator's eye on Thick Draftboard and acrylic).**
+Density delivers about half of the CW light at 80 % density, a third at
+60 %, a fifth at 45 % and a fourteenth at 30 %: the curve is the tube's
+(pulsed against CW), not the sensor's, and it is the same physics behind the
+factory's 18.9 to 79.5 % mapping with Full Power kept apart. Analog is
+close to linear above 30 % duty (0.82 / 0.68 / 0.54 / 0.37 of CW at 80 /
+60 / 45 / 30 % duty, the tube current equal to the duty) with the lasing
+knee at 20 to 23 % duty below that. The finish on acrylic is the same under
+both models, and the only visible pattern is mechanical (present under CW
+too), so the models differ in their S scale, not their mark. A per-model S
+correction (E4 in the working file) is the open item that follows.
 
 An S word takes effect whether or not motion is in progress. Per-segment
 updates carry the level inside a laser block, but an S executed between
@@ -1306,10 +1344,12 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     this model.
 
     **The defaults are flipped:** `laser_power_model` defaults to `density`
-    and `$35` to 10, the density floor, so a stock machine runs the model
-    and a commanded 1 % marks. The analog path remains as `laser_power_model
-    = analog`, and a machine switched to it must raise `$35` to ~16 or low
-    S lands in the duty dead band; the arm warns on either mismatch.
+    with a 10 % floor (`laser_floor_density`), so a stock machine runs the
+    model and a commanded 1 % marks. The analog path remains as
+    `laser_power_model = analog` or `M101 P0` in a job, with its own floor
+    key (`laser_floor_analog`, 16); the controller derives `$35` from the
+    selected model's key at every arm and switch, so no floor is typed and
+    no mismatch exists ("Laser control (GRBL mode)" above).
 
     Owed: validation at production feeds. Every ladder behind these
     defaults ran at F300 or F100, where dose per millimeter is generous and

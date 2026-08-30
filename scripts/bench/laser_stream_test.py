@@ -58,6 +58,21 @@ over TCP, then checks the dumps against the kernel feeder contract:
      the M3 that opens the next job is the only thing that can light its
      first move - set_state must push the whole state, fire included,
      never the duty alone
+ 18. the floor is derived, never typed: $35 is loaded from the selected
+     model's floor key (laser_floor_density / laser_floor_analog) at
+     the arm, so a $35 typed by the sender is overwritten - the ladder
+     renders through the key's floor, and the arm report names the
+     model and the floor in force
+ 19. M101 switches the model at a boundary and nowhere else: with the
+     spindle off and the controller idle, the rendering changes exactly
+     at the switch (analog duties before, pinned full duty and dithered
+     FIRE after, or the reverse) and there is no torn transition - no
+     window of continuous FIRE at full duty anywhere across it
+ 20. M101 is refused with the spindle on (error 253, the reason
+     reported), and the stream is unchanged by the refusal
+ 21. a switch is program-scoped: M2 reverts it to the boot default and
+     the next job renders under the default, while M101 ... Q1 sticks
+     across M2
 
 Usage: laser_stream_test.py [path-to-binary]   (default ./build-native/grblHAL_glowforge)
 """
@@ -153,15 +168,98 @@ JOB_LADDER.append("M5")
 # the floor exists only to keep an analog duty out of the tube's dead
 # band - under density every pulse is full-power, and a floor would just
 # clamp the light end of the range.
-ANALOG_CONF = "laser_power_model = analog\n"
+# The floors are config keys, loaded into $35 at every arm (rule 18).
+# The analog sessions pin theirs at the board's density floor so the
+# duty expectations above hold unchanged; the analog default is the
+# tube's lasing duty (16), covered by the switch sessions below.
+ANALOG_FLOOR_DEFAULT_PCT = 16.0
+ANALOG_CONF = ("laser_power_model = analog\n"
+               "laser_floor_analog = %g\n" % PWM_MIN_PCT)
 DENSITY_PERIOD = 20
 DENSITY_MIN_TICKS = 3
+DENSITY_CONF_BASE = ("laser_pulse_ticks = %d\n"
+                     "laser_pulse_min_ticks = %d\n"
+                     % (DENSITY_PERIOD, DENSITY_MIN_TICKS))
+# The density ladder runs unfloored: the floor exists only to keep an
+# analog duty out of the tube's dead band, and here it would just clamp
+# the light end of the range. A floor of 0 is honored as written.
 DENSITY_CONF = ("laser_power_model = density\n"
-                "laser_pulse_ticks = %d\n"
-                "laser_pulse_min_ticks = %d\n"
-                % (DENSITY_PERIOD, DENSITY_MIN_TICKS))
+                "laser_floor_density = 0\n" + DENSITY_CONF_BASE)
+# The shipped density default: no floor key, so the board's floor applies.
+DENSITY_CONF_FLOORED = "laser_power_model = density\n" + DENSITY_CONF_BASE
 DENSITY_LEVEL = tuple(int(x * PWM_PERIOD / RPM_MAX) for x in LADDER_S)
+# A $35 typed ahead of the job: rule 18 says the arm overwrites it.
 JOB_DENSITY = ["$35=0"] + JOB_LADDER
+
+
+def duty_for_floor(s, floor_pct):
+    """Duty the core computes for an S word against a given floor."""
+    lo = int(PWM_PERIOD * floor_pct / 100.0)
+    return int(s * (PWM_PERIOD - lo) / RPM_MAX) + lo
+
+
+# Sessions L-N: the M101 dose-model switch. One cut, the spindle off,
+# the switch, a second cut at the same S. Each cut is a kernel run of
+# its own (the planner drains at WAIT_IDLE), so the switch lands between
+# runs, which is the only place it is allowed to.
+SWITCH_S = 500
+SWITCH_MM = 5.0
+SWITCH_FEED = 600
+SWITCH_TICKS = SWITCH_MM / (SWITCH_FEED / 60.0) * 28160
+
+
+def job_switch(mcode):
+    return [
+        "G91", "G21",
+        "M3 S%d" % SWITCH_S,
+        "G1 X%g F%d" % (SWITCH_MM, SWITCH_FEED),
+        WAIT_IDLE, ("sleep", 0.5),
+        "M5",
+        mcode,
+        "M3 S%d" % SWITCH_S,
+        "G1 X%g" % -SWITCH_MM,
+        WAIT_IDLE, ("sleep", 0.5),
+        "M5",
+    ]
+
+
+JOB_SWITCH_A2D = job_switch("M101 P1")
+JOB_SWITCH_D2A = job_switch("M101 P0")
+
+# The refusal: the switch arrives with the spindle still on. The stream
+# must be what the job without the M101 would have produced.
+JOB_SWITCH_REFUSED = [
+    "G91", "G21",
+    "M3 S%d" % SWITCH_S,
+    "G1 X%g F%d" % (SWITCH_MM, SWITCH_FEED),
+    WAIT_IDLE, ("sleep", 0.5),
+    ("expect_error", "M101 P1"),
+    "G1 X%g" % -SWITCH_MM,
+    WAIT_IDLE, ("sleep", 0.5),
+    "M5",
+]
+
+
+def job_revert(mcode):
+    """Two programs: the first switches and ends in M2, the second cuts
+    at the same S with no switch of its own."""
+    return [
+        "G91", "G21",
+        mcode,
+        "M3 S%d" % SWITCH_S,
+        "G1 X%g F%d" % (SWITCH_MM, SWITCH_FEED),
+        WAIT_IDLE, ("sleep", 0.5),
+        "M5", "G90", "M2", ("sleep", 1.0),
+        "G91",
+        "M3 S%d" % SWITCH_S,
+        "G1 X%g" % -SWITCH_MM,
+        WAIT_IDLE, ("sleep", 0.5),
+        "M5",
+    ]
+
+
+JOB_SWITCH_REVERT = job_revert("M101 P0")
+JOB_SWITCH_STICKY = job_revert("M101 P0 Q1")
 
 # Session H: three levels inside one kernel run. The moves are short and
 # fast so the planner never drains, and each carries its own S word, so
@@ -235,14 +333,14 @@ def fail(msg):
     sys.exit(1)
 
 
-def send_line(sock, line, log):
+def send_line(sock, line, log, expect_error=False):
     sock.sendall((line + "\n").encode())
     while True:
         r = read_avail(sock, log, 5.0, until=("ok", "error"))
         if r is None:
             fail("no ok/error for %r" % line)
-        if r == "error":
-            fail("error response to %r" % line)
+        if (r == "error") != expect_error:
+            fail("%s response to %r" % (r, line))
         return
 
 
@@ -342,6 +440,11 @@ def run_session(name, steps, conf=None, workdir=None, keep=False,
                 wait_idle(sock, log)
             elif isinstance(step, tuple) and step[0] == "sleep":
                 time.sleep(step[1])
+            elif isinstance(step, tuple) and step[0] == "expect_error":
+                send_line(sock, step[1], log, expect_error=True)
+                # The core skips every G-code line after an error until
+                # the sender resyncs with an empty line (or a $ command).
+                send_line(sock, "", log)
             else:
                 send_line(sock, step, log)
 
@@ -667,18 +770,14 @@ def main():
              [counts[d] for d in LADDER_DUTY], gap_d))
 
     # --- session E: the same ladder under the density model -------------
-    # $35 is written by a first launch and takes effect on the second:
-    # the floor exists only to keep an analog duty out of the tube's
-    # dead band, and under density it would just clamp the light end.
-    wd = tempfile.mkdtemp(prefix="laser-test-")
-    run_session("density-setup", ["$35=0"], conf=DENSITY_CONF, workdir=wd,
-                keep=True, arm_required=False)
-    dens = run_session("density", JOB_DENSITY, conf=DENSITY_CONF, workdir=wd)
+    # Unfloored through the config key (laser_floor_density = 0), which
+    # the arm loads into $35.
+    dens = run_session("density", JOB_LADDER, conf=DENSITY_CONF)
     rendered = check_density("density", dens, DENSITY_LEVEL, DENSITY_PERIOD,
                              DENSITY_MIN_TICKS)
     check_termination("density", dens)
-    if "laser armed (density)" not in run_session.text:
-        fail("[density] the arm did not select the density model")
+    if "laser armed (density, floor 0 %)" not in run_session.text:
+        fail("[density] the arm did not select the density model at floor 0")
     print("PASS [density]: %d bytes, %d power bytes all at full duty, "
           "level->density %s"
           % (len(dens), sum(1 for b in dens if b & 0x80), rendered))
@@ -689,7 +788,7 @@ def main():
           "inside the %d the core commanded" % (d_fire, a_fire))
 
     # --- session F: full level under the model is continuous fire -------
-    full = run_session("density-full", ["$35=0"] + JOB_M3_TERM, conf=DENSITY_CONF)
+    full = run_session("density-full", JOB_M3_TERM, conf=DENSITY_CONF)
     ticks = tick_bytes(full)
     spans = fire_spans(ticks)
     if not spans:
@@ -703,7 +802,7 @@ def main():
           % (b - a))
 
     # --- session G: churn under the model (rules 7-9 still hold) --------
-    ch = run_session("density-churn", ["$35=0"] + JOB_CHURN, conf=DENSITY_CONF)
+    ch = run_session("density-churn", JOB_CHURN, conf=DENSITY_CONF)
     if not count_fire(ch):
         fail("[density-churn] no FIRE bits in the stream")
     check_termination("density-churn", ch)
@@ -778,6 +877,171 @@ def main():
         print("PASS [%s]: the next job's M3 at the previous job's S fires its "
               "G1; 2 fire spans of %s ticks"
               % (name, [s1 - s0 for s0, s1 in spans]))
+
+    # --- rule 18: the floor is derived from the key, never typed --------
+    # The same ladder with a $35=0 typed ahead of it, under the shipped
+    # density default (no floor key): the arm loads the board's floor and
+    # every rung renders through it.
+    floored = run_session("floor-derived", JOB_DENSITY, conf=DENSITY_CONF_FLOORED)
+    expect_levels = tuple(duty_for(x) for x in LADDER_S)
+    check_density("floor-derived", floored, expect_levels, DENSITY_PERIOD,
+                  DENSITY_MIN_TICKS)
+    if "laser armed (density, floor %g %%)" % PWM_MIN_PCT not in run_session.text:
+        fail("[floor-derived] the arm report does not name the derived floor "
+             "(text: %r)" % run_session.text[-400:])
+    print("PASS [floor-derived]: a typed $35=0 is overwritten at the arm; the "
+          "ladder renders through the %g %% floor key, levels %s"
+          % (PWM_MIN_PCT, list(expect_levels)))
+
+    # --- sessions L: the switch, both directions (rule 19) --------------
+    def split_at_switch(data, marker):
+        """Byte offset of the first power byte satisfying marker(duty)."""
+        for i, b in enumerate(data):
+            if b & 0x80 and marker(b & 0x7F):
+                return i
+        return None
+
+    def longest_burst(ticks):
+        run = worst = 0
+        for t in ticks:
+            run = run + 1 if t & 0x10 else 0
+            worst = max(worst, run)
+        return worst
+
+    def fire_by_power(data):
+        """Fire ticks per power byte in force: the duties FIRE rode."""
+        cur, out = None, {}
+        for b in data:
+            if b & 0x80:
+                cur = b & 0x7F
+            elif b & 0x10:
+                out[cur] = out.get(cur, 0) + 1
+        return out
+
+    # Analog -> density. Before the switch: analog duties, continuous
+    # FIRE. After: full duty only, FIRE dithered at the level, bursts no
+    # longer than the base period.
+    a2d = run_session("switch-a2d", JOB_SWITCH_A2D, conf=ANALOG_CONF)
+    text = run_session.text
+    if "laser power model set for this program (density, floor %g %%)" % PWM_MIN_PCT not in text:
+        fail("[switch-a2d] the switch was not reported (text: %r)" % text[-400:])
+    cut = split_at_switch(a2d, lambda d: d == PWM_PERIOD)
+    if cut is None:
+        fail("[switch-a2d] no full-duty power byte after the switch: the density "
+             "model never took over")
+    before, after = a2d[:cut], a2d[cut:]
+    duty = duty_for(SWITCH_S)
+    # A run may lead with a dark duty-0 byte across the idle pads; what
+    # matters is the duty FIRE rides on each side of the switch.
+    if set(fire_by_power(before)) != {duty}:
+        fail("[switch-a2d] FIRE rode duties %s before the switch, expected only %d"
+             % (sorted(fire_by_power(before)), duty))
+    if set(b & 0x7F for b in after if b & 0x80) != {PWM_PERIOD}:
+        fail("[switch-a2d] duties after the switch %s: a level reached PWMSAR "
+             "under density" % sorted(set(b & 0x7F for b in after if b & 0x80)))
+    tb, ta = tick_bytes(before), tick_bytes(after)
+    sb, sa = fire_spans(tb), fire_spans(ta)
+    if len(sb) != 1 or len(sa) != 1:
+        fail("[switch-a2d] fire spans before/after the switch %s / %s, expected "
+             "one each" % (sb, sa))
+    if longest_burst(ta) > DENSITY_PERIOD:
+        fail("[switch-a2d] a %d-tick continuous FIRE burst at full duty after the "
+             "switch: a torn transition" % longest_burst(ta))
+    dens_after = sum(1 for t in ta[sa[0][0]:sa[0][1]] if t & 0x10) / float(sa[0][1] - sa[0][0])
+    if abs(dens_after - duty / float(PWM_PERIOD)) > 0.03:
+        fail("[switch-a2d] density after the switch %.3f, expected %.3f"
+             % (dens_after, duty / float(PWM_PERIOD)))
+    check_termination("switch-a2d", a2d)
+    print("PASS [switch-a2d]: analog duty %d before, full duty + density %.3f after, "
+          "longest burst %d <= %d" % (duty, dens_after, longest_burst(ta), DENSITY_PERIOD))
+
+    # Density -> analog. The analog default floor (16) applies after the
+    # switch, so the duty is the one that floor gives.
+    d2a = run_session("switch-d2a", JOB_SWITCH_D2A, conf=DENSITY_CONF_FLOORED)
+    text = run_session.text
+    if "laser power model set for this program (analog, floor %g %%)" % ANALOG_FLOOR_DEFAULT_PCT not in text:
+        fail("[switch-d2a] the switch was not reported with the analog floor (text: %r)"
+             % text[-400:])
+    duty_a = duty_for_floor(SWITCH_S, ANALOG_FLOOR_DEFAULT_PCT)
+    cut = split_at_switch(d2a, lambda d: d == duty_a)
+    if cut is None:
+        fail("[switch-d2a] no analog power byte (%d) after the switch" % duty_a)
+    before, after = d2a[:cut], d2a[cut:]
+    if set(fire_by_power(before)) != {PWM_PERIOD}:
+        fail("[switch-d2a] FIRE rode duties %s before the switch, expected full only"
+             % sorted(fire_by_power(before)))
+    if set(b & 0x7F for b in before if b & 0x80) - {PWM_PERIOD, 0}:
+        fail("[switch-d2a] a density level shipped as a duty across the switch: "
+             "power bytes %s" % sorted(set(b & 0x7F for b in before if b & 0x80)))
+    if set(fire_by_power(after)) != {duty_a}:
+        fail("[switch-d2a] FIRE rode duties %s after the switch, expected only %d"
+             % (sorted(fire_by_power(after)), duty_a))
+    ta = tick_bytes(after)
+    sa = fire_spans(ta)
+    if len(sa) != 1:
+        fail("[switch-d2a] fire spans after the switch %s, expected one" % sa)
+    got = sum(1 for t in ta[sa[0][0]:sa[0][1]] if t & 0x10) / float(sa[0][1] - sa[0][0])
+    if got < 0.999:
+        fail("[switch-d2a] FIRE after the switch is not continuous (%.3f): the "
+             "dither is still masking under analog" % got)
+    check_termination("switch-d2a", d2a)
+    print("PASS [switch-d2a]: full duty + dither before, continuous FIRE at duty %d "
+          "(floor %g) after" % (duty_a, ANALOG_FLOOR_DEFAULT_PCT))
+
+    # --- session M: refused with the spindle on (rule 20) ---------------
+    ref = run_session("switch-refused", JOB_SWITCH_REFUSED, conf=ANALOG_CONF)
+    text = run_session.text
+    if "M5 first" not in text or "error:253" not in text:
+        fail("[switch-refused] the refusal was not reported as error 253 with its "
+             "reason (text: %r)" % text[-400:])
+    if "laser power model set" in text:
+        fail("[switch-refused] the switch was applied despite the refusal")
+    if set(fire_by_power(ref)) != {duty}:
+        fail("[switch-refused] FIRE rode duties %s, expected only %d: the stream "
+             "changed under a refused switch" % (sorted(fire_by_power(ref)), duty))
+    check_cut_spans("switch-refused", tick_bytes(ref), 2, SWITCH_TICKS,
+                    "the two G1 moves, both analog")
+    check_termination("switch-refused", ref)
+    print("PASS [switch-refused]: M101 with the spindle on -> error:253, stream "
+          "unchanged (duty %d throughout)" % duty)
+
+    # --- session N: program scope and Q1 (rule 21) ----------------------
+    rev = run_session("switch-revert", JOB_SWITCH_REVERT, conf=DENSITY_CONF_FLOORED)
+    text = run_session.text
+    if "laser power model reverted (density, floor %g %%)" % PWM_MIN_PCT not in text:
+        fail("[switch-revert] M2 did not report the revert (text: %r)" % text[-600:])
+    if text.count("laser armed (analog, floor %g %%)" % ANALOG_FLOOR_DEFAULT_PCT) != 1 or \
+       text.count("laser armed (density, floor %g %%)" % PWM_MIN_PCT) != 1:
+        fail("[switch-revert] expected one analog arm then one density arm "
+             "(text: %r)" % text[-600:])
+    cut = split_at_switch(rev, lambda d: d == PWM_PERIOD)
+    if cut is None:
+        fail("[switch-revert] the second job never rendered under density")
+    before, after = rev[:cut], rev[cut:]
+    if set(fire_by_power(before)) != {duty_a}:
+        fail("[switch-revert] first job FIRE rode duties %s, expected the analog %d"
+             % (sorted(fire_by_power(before)), duty_a))
+    if longest_burst(tick_bytes(after)) > DENSITY_PERIOD:
+        fail("[switch-revert] continuous FIRE at full duty in the second job: the "
+             "revert did not restore the dither")
+    check_termination("switch-revert", rev)
+    print("PASS [switch-revert]: job 1 analog at duty %d, M2 reverts, job 2 density"
+          % duty_a)
+
+    stk = run_session("switch-sticky", JOB_SWITCH_STICKY, conf=DENSITY_CONF_FLOORED)
+    text = run_session.text
+    if "reverted" in text:
+        fail("[switch-sticky] a Q1 switch was reverted at M2")
+    if text.count("laser armed (analog, floor %g %%)" % ANALOG_FLOOR_DEFAULT_PCT) != 2:
+        fail("[switch-sticky] expected both jobs to arm analog (text: %r)" % text[-600:])
+    if set(fire_by_power(stk)) != {duty_a}:
+        fail("[switch-sticky] FIRE rode duties %s, expected the analog %d in both jobs"
+             % (sorted(fire_by_power(stk)), duty_a))
+    check_cut_spans("switch-sticky", tick_bytes(stk), 2, SWITCH_TICKS,
+                    "one G1 per job, both analog")
+    check_termination("switch-sticky", stk)
+    print("PASS [switch-sticky]: M101 P0 Q1 holds across M2; both jobs analog at "
+          "duty %d" % duty_a)
 
     print("PASS: all stream emission rules hold")
 

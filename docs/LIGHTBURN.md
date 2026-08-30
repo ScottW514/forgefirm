@@ -147,6 +147,39 @@ restart the controller with the head re-parked.)
 - **Console tab**: raw grbl — `?` status, `$$` settings, `$X` unlock,
   `$J=G91X10F1200` jog.
 
+## Power models
+
+The controller has two ways to turn a layer's power into light, and a job
+can pick either.
+
+- **Density** (the default): every pulse is full power, and the power
+  setting decides how many ticks of each 710 us period fire. This is what
+  the factory does. Every power level marks, low levels included, because
+  no pulse is ever too weak to strike; the trade is that the response is
+  not linear: on this machine 80 % gives about half the light of 100 %, 60 %
+  about a third, 30 % about a fourteenth.
+- **Analog**: the beam runs continuously and the power setting sets the PWM
+  duty. Close to linear above 30 %, with a floor at the duty the tube lases
+  at (16 %), below which nothing marks. The finish on acrylic is the same
+  as density's.
+
+The default model is set on the control panel (GRBL tab, "Laser power
+model"). A job selects its own with a line in its G-code, with the laser
+off:
+
+    M5              ; beam off (the switch is refused while the spindle is on)
+    M101 P0         ; analog for this program (M101 P1 = density)
+    M3 ...
+
+Put it in the job's start G-code (Edit -> Device Settings -> GCode -> Start
+G-Code in LightBurn) or between sections of a job. It reverts to the panel
+default when the program ends (`M2`) or on Stop, so a job never leaves the
+machine in a model you did not pick; `M101 P0 Q1` typed in the Console
+sticks until the next `M101` or a controller restart. The console reports
+every switch and every arm with the model and its floor, and `$35` (the
+power floor) is set by the controller from the selected model: do not type
+it, it is overwritten at the next job.
+
 ## Air assist / fans
 
 Each cut/engrave layer has an **Air Assist** toggle (in the layer's cut
@@ -188,6 +221,7 @@ decay mode), and the head finishing per the job's return setting.
 
 4. For the live pass: put scrap material on the bed (never an empty
    honeycomb over the fan grill), re-enable the layer's **Output**, set
-   power to **30 %** or more (below ~30 % the tube barely marks), turn
-   the layer's **Air Assist** on, close the lid, **Frame**, **Start**,
-   and press the white button when it lights. Watch the whole job.
+   power to **20 %** (any nonzero power marks under the default power
+   model; 20 % is a light pass on scrap), turn the layer's **Air Assist**
+   on, close the lid, **Frame**, **Start**, and press the white button
+   when it lights. Watch the whole job.

@@ -203,6 +203,14 @@ would not allow.
   under a job left standing, so a long pause ends with the machine disarmed
   and the next emission needs a fresh press. The relock waits for the kernel to
   finish the queue tail so a controlled stop can never leave FIRE driven.
+- **Dose-model switch.** `M101` changes how a commanded power is rendered
+  (full-power pulses at a density, or a continuous beam at a duty). It is
+  refused with the spindle commanded on or the controller not idle, because
+  a change under fire could pair the density model's pinned full duty with
+  the analog model's continuous FIRE; between kernel runs, which end dark
+  and lead with a power byte, no torn state exists. The first run after a
+  switch leads dark (duty 0) until the commanded power lands. A switch
+  reverts at program end and on reset unless the operator made it stick.
 - **Coolant fire gates.** The armed window requires a fresh `fire_ok` verdict
   from the cooling engine (flow verification, over-temperature, the airflow
   floors on every fan, lid-IR emission witness); a stale or failed verdict
