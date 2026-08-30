@@ -96,14 +96,16 @@ Drills (pass a name):
             nonzero again after its first zero past the line. Prints the
             9 s after the line at 40 ms steps. The catalog's
             laser.m5-rapid-dark is its port.
-  dpatch    Depth witness for the density curve: two rows of small
-            engraved patches (serpentine G1 fills) on the stock. Row A
-            is CW (S1000) at feeds giving relative doses 1.0 to 0.25;
-            row B is density 100/80/60/45/30 %% at F600. Match each
-            row-B patch to the row-A patch of equal depth by eye: that
-            reads the density's light fraction off the material, next
-            to what the thermopile says it should be. Samples sysfs at
-            25 Hz like pcurve; JSON record in the bench data directory.
+  dpatch    Depth witness for the dose curve of the configured
+            laser_power_model: two rows of small engraved patches
+            (serpentine G1 fills) on the stock. Row A is CW (S1000) at
+            feeds giving relative doses 1.0 to 0.25 of the reference
+            feed; row B is 100/80/60/45/30 %% density or duty at the
+            reference feed. Match each row-B patch to the row-A patch
+            of equal depth by eye: that reads the model's light
+            fraction off the material, next to what the thermopile
+            says it should be. Samples sysfs at 25 Hz like pcurve;
+            JSON record in the bench data directory.
               dpatch [F] [pitch] [length]   e.g. dpatch 1500 0.3 30
   flowload  Cooling under laser load, one armed run per invocation, the
             conf keys it writes put back when the run ends; the pump is
@@ -1373,8 +1375,11 @@ DPATCH_SETTLE_S = 2.0                    # laser off before each patch
 # re-check (cool_flow_recheck_s, 150 s by default) has to be pushed past
 # the run's length for the session, or it lands on a patch the same way.
 DPATCH_ARM_DWELL_S = 60.0
-# The period-20 thermopile curve, light as a fraction of CW, for the labels.
+# The thermopile curves, light as a fraction of CW, for the labels: the
+# period-20 density ladder (E3) and the analog duty ladder (E1, whose
+# means above 50 % duty did not settle inside a line, so they are a prior).
 DPATCH_TP_P20 = {100: 1.0, 80: 0.53, 60: 0.37, 45: 0.21, 30: 0.07}
+DPATCH_TP_ANALOG = {100: 1.0, 80: 0.72, 60: 0.52, 45: 0.37, 30: 0.07}
 
 
 def dpatch_gcode(feed, width, pitch, n):
@@ -1400,20 +1405,23 @@ def drill_dpatch(g):
         print('usage: dpatch [F mm/min >= 60] [pitch 0.05..2 mm] [length 5..200 mm]')
         return 2
     model = conf_get('laser_power_model') or 'density'
-    if model != 'density':
-        print('this witness is for the density model (laser_power_model is %s)' % model)
+    if model not in ('density', 'analog'):
+        print('unknown laser_power_model %s' % model)
         return 2
+    tp_curve = DPATCH_TP_P20 if model == 'density' else DPATCH_TP_ANALOG
+    unit = 'density' if model == 'density' else 'duty'
     levels, (rpm_max, rpm_min, floor, ceil) = pcurve_levels(g, DPATCH_DENSITY_PCT)
     if levels is None:
         print('PRECONDITION FAILED: cannot read $30/$31/$35/$36 (%s/%s/%s/%s)'
               % (rpm_max, rpm_min, floor, ceil))
         return 2
     n_lines = int(round(DPATCH_H / pitch))
-    period = conf_get('laser_pulse_ticks') or 'driver default'
-    print('=== depth witness: CW patches at speed against density patches at F%d ==='
-          % feed_ref)
-    print('mapping: $30=%g $31=%g $35=%g $36=%g; density base period %s ticks'
-          % (rpm_max, rpm_min, floor, ceil, period))
+    period = (conf_get('laser_pulse_ticks') or 'driver default') if model == 'density' else None
+    print('=== depth witness: CW patches at speed against %s patches at F%d ==='
+          % (unit, feed_ref))
+    print('mapping: $30=%g $31=%g $35=%g $36=%g; model %s%s'
+          % (rpm_max, rpm_min, floor, ceil, model,
+             (', base period %s ticks' % period) if period else ''))
     patches = []
     for dose in DPATCH_CW_DOSES:
         feed = int(round(feed_ref / dose))
@@ -1422,9 +1430,9 @@ def drill_dpatch(g):
                         'label': 'CW, dose %.2f' % dose})
     for pct, sval, level in levels:
         patches.append({'row': 'B', 'pct': pct, 's': sval, 'feed': feed_ref,
-                        'dose': None, 'tp_says': DPATCH_TP_P20.get(pct),
-                        'label': '%d%% density (level %.2f%%), thermopile says %.2f of CW'
-                        % (pct, 100.0 * level, DPATCH_TP_P20.get(pct, float('nan')))})
+                        'dose': None, 'tp_says': tp_curve.get(pct),
+                        'label': '%d%% %s (level %.2f%%), thermopile says %.2f of CW'
+                        % (pct, unit, 100.0 * level, tp_curve.get(pct, float('nan')))})
     n_a = len(DPATCH_CW_DOSES)
     print('patches %g x %g mm, %d lines at %g mm pitch, %g mm apart along +X;'
           % (width, DPATCH_H, n_lines, pitch, DPATCH_GAP_X))
@@ -1536,10 +1544,10 @@ def drill_dpatch(g):
         if p['row'] != 'B' or p['tp_says'] is None:
             continue
         nearest = min(doses, key=lambda d: abs(d[0] - p['tp_says'])) if doses else None
-        print('  B%d (%d%% density): the thermopile says it should match A%d (dose %.2f); '
+        print('  B%d (%d%% %s): the thermopile says it should match A%d (dose %.2f); '
               'deeper than that and the tube gives more than the sensor reads'
-              % (i + 1, p['pct'], nearest[1], nearest[0]) if nearest else
-              '  B%d (%d%% density): no row A to match' % (i + 1, p['pct']))
+              % (i + 1, p['pct'], unit, nearest[1], nearest[0]) if nearest else
+              '  B%d (%d%% %s): no row A to match' % (i + 1, p['pct'], unit))
     record = {
         'drill': 'dpatch', 'date': time.strftime('%Y-%m-%dT%H:%M:%S'),
         'model': model, 'period': period, 'feed_ref': feed_ref,
