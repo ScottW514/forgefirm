@@ -315,6 +315,20 @@ regardless of the sender's M8/M9; a SUSPECT/FAULT verdict inside an armed
 window takes the safe posture (feed hold + run airflow). SUSPECT auto-resumes
 on a clean re-check; FAULT leaves the hold and the gate for the operator.
 
+**The controller publishes its state for the daemon.** forgectrl can
+never open the Grbl socket (a connection displaces the sender), so the
+controller writes two files under `/run/forgefirm`, atomically, on
+edges: `grbl.settings` (the `$$` view, rewritten on every setting
+change, the M101 switch included) and `grbl.state` (JSON: machine state
+and alarm, the sender session with peer and generation, the laser's
+armed window and dose model with its floor, the exact `[GC:...]` modal
+report, overrides, driver version, `ts_mono` for age; on change plus a
+5 s heartbeat). forgectrl echoes the state file in `GET /status` as the
+`grbl` block only while it supervises a live GRBL controller, serves
+the settings file at `GET /grbl/settings`, and the panel's GRBL card
+renders it. Position stays out: it changes per segment and is served
+from the kernel counters. Contract: `forgectrl/docs/SERVICES.md`.
+
 **Emission evidence.** `cnc/laser_on_sampled` (surfaced as `/status`
 `laser.emission_samples`) is the reliable live-emission witness; emission
 sensed with no armed window relocks the latch and stops motion. `pic/hv_current`

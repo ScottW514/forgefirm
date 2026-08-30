@@ -221,11 +221,15 @@ def settings_bounds(ctx):
 @test("forgectrl.panel-serves", title="Control panel and status endpoints", subsystem="forgectrl",
       kind="auto", est_min=1,
       covers=[("forgectrl", "src/ui.*"), ("forgectrl", "src/ui/**"), ("forgectrl", "src/status.*"),
-              ("forgectrl", "src/cam.c"), ("forgectrl", "src/main.c")],
+              ("forgectrl", "src/cam.c"), ("forgectrl", "src/main.c"), ("forgectrl", "src/super.c"),
+              ("grblhal-glowforge", "src/glowforge_status.c"), ("grblhal-glowforge", "src/serial.c")],
       description="The panel page is served, /status carries the machine telemetry the panel and "
                   "the acceptance tool read (including the sys block: CPU busy percent over the "
                   "interval since the previous read, memory used percent), and /cam/status "
-                  "answers.")
+                  "answers. In GRBL mode with a live controller, /status also echoes the "
+                  "controller's published state file as the grbl block (fresh age, machine "
+                  "state, sender session, laser window and dose model, modal report) and "
+                  "GET /grbl/settings serves the published $$ view.")
 def panel_serves(ctx):
     fc = ctx.forgectrl
     ev = ctx.evidence
@@ -270,3 +274,24 @@ def panel_serves(ctx):
     ev["cam_status"] = st
     ctx.log("GET /cam/status -> %s %s", st, cam)
     ctx.check(st == 200 and isinstance(cam, dict) and "running" in cam, "GET /cam/status -> %s", st)
+
+    # The controller's published state, echoed only while a live GRBL
+    # controller runs (glowforge_status.c -> /run/forgefirm -> /status).
+    st, mode = fc.get("/mode")
+    if isinstance(mode, dict) and mode.get("mode") == "grbl" and mode.get("controller") == "running":
+        g = ctx.forgectrl.status().get("grbl") or {}
+        ev["grbl"] = g
+        ctx.log("/status grbl=%s", g)
+        ctx.check(isinstance(g.get("age_s"), (int, float)) and g["age_s"] < 30,
+                  "/status grbl block missing or stale: %s", g)
+        rep = g.get("report") or {}
+        for key in ("state", "sender", "laser", "modals"):
+            ctx.check(key in rep, "/status grbl.report lacks %r", key)
+        ctx.check((rep.get("laser") or {}).get("model") in ("density", "analog"),
+                  "grbl.report.laser carries no model: %s", rep.get("laser"))
+        st, text = fc.get("/grbl/settings", raw=True)
+        ev["grbl_settings_status"] = st
+        ctx.check(st == 200 and b"$35=" in (text or b""),
+                  "GET /grbl/settings -> %s without the $$ view", st)
+    else:
+        ctx.log("no live GRBL controller (%s); grbl block checks skipped", mode)

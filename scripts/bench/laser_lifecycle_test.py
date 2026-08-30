@@ -28,7 +28,12 @@ reported messages:
      reset with the position kept (no alarm), the head returns to the
      job start on its own; with lid_policy = hold the stock door hold and
      cycle-start resume apply
-  9. the job start survives a pause: a job paused and resumed by the
+  9. the controller publishes its state for the daemon: grbl.settings
+     (the $$ view) and grbl.state (JSON with ts_mono, machine state,
+     sender session, laser window and dose model, modals) appear under
+     GF_STATE_DIR, follow the sender connection, the armed window and
+     an M101 switch, and carry a fresh ts_mono
+ 10. the job start survives a pause: a job paused and resumed by the
      button, then cancelled by the lid, returns to where the job began,
      not to where it was paused (the core restarts a held cycle through
      Idle); a job abandoned in a hold and reset ends there, so the next
@@ -158,7 +163,7 @@ class Session:
             f.write("laser_disarm_s = %d\n%s" % (disarm_s, conf_extra))
         verdict = os.path.join(self.workdir, "cooling.state")
         env = dict(os.environ, GF_VERDICT_FILE=verdict, GFHOME_CONF=conf,
-                   FFLOG_STDERR="1")
+                   GF_STATE_DIR=self.workdir, FFLOG_STDERR="1")
         env.pop("GFSINK", None)
         env.pop("GF_SWITCH_FILE", None)
         self.switch_file = None
@@ -258,6 +263,74 @@ class Session:
         self.stop.set()
         self.pub.join(2)
         shutil.rmtree(self.workdir, ignore_errors=True)
+
+
+def read_state(sess, key=None, timeout=8.0):
+    """The published grbl.state as text, polled until `key` appears (the
+    publisher runs on the protocol thread's pace; a '?' keeps it ticking)."""
+    path = os.path.join(sess.workdir, "grbl.state")
+    deadline = time.time() + timeout
+    text = ""
+    while time.time() < deadline:
+        sess.sock.sendall(b"?")
+        read_avail(sess.sock, sess.log, 0.2)
+        try:
+            with open(path) as f:
+                text = f.read()
+        except OSError:
+            text = ""
+        if text.endswith("\n") and (key is None or key in text):
+            return text
+        time.sleep(0.2)
+    return text
+
+
+def test_status_files():
+    print("state files: settings and state published, following the edges")
+    s = Session("state-files", disarm_s=30)
+    try:
+        st = read_state(s, '"connected":true')
+        assert '"state":"Idle"' in st, "state file lacks Idle: %r" % st
+        assert '"connected":true' in st, "sender not reported connected: %r" % st
+        assert '"armed":false' in st, "armed before any job: %r" % st
+        assert '"model":"density"' in st and '"floor_pct":10' in st, \
+            "model/floor missing: %r" % st
+        assert '"modals":"[GC:' in st, "modal report missing: %r" % st
+        ts0 = float(st.split('"ts_mono":')[1].split(',')[0])
+
+        cfg = open(os.path.join(s.workdir, "grbl.settings")).read()
+        assert "$35=" in cfg and "$30=" in cfg, "settings file lacks $ lines"
+
+        # The armed window and a dose-model switch reach the file.
+        send_line(s.sock, "G91", s.log)
+        send_line(s.sock, "M3 S100", s.log)
+        st = read_state(s, '"armed":true')
+        assert '"armed":true' in st, "armed window not published: %r" % st
+        send_line(s.sock, "M5", s.log)
+        send_line(s.sock, "M101 P0", s.log)
+        st = read_state(s, '"model":"analog"')
+        assert '"model":"analog"' in st and '"floor_pct":16' in st, \
+            "the M101 switch not published: %r" % st
+        cfg = open(os.path.join(s.workdir, "grbl.settings")).read()
+        assert "$35=16" in cfg, "the switched floor not republished: %r" % [
+            l for l in cfg.splitlines() if l.startswith("$35")]
+        send_line(s.sock, "M2", s.log)
+        st = read_state(s, '"model":"density"')
+        assert '"model":"density"' in st, "the M2 revert not published: %r" % st
+
+        # A reconnect bumps the generation and stays connected.
+        gen0 = int(st.split('"generation":')[1].split(',')[0])
+        s.sock.close()
+        s.sock = s.connect()
+        st = read_state(s, '"connected":true')
+        gen1 = int(st.split('"generation":')[1].split(',')[0])
+        assert gen1 > gen0, "generation did not advance on reconnect (%d -> %d)" % (gen0, gen1)
+        ts1 = float(st.split('"ts_mono":')[1].split(',')[0])
+        assert ts1 > ts0, "ts_mono did not advance"
+        print("PASS [state-files]: published, armed/switch/revert followed, "
+              "generation %d -> %d" % (gen0, gen1))
+    finally:
+        s.close()
 
 
 def test_job_window():
@@ -724,6 +797,7 @@ def main():
     if not os.path.isfile(BIN):
         fail("controller binary not found at %s" % BIN)
     test_job_window()
+    test_status_files()
     test_sender_change()
     test_sender_change_mid_job()
     test_rx_overrun_aborts()
