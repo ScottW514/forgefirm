@@ -96,16 +96,26 @@ Drills (pass a name):
             nonzero again after its first zero past the line. Prints the
             9 s after the line at 40 ms steps. The catalog's
             laser.m5-rapid-dark is its port.
-  mswitch   The M101 dose-model switch on the machine, one armed run:
-            a 20 mm density line at S500, M5, M101 P0 (the reply and
-            the switch report are asserted), a 20 mm analog line back
-            at the same S, M5, M2. PASS when the arm names the model
-            and floor, the switch and the M2 revert are reported, $$
-            shows each model's floor while it is in force, exactly two
-            discharge segments appear with nothing after them, the
-            window never re-prompts, and the current character flips
-            (pulsed spikes under density, steady under analog).
-            Requires laser_power_model = density (the default).
+  m4corner  M4 velocity-scaled power into corners and short segments:
+            a corner-heavy vector pattern (a long line, 1.1 mm zigzag
+            teeth, a 2 mm square, a 180 degree reversal, 0.5 mm teeth)
+            at 30 %% under M4 at F2000, one pass under density. The
+            floor is the guard: velocity brings the commanded power to
+            the floor at every corner, and the model cannot go dark by
+            construction - the operator confirms every commanded
+            segment marks. One discharge window, dark after.
+              m4corner [S] [F]   e.g. m4corner 300 2000
+  m4feeds   B3, the density time base across feeds: under M4 density,
+            one out-and-back 20 mm line pair per feed (default 1000 and
+            4000 mm/min) at the same S, passes offset +Y, one armed
+            run. M4 scales the commanded power with velocity inside a
+            move, so each line should read evenly dark from its slow
+            ends to its fast middle; the reversal point is where the
+            factory's own compensation still let dose per mm rise
+            ~1.8x. The operator compares evenness within each pass and
+            the reversal darkness across the two feeds. Requires
+            laser_power_model = density.
+              m4feeds [S] [F1] [F2]   e.g. m4feeds 600 1000 4000
   dpatch    Depth witness for the dose curve of the configured
             laser_power_model: two rows of small engraved patches
             (serpentine G1 fills) on the stock. Row A is CW (S1000) at
@@ -1414,12 +1424,9 @@ def drill_dpatch(g):
     if feed_ref < 60 or not 0.05 <= pitch <= 2.0 or not 5.0 <= width <= 200.0:
         print('usage: dpatch [F mm/min >= 60] [pitch 0.05..2 mm] [length 5..200 mm]')
         return 2
-    model = conf_get('laser_power_model') or 'density'
-    if model not in ('density', 'analog'):
-        print('unknown laser_power_model %s' % model)
-        return 2
-    tp_curve = DPATCH_TP_P20 if model == 'density' else DPATCH_TP_ANALOG
-    unit = 'density' if model == 'density' else 'duty'
+    model = 'density'                   # the only model on hardware
+    tp_curve = DPATCH_TP_P20
+    unit = 'density'
     levels, (rpm_max, rpm_min, floor, ceil) = pcurve_levels(g, DPATCH_DENSITY_PCT)
     if levels is None:
         print('PRECONDITION FAILED: cannot read $30/$31/$35/$36 (%s/%s/%s/%s)'
@@ -2755,21 +2762,30 @@ def drill_m5dark(g):
     return 0 if ok else 1
 
 
-MSWITCH_S = 500
-MSWITCH_MM = 20.0
-MSWITCH_FEED = 600
+# The corner pattern: a long segment above the ~1.6 mm accelerate-in-
+# and-out distance at F2000, teeth and a square well below it, and a
+# reversal - every place M4 drives the commanded power to the floor.
+M4C_PATTERN = (
+    ('G1', 10.0, 0.0),                  # long: reaches programmed feed
+    ('G1', 1.0, 0.6), ('G1', 1.0, -0.6), ('G1', 1.0, 0.6), ('G1', 1.0, -0.6),
+    ('G1', 1.0, 0.6), ('G1', 1.0, -0.6),               # 1.2 mm teeth
+    ('G1', 2.0, 0.0), ('G1', 0.0, 2.0), ('G1', -2.0, 0.0), ('G1', 0.0, -2.0),
+    ('G1', 5.0, 0.0), ('G1', -5.0, 0.0),               # 180 degree reversal
+    ('G1', 0.5, 0.4), ('G1', 0.5, -0.4), ('G1', 0.5, 0.4), ('G1', 0.5, -0.4),
+    ('G1', 3.0, 0.0),                   # finish long
+)
+M4C_ROW_GAP = 8.0                       # mm between the two passes
 
 
-def drill_mswitch(g):
-    print('=== M101 on the machine: density line, switch, analog line, revert ===')
+def drill_m4corner(g):
+    sval = int(sys.argv[2]) if len(sys.argv) > 2 else 300
+    feed = int(sys.argv[3]) if len(sys.argv) > 3 else 2000
+    if not 50 <= sval <= 1000 or not 300 <= feed <= 6000:
+        print('usage: m4corner [S 50..1000] [F 300..6000]')
+        return 2
     sampler = Sampler(PCURVE_SAMPLE_HZ)
     if not sampler.local:
         print('run this on the board: the witnesses are sysfs at 25 Hz')
-        return 2
-    model = conf_get('laser_power_model') or 'density'
-    if model != 'density':
-        print('PRECONDITION FAILED: laser_power_model is %s, the drill asserts '
-              'the density default and its revert' % model)
         return 2
     fails = []
 
@@ -2781,70 +2797,52 @@ def drill_mswitch(g):
     def logged(needle):
         return any(needle in ln for _t, ln in g.log)
 
-    def floor35(text):
-        for ln in text.splitlines():
-            if ln.startswith('$35='):
-                try:
-                    return float(ln[4:])
-                except ValueError:
-                    return None
-        return None
+    dx = sum(x for _c, x, _y in M4C_PATTERN)
+    dy = sum(y for _c, _x, y in M4C_PATTERN)
+    span_x = 0.0
+    run_x = 0.0
+    for _c, x, _y in M4C_PATTERN:
+        run_x += x
+        span_x = max(span_x, run_x)
 
+    print('=== M4 into corners: the pattern at S%d F%d under density ===' % (sval, feed))
     print('connect: %s' % prepare(g))
     print('pre-fire: %s' % sample_forgectrl())
     arm_cue()
-    print('>>> %g mm of free +X travel at the head, scrap under it: one line' % MSWITCH_MM)
-    print('>>> out under density, the switch, the same line back under analog.\n')
+    print('>>> A fresh area: %g mm along +X by %g mm along +Y from the head.\n' % (span_x + 2, 4))
     sampler.start()
     aborted = False
     try:
         for ln in ('G91', 'G21'):
             g.cmd(ln)
-        # Section 1: density. The M3 blocks in the arm until the press.
-        g.s.sendall(b'M3 S%d\n' % MSWITCH_S)
-        g.s.sendall(('G1 X%g F%d\n' % (MSWITCH_MM, MSWITCH_FEED)).encode())
-        st = g.wait_state('Run', 300)
-        if not st.startswith('Run'):
-            print('FAIL: the job never ran (state=%s)' % st)
-            g.rt(b'\x18')
-            return 1
-        g.wait_state('Idle', 60)
-        time.sleep(0.5)
-        g.drain()
-        check(logged('laser armed (density, floor 10 %)'),
-              'the arm names the density model and its floor')
-        # The switch, spindle off.
-        r = g.cmd('M5')
-        check('error' not in r, 'M5 accepted (%s)' % r.replace('\n', ' '))
-        r = g.cmd('M101 P0', timeout=10)
-        check('ok' in r and 'error' not in r, 'M101 P0 accepted (%s)' % r.replace('\n', ' '))
-        time.sleep(0.3)
-        g.drain()
-        check(logged('laser power model set for this program (analog, floor 16 %)'),
-              'the switch is reported with the analog floor')
-        f = floor35(g.cmd('$$', timeout=10))
-        check(f == 16.0, '$$ shows the analog floor in force ($35=%s)' % f)
-        # Section 2: analog, same S, no new press allowed.
-        presses = sum(1 for _t, ln in g.log if 'press the button' in ln)
-        g.s.sendall(b'M3 S%d\n' % MSWITCH_S)
-        g.s.sendall(('G1 X%g F%d\n' % (-MSWITCH_MM, MSWITCH_FEED)).encode())
-        st = g.wait_state('Run', 60)
-        check(st.startswith('Run'), 'the analog section ran (state=%s)' % st)
-        g.wait_state('Idle', 60)
-        time.sleep(0.5)
-        g.drain()
-        check(sum(1 for _t, ln in g.log if 'press the button' in ln) == presses,
-              'the open window carried across the switch: no re-prompt')
-        for ln in ('M5', 'G90'):
-            g.cmd(ln)
+        for i, mname in enumerate(('density',)):
+            g.s.sendall(b'M4 S%d\n' % sval)
+            for cmd, x, y in M4C_PATTERN:
+                parts = [cmd]
+                if x:
+                    parts.append('X%g' % x)
+                if y:
+                    parts.append('Y%g' % y)
+                parts.append('F%d' % feed)
+                g.s.sendall((' '.join(parts) + '\n').encode())
+            g.s.sendall(b'M5\n')
+            st = g.wait_state('Run', 300 if i == 0 else 60)
+            if not st.startswith('Run'):
+                print('FAIL: pass %d never ran (state=%s)' % (i + 1, st))
+                g.rt(b'\x18')
+                aborted = True
+                return 1
+            g.wait_state('Idle', 120)
+            time.sleep(0.5)
+            g.drain()
+            print('  %s pass ran' % mname)
+            g.s.sendall(('G0 X%g Y%g\n' % (-dx, -dy)).encode())
+            g.wait_state('Idle', 30)
+        check(logged('laser armed (density, floor'), 'the arm named the density model')
+        g.cmd('G90')
         g.cmd('M2')
         time.sleep(0.5)
         g.drain()
-        check(logged('laser power model reverted (density, floor 10 %)'),
-              'M2 reverts to the density default and reports it')
-        f = floor35(g.cmd('$$', timeout=10))
-        check(f == 10.0, '$$ shows the density floor back ($35=%s)' % f)
-        # Let the disarm land before judging the trace.
         t0 = time.time()
         while time.time() - t0 < 90:
             smp = sample_forgectrl()
@@ -2869,33 +2867,159 @@ def drill_mswitch(g):
             cur = [smp['t'], smp['t']]
         elif on:
             cur[1] = smp['t']
-        elif cur is not None and smp['t'] - cur[1] > 1.0:
+        elif cur is not None and smp['t'] - cur[1] > 1.5:
             segs.append(cur)
             cur = None
     if cur:
         segs.append(cur)
     print('\n--- results (%d samples, %.1f Hz) ---' % (len(tr), sampler.rate()))
-    check(len(segs) == 2, '%d discharge segment(s), expected exactly 2 (one per line)'
-          % len(segs))
-    if len(segs) == 2:
-        for name, (a, b) in zip(('density', 'analog'), segs):
-            hv = _stats(_window(tr, a + 0.3, b - 0.1, 'hv'))
-            print('  %s line: %.2f s, hv mean %.0f max %d (max-mean %.0f)'
-                  % (name, b - a, hv['mean'], hv['max'], hv['max'] - hv['mean']))
-        hv_d = _stats(_window(tr, segs[0][0] + 0.3, segs[0][1] - 0.1, 'hv'))
-        hv_a = _stats(_window(tr, segs[1][0] + 0.3, segs[1][1] - 0.1, 'hv'))
-        check(hv_a['max'] - hv_a['mean'] < 150,
-              'the analog line is a steady discharge (max-mean %.0f)'
-              % (hv_a['max'] - hv_a['mean']))
-        check(hv_d['max'] - hv_d['mean'] > 250,
-              'the density line is a pulsed discharge (max-mean %.0f)'
-              % (hv_d['max'] - hv_d['mean']))
-        t_end = segs[1][1]
-        hv_after = max((smp['hv'] for smp in tr if smp['t'] > t_end + 0.3
+    check(len(segs) == 1, '%d discharge window(s), expected 1' % len(segs))
+    for name, (a, b) in zip(('density',), segs):
+        hv = _stats(_window(tr, a + 0.2, b - 0.1, 'hv'))
+        tp = _stats(_window(tr, a + 0.2, b - 0.1, 'tp'))
+        print('  %s pass: %.1f s lit, hv mean %.0f max %d, tp mean %.0f'
+              % (name, b - a, hv['mean'], hv['max'], tp['mean'] or 0))
+    if segs:
+        t_end = segs[-1][1]
+        hv_after = max((smp['hv'] for smp in tr if smp['t'] > t_end + 0.5
                         and smp['hv'] is not None), default=0)
-        check(hv_after <= HV_DARK_MAX, 'dark after the second M5 (hv max %d)' % hv_after)
+        check(hv_after <= HV_DARK_MAX, 'dark after the last M5 (hv max %d)' % hv_after)
+
+    print('\n--- the operator reads the material ---')
+    print('Trace the whole path with your eye:')
+    print('  1. DROPOUT: any commanded segment with NO mark at all - look hardest')
+    print('     at the 1.2 mm teeth, the 0.5 mm teeth and the 2 mm square,')
+    print('     where M4 never lets the power rise off the floor. Under density')
+    print('     a dropout should be impossible; confirm it.')
+    print('  2. The long 10 mm lines are the reference: mid-line is the')
+    print('     pattern cut at full commanded power.')
     ok = not fails
-    print('MSWITCH %s' % ('PASS: the switch, the floors and the revert hold on the machine'
+    print('M4CORNER %s' % ('instrument checks PASS - the material verdict is yours'
+                           if ok else 'FAIL: %d check(s) failed' % len(fails)))
+    return 0 if ok else 1
+
+
+M4F_MM = 60.0
+M4F_LEG_GAP = 0.6                       # the return leg sits beside the out leg
+M4F_ROW_GAP = 5.0
+
+
+def drill_m4feeds(g):
+    sval = int(sys.argv[2]) if len(sys.argv) > 2 else 600
+    f1 = int(sys.argv[3]) if len(sys.argv) > 3 else 1000
+    f2 = int(sys.argv[4]) if len(sys.argv) > 4 else 4000
+    if not 50 <= sval <= 1000 or not 300 <= f1 < f2 <= 8000:
+        print('usage: m4feeds [S 50..1000] [F1] [F2]  (300 <= F1 < F2 <= 8000)')
+        return 2
+    sampler = Sampler(PCURVE_SAMPLE_HZ)
+    if not sampler.local:
+        print('run this on the board: the witnesses are sysfs at 25 Hz')
+        return 2
+    model = conf_get('laser_power_model') or 'density'
+    if model != 'density':
+        print('PRECONDITION FAILED: laser_power_model is %s; B3 is the density '
+              'time-base question' % model)
+        return 2
+    fails = []
+
+    def check(cond, msg):
+        print('  %s: %s' % ('ok' if cond else 'FAIL', msg))
+        if not cond:
+            fails.append(msg)
+
+    print('=== B3, dose per mm across feeds: S%d under M4 density at F%d and F%d ==='
+          % (sval, f1, f2))
+    print('connect: %s' % prepare(g))
+    print('pre-fire: %s' % sample_forgectrl())
+    arm_cue()
+    print('>>> A fresh area: %g mm along +X by %g mm along +Y from the head.' % (M4F_MM + 2, M4F_ROW_GAP + 4))
+    print('>>> Pass 1 (F%d) cuts at the head; pass 2 (F%d) %g mm in +Y.'
+          % (f1, f2, M4F_ROW_GAP))
+    print('>>> Each pass is an out leg and a return leg %g mm apart - a long' % M4F_LEG_GAP)
+    print('>>> U with its turn at the far end, so both legs read separately.\n')
+    sampler.start()
+    aborted = False
+    try:
+        for ln in ('G91', 'G21'):
+            g.cmd(ln)
+        for i, feed in enumerate((f1, f2)):
+            g.s.sendall(b'M4 S%d\n' % sval)
+            g.s.sendall(('G1 X%g F%d\n' % (M4F_MM, feed)).encode())
+            g.s.sendall(('G1 Y%g F%d\n' % (M4F_LEG_GAP, feed)).encode())
+            g.s.sendall(('G1 X%g F%d\n' % (-M4F_MM, feed)).encode())
+            g.s.sendall(b'M5\n')
+            g.s.sendall(('G0 Y%g\n' % -M4F_LEG_GAP).encode())
+            st = g.wait_state('Run', 300 if i == 0 else 60)
+            if not st.startswith('Run'):
+                print('FAIL: pass %d never ran (state=%s)' % (i + 1, st))
+                g.rt(b'\x18')
+                aborted = True
+                return 1
+            g.wait_state('Idle', 120)
+            time.sleep(0.5)
+            g.drain()
+            print('  pass at F%d ran' % feed)
+            if i == 0:
+                g.s.sendall(('G0 Y%g\n' % M4F_ROW_GAP).encode())
+                g.wait_state('Idle', 30)
+        g.cmd('G90')
+        g.cmd('M2')
+        t0 = time.time()
+        while time.time() - t0 < 90:
+            smp = sample_forgectrl()
+            if smp and not smp['armed']:
+                break
+            time.sleep(0.2)
+        time.sleep(1.5)
+    except Exception as e:
+        aborted = True
+        print('ABORTED: %s' % e)
+        g.rt(b'\x18')
+    finally:
+        sampler.stop()
+    if aborted:
+        return 1
+
+    tr = sampler.samples
+    segs, cur = [], None
+    for smp in tr:
+        on = smp['hv'] is not None and smp['hv'] > HV_DARK_MAX
+        if on and cur is None:
+            cur = [smp['t'], smp['t']]
+        elif on:
+            cur[1] = smp['t']
+        elif cur is not None and smp['t'] - cur[1] > 1.5:
+            segs.append(cur)
+            cur = None
+    if cur:
+        segs.append(cur)
+    print('\n--- results (%d samples, %.1f Hz) ---' % (len(tr), sampler.rate()))
+    check(len(segs) == 2, '%d discharge window(s), expected 2 (one per feed)' % len(segs))
+    for feed, (a, b) in zip((f1, f2), segs):
+        hv = _stats(_window(tr, a + 0.2, b - 0.1, 'hv'))
+        tp = _stats(_window(tr, a + 0.2, b - 0.1, 'tp'))
+        print('  F%d pass: %.1f s lit, hv mean %.0f, tp mean %.0f (the beam at '
+              'cruise should read alike at both feeds: M4 commands S at speed)'
+              % (feed, b - a, hv['mean'], tp['mean'] or 0))
+    if segs:
+        t_end = segs[-1][1]
+        hv_after = max((smp['hv'] for smp in tr if smp['t'] > t_end + 0.5
+                        and smp['hv'] is not None), default=0)
+        check(hv_after <= HV_DARK_MAX, 'dark after the last M5 (hv max %d)' % hv_after)
+
+    print('\n--- the operator reads the material ---')
+    print('Two out-and-back line pairs, F%d nearest you first, F%d %g mm past it.' % (f1, f2, M4F_ROW_GAP))
+    print('  1. EVENNESS within each pass: each line should be equally dark from')
+    print('     its slow ends to its fast middle - that is M4 holding dose per')
+    print('     mm constant through the accel. Ends darker than the middle =')
+    print('     partial compensation (the factory rides a ~1.8x rise).')
+    print('  2. The REVERSAL point (far end) is the worst case - compare its')
+    print('     darkness against the mid-line of the same pass, at both feeds.')
+    print('  3. ACROSS the passes: the faster pass is expected ~%gx lighter per' % (float(f2) / f1))
+    print('     mm overall (feed is the dose control at cruise); the question is')
+    print('     whether the within-line evenness holds at both.')
+    ok = not fails
+    print('M4FEEDS %s' % ('instrument checks PASS - the material verdict is yours'
                           if ok else 'FAIL: %d check(s) failed' % len(fails)))
     return 0 if ok else 1
 
@@ -2988,7 +3112,7 @@ def main():
               'pthresh': drill_pthresh, 'dladder': drill_dladder,
               'pcurve': drill_pcurve, 'm5dark': drill_m5dark,
               'dpatch': drill_dpatch, 'flowload': drill_flowload,
-              'mswitch': drill_mswitch,
+              'm4corner': drill_m4corner, 'm4feeds': drill_m4feeds,
               'senderchg': drill_senderchg, 'overrun': drill_overrun,
               'expstop': drill_expstop, 'ctrlstart': drill_ctrlstart}
     if drill not in drills:

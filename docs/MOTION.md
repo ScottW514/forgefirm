@@ -426,9 +426,7 @@ only be changed while the machine is idle.
 | `lid_policy` | `cancel` | `cancel` = factory behavior; `hold` = stock Grbl door parking. |
 | `laser_button_timeout_s` | 300 | How long the machine waits at the button prompt. |
 | `laser_disarm_s` | 60 | Spindle-off grace before the armed window closes. |
-| `laser_power_model` | `density` | The boot-default dose model: `density` (full-power pulses, dose by pulse density) or `analog` (continuous beam, dose by PWM duty). A job overrides it with `M101 P0` / `M101 P1`. |
-| `laser_floor_density` | 10 | The S-range floor under density, percent of full; loaded into `$35` at every arm and switch. |
-| `laser_floor_analog` | 16 | The S-range floor under analog, percent duty (the duty the tube lases at); loaded into `$35` the same way. |
+| `laser_floor_density` | 10 | The S-range floor, percent of full: the lowest pulse density that still marks. Loaded into `$35` at every spindle precompute; `$35` is derived, never typed. |
 | `laser_pulse_ticks` | 20 | Density base period in machine ticks (35.5 us each). |
 | `laser_pulse_min_ticks` | 3 | Shortest density pulse in ticks; below it a period is skipped and its debt carried. |
 | `rail_settle_s` | 2.5 | Motor-rail off period when a controller takes the device standalone. |

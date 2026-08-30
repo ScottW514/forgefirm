@@ -147,38 +147,21 @@ restart the controller with the head re-parked.)
 - **Console tab**: raw grbl — `?` status, `$$` settings, `$X` unlock,
   `$J=G91X10F1200` jog.
 
-## Power models
+## Power
 
-The controller has two ways to turn a layer's power into light, and a job
-can pick either.
+The controller drives the tube the way the factory does: every pulse
+fires at full power, and the power setting decides how many ticks of
+each 710 us period fire. Every power level marks, low levels included,
+because no pulse is ever too weak to strike. The response is not linear:
+on this machine 80 % gives about half the light of 100 %, 60 % about a
+third, 30 % about a fourteenth - so pick engrave power by test card, and
+prefer setting darkness with speed. Grayscale images fade cleanly into
+the shadows (a low level becomes sparse full-power pulses), and 254 to
+508 DPI rasters hold their tonal steps.
 
-- **Density** (the default): every pulse is full power, and the power
-  setting decides how many ticks of each 710 us period fire. This is what
-  the factory does. Every power level marks, low levels included, because
-  no pulse is ever too weak to strike; the trade is that the response is
-  not linear: on this machine 80 % gives about half the light of 100 %, 60 %
-  about a third, 30 % about a fourteenth.
-- **Analog**: the beam runs continuously and the power setting sets the PWM
-  duty. Close to linear above 30 %, with a floor at the duty the tube lases
-  at (16 %), below which nothing marks. The finish on acrylic is the same
-  as density's.
-
-The default model is set on the control panel (GRBL tab, "Laser power
-model"). A job selects its own with a line in its G-code, with the laser
-off:
-
-    M5              ; beam off (the switch is refused while the spindle is on)
-    M101 P0         ; analog for this program (M101 P1 = density)
-    M3 ...
-
-Put it in the job's start G-code (Edit -> Device Settings -> GCode -> Start
-G-Code in LightBurn) or between sections of a job. It reverts to the panel
-default when the program ends (`M2`) or on Stop, so a job never leaves the
-machine in a model you did not pick; `M101 P0 Q1` typed in the Console
-sticks until the next `M101` or a controller restart. The console reports
-every switch and every arm with the model and its floor, and `$35` (the
-power floor) is set by the controller from the selected model: do not type
-it, it is overwritten at the next job.
+`$35`, the power floor, is set by the controller from the machine config
+(the control panel's GRBL tab, "Laser dose"): do not type it, it is
+overwritten at every job.
 
 ## Air assist / fans
 

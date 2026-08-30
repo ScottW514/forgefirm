@@ -29,10 +29,11 @@ reported messages:
      job start on its own; with lid_policy = hold the stock door hold and
      cycle-start resume apply
   9. the controller publishes its state for the daemon: grbl.settings
-     (the $$ view) and grbl.state (JSON with ts_mono, machine state,
-     sender session, laser window and dose model, modals) appear under
-     GF_STATE_DIR, follow the sender connection, the armed window and
-     an M101 switch, and carry a fresh ts_mono
+     (the $$ view, the derived floor in force from boot) and grbl.state
+     (JSON with ts_mono, machine state, sender session, laser window
+     and dose model, modals) appear under GF_STATE_DIR, follow the
+     sender connection and the armed window, and carry a fresh
+     ts_mono
  10. the job start survives a pause: a job paused and resumed by the
      button, then cancelled by the lid, returns to where the job began,
      not to where it was paused (the core restarts a held cycle through
@@ -294,29 +295,23 @@ def test_status_files():
         assert '"connected":true' in st, "sender not reported connected: %r" % st
         assert '"armed":false' in st, "armed before any job: %r" % st
         assert '"model":"density"' in st and '"floor_pct":10' in st, \
-            "model/floor missing: %r" % st
+            "model/floor missing (the floor must be derived from boot): %r" % st
         assert '"modals":"[GC:' in st, "modal report missing: %r" % st
         ts0 = float(st.split('"ts_mono":')[1].split(',')[0])
 
         cfg = open(os.path.join(s.workdir, "grbl.settings")).read()
         assert "$35=" in cfg and "$30=" in cfg, "settings file lacks $ lines"
 
-        # The armed window and a dose-model switch reach the file.
+        # The derived floor is in force from boot, before any arm.
+        assert "$35=10" in cfg, "the derived floor is not in $$ from boot: %r" % [
+            l for l in cfg.splitlines() if l.startswith("$35")]
+        # The armed window reaches the file.
         send_line(s.sock, "G91", s.log)
         send_line(s.sock, "M3 S100", s.log)
         st = read_state(s, '"armed":true')
         assert '"armed":true' in st, "armed window not published: %r" % st
         send_line(s.sock, "M5", s.log)
-        send_line(s.sock, "M101 P0", s.log)
-        st = read_state(s, '"model":"analog"')
-        assert '"model":"analog"' in st and '"floor_pct":16' in st, \
-            "the M101 switch not published: %r" % st
-        cfg = open(os.path.join(s.workdir, "grbl.settings")).read()
-        assert "$35=16" in cfg, "the switched floor not republished: %r" % [
-            l for l in cfg.splitlines() if l.startswith("$35")]
         send_line(s.sock, "M2", s.log)
-        st = read_state(s, '"model":"density"')
-        assert '"model":"density"' in st, "the M2 revert not published: %r" % st
 
         # A reconnect bumps the generation and stays connected.
         gen0 = int(st.split('"generation":')[1].split(',')[0])
