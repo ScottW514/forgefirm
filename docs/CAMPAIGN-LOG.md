@@ -6795,6 +6795,39 @@ enables SEGGER RTT telemetry; regs 0x3c-0x3f read a debug capture ring
 (the previously-unexplained `i2cget 0x47 0x02`, `0x0f`, `0x3c`
 commands).
 
+## 2026-08-31: crash-detector de-risk drill - coexist proven, detector is forgectrl-only
+
+The de-risk drill for the head-accelerometer crash detector
+(`scripts/bench/accel_crash_probe.py`, bench page `accel-crash-probe`) ran
+three coexist windows on dev 20260831204710 with forgectrl and grblHAL up
+and idle: a rest window on xyz, a rest window on xy, and an xy window with
+one gentle jog (`$J=G91 X5 F1000`, +X first). No emission, no unbind.
+
+- **Coexist PROVEN.** The IG registers (0x30-0x35) program and poll over
+  i2c-dev with I2C_SLAVE_FORCE while `st_accel` stays bound; IG_SRC1
+  polled at ~166 Hz from Python, and `st_accel` raw reads kept working
+  through and after every window. The detector is **forgectrl-only**: no
+  kernel change, the liveness path untouched. This was the item's one
+  open design decision.
+- **Latch and per-axis source report work.** At threshold 40 (~0.62 g at
+  the factory +/-2 g full scale) the gravity axis Z (raw -16916, about
+  -1.03 g) latched IG_SRC1 on every poll; X and Y stayed silent at rest
+  and through the jog. So the shipped detector arms X and Y below 1 g and
+  a Z threshold must sit above 1 g plus margin.
+- **New fact: the IG needs a running ODR.** The first window returned no
+  trips at all because `st_accel` leaves the part in power-down between
+  one-shot reads (CTRL1 ODR bits 0) and the interrupt generator only
+  samples at a running ODR. The armed detector must set the ODR and
+  re-assert it after any liveness read (each one-shot powers the part
+  down again). The drill script now saves CTRL1, runs the window at
+  800 Hz, and restores the saved value on exit; its old ODR test checked
+  the axis-enable bits (0x07) instead of the ODR bits (0x70), fixed in
+  the same change.
+- **No strike was provoked, none owed.** The rail-contact signature from
+  the retired homing spike (29-42 k counts within ~4 ms) already fixes
+  the strike magnitude, 3x and more over a threshold that gravity
+  already trips; a physical tap would add nothing the design needs.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis

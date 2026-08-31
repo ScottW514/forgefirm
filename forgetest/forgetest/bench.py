@@ -86,7 +86,8 @@ TOOLS = [
               _arg("jog", "str", None, "optional one jog at t=2 s, e.g. $J=G91X5F1000 (+X only)", flag="--jog")],
      "desc": "Arms the head LIS2HH12's on-chip interrupt generator (IG1) and polls IG_SRC1 for a latched strike. "
              "coexist mode reaches the IG registers over i2c-dev with st_accel still bound (the forgectrl-only "
-             "path proof); provoke a trip by hand or with --jog. Touches only the IG registers, no emission, "
+             "path proof); provoke a trip by hand or with --jog. Touches the IG registers and CTRL1 "
+             "(saved, run at 800 Hz, restored; the IG only samples at a running ODR), no emission, "
              "no full-scale change. CSV to /tmp/accel_crash.csv."},
     # -- board-side, takeover / scope ------------------------------------------
     {"id": "pwm-sweep", "title": "LASER_PWM scope sweep", "script": "pwm_sweep.py",

@@ -20,11 +20,13 @@ rides on, before any kernel or forgectrl work:
      can be set in register units against the rail-contact signature
      (facts bank: 20-40x over creep within ~4 ms on a fast strike).
 
-The drill touches ONLY the IG registers plus the IG-latch bit of CTRL7,
-which st_accel never writes; it does not change the full scale (CTRL4)
-or the ODR (CTRL1), so st_accel's raw scaling is undisturbed. Default is
-coexist mode with forgectrl left running: no emission, no commanded
-motion. Provoke a trip by hand (a firm tap or nudge on the head) or pass
+The drill touches the IG registers plus the IG-latch bit of CTRL7,
+which st_accel never writes, and CTRL1: st_accel powers the part down
+between one-shot reads (ODR=0), and the IG generator only samples at a
+running ODR, so the drill saves CTRL1, sets 800 Hz for the window and
+restores the saved value on exit. The full scale (CTRL4) is never
+changed, so st_accel's raw scaling is undisturbed. Default is coexist
+mode with forgectrl left running: no emission, no commanded motion. Provoke a trip by hand (a firm tap or nudge on the head) or pass
 --jog to send one gentle grblHAL jog; a jog needs the controller free,
 so run it from the bench page's takeover or stop the controller first.
 
@@ -163,11 +165,12 @@ def main():
             bind_ctl('bind')
         return 1
 
-    ctrl1 = rd(fd, CTRL1)
+    orig_ctrl1 = rd(fd, CTRL1)
+    ctrl1 = orig_ctrl1
     ctrl4 = rd(fd, CTRL4)
     fs = FS_G.get((ctrl4 >> 4) & 0b11, '?')
-    if unbind and (ctrl1 & 0x07) == 0:
-        wr(fd, CTRL1, 0x6F)      # 800 Hz, BDU, XYZ on; st_accel does this itself
+    if (ctrl1 & 0x70) == 0:      # ODR bits 6:4 zero = power-down; IG needs
+        wr(fd, CTRL1, 0x6F)      # a running ODR: 800 Hz, BDU, XYZ on
         ctrl1 = rd(fd, CTRL1)
     lsb_mg = (fs * 1000.0 / 128.0) if isinstance(fs, int) else 0
     print('WHO_AM_I=0x%02x CTRL1=0x%02x CTRL4=0x%02x  FS=+/-%sg  '
@@ -238,6 +241,8 @@ def main():
     # Disarm and restore.
     wr(fd, IG_CFG1, 0x00)
     wr(fd, CTRL7, ctrl7)
+    if ctrl1 != orig_ctrl1:
+        wr(fd, CTRL1, orig_ctrl1)
     if sock:
         try:
             sock.recv(4096)

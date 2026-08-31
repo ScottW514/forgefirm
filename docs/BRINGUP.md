@@ -1043,7 +1043,16 @@ is committed.
   and neither the factory DTS (head I²C `status = "disabled"`, the accel
   driven from userspace) nor ForgeFIRM's DTS gives the accel an `interrupts`
   property. ForgeFIRM neither arms the generator nor reads b1; it only polls
-  raw samples.
+  raw samples. `st_accel` leaves the part in **power-down between one-shot
+  reads** (CTRL1 ODR bits 0) and the interrupt generator only samples at a
+  running ODR, so an armed detector must set the ODR itself and re-assert it
+  after any liveness read (each one-shot powers the part down again). The IG
+  registers coexist with the bound driver over i2c-dev (I2C_SLAVE_FORCE):
+  IG_SRC1 polls at ~166 Hz from Python with `st_accel` raw reads intact. At
+  the factory +/-2 g full scale the threshold LSB is ~15.6 mg, so 1 g ~= 64;
+  gravity rides Z on the head (raw ~-16916), so Z trips any sub-1 g
+  threshold at rest while X and Y stay silent at rest and through a jog at
+  threshold 40 (~0.62 g).
 - **Beam detect in the head MCU.** PTE16 into ADC0 gives reg 0x16, the raw
   analog level (`beam_detect_analog`, a head sysfs attr): near 1834 dark, 2600
   to 2890 during S300/S400 fire (the acceptance suite's mark witness),
@@ -1225,20 +1234,19 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     The rail-contact signature in the facts bank sets the first threshold in
     register units; a pause on contact is the first use. ForgeFIRM already
     reads the head accel raw for liveness, so this shares the bus, not new
-    hardware. The open decision is where the IG programming lives, and it
-    turns on a bench fact: the IG registers (0x30 to 0x35) are ones
-    `st_accel` never touches, so if they can be reached over i2c-dev
-    (I2C_SLAVE_FORCE) while the driver stays bound, the detector is
-    forgectrl-only with the liveness path untouched; if the two collide, the
-    accel moves under `glowforge.ko`. The de-risk drill
-    (`scripts/bench/accel_crash_probe.py`, on the bench page) settles that
-    first: it arms IG1 in coexist mode, provokes a strike, confirms IG_SRC1
-    latches the expected axis at a factory-derived threshold, and checks that
-    `st_accel`'s raw reads keep working through the run. Keeping the factory
-    full scale (no CTRL4 write) is what keeps the coexistence clean. Owed
-    after the drill: the chosen readout path, per-state (idle/run) thresholds
-    seeded from a captured cut header's HA* values, and the two tiers wired
-    into the existing feed-hold and stop-plus-latch paths.
+    hardware. The readout path is settled by the de-risk drill
+    (`scripts/bench/accel_crash_probe.py`, on the bench page; the record is
+    in CAMPAIGN-LOG): the detector is **forgectrl-only**. The IG registers
+    (0x30 to 0x35) program and poll over i2c-dev (I2C_SLAVE_FORCE) while
+    `st_accel` stays bound, and the liveness raw reads keep working through
+    an armed window. Keeping the factory full scale (no CTRL4 write) keeps
+    the coexistence clean, and the armed detector must own the ODR: the
+    facts bank ("The head accelerometer") has the power-down behavior. The
+    gravity axis rules the thresholds: X and Y arm below 1 g, a Z threshold
+    must sit above 1 g plus margin. Owed: the forgectrl detector itself,
+    per-state (idle/run) thresholds seeded from a captured cut header's HA*
+    values, and the two tiers wired into the existing feed-hold and
+    stop-plus-latch paths.
 
     Owed for the head IRQ, only if a coarse hardware interrupt is wanted
     instead of the poll: arm the accel bit in the head MCU (reg 0x03/0x04),
