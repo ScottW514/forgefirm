@@ -4701,6 +4701,31 @@ Nothing left on the board: the drill script was staged in `/tmp` and
 removed, `/data` holds factory state and ForgeFIRM's own files. Owed on
 this image: the full campaign (platform change).
 
+## 2026-08-31: lens shading, resolved from the factory rootfs
+
+Item 6 carried a per-unit lens-shading (OmniVision LENC) table the
+factory was said to push into the sensor at every stream start. The
+factory v2.6.0-2228 rootfs, dumped and searched, says otherwise:
+
+- `/usr/bin/load_cam_regs.sh` exists: it takes `<lid|head> <regfile>`,
+  writes each register line into `/sys/bus/i2c/devices/<bus>-0036/regs`,
+  and remaps OV8858 `0x58xx` addresses to the OV8856's `0x59xx`. Nothing
+  on the rootfs calls it (no script, no init file, no reference in the
+  app binary).
+- The app binary references `/usr/bin/apply_cam_regs.sh` next to its
+  camera-selection strings. That script is not on the rootfs.
+- Only `ov8856.ko` carries the `regs` attribute (`ov8856_regs_attr_store`)
+  and an OTP mode; `ov5648.ko` has neither.
+- On the bench machine (OV5648) `/data` holds no register file, and
+  `/data/manufacturing` did not exist before the 2026-08-20 bench tool
+  created it.
+
+So no shipped machine applies a per-unit shading table: the loader is a
+manufacturing-side tool, the app's hook points at a script the image
+does not carry, and the 5 MP driver has no way to take one. BRINGUP
+item 6 now says so, and the factory-slot session it asked for is not
+needed.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

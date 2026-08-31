@@ -1156,16 +1156,14 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
    720 Mbps/lane and what exposure/gain the sensor wants; the details, the
    reachable-mode reasoning and the factory fallback configuration are in
    the headers of kernel patches 0011-0013 (`meta-glowforge-bsp`,
-   `recipes-kernel/linux/`). Also unapplied: the factory's **per-unit lens-shading
-   calibration**, an OmniVision LENC register file the factory pushes into the
-   sensor at every stream start (`load_cam_regs.sh` → a `regs` sysfs attribute
-   its driver adds; OV8858 `0x58xx` addresses remapped to the OV8856's
-   `0x59xx`). The files are per-machine data: not in the factory rootfs, and
-   not under `/data` on the bench machine (the partition is shared between the
-   slots and holds no camera register file). Whether the factory app fetches
-   them from the service at run time is the open question, so a factory-slot
-   session with the app running comes before deciding whether to reimplement
-   the mechanism. Finally the deferred emulator
+   `recipes-kernel/linux/`). Lens shading (OmniVision LENC) is not a gap: the factory
+   rootfs carries `load_cam_regs.sh`, a loader that writes a register file
+   into the OV8856 driver's `regs` sysfs attribute (OV8858 `0x58xx`
+   addresses remapped to `0x59xx`), but nothing calls it; the app
+   references `/usr/bin/apply_cam_regs.sh`, which is not on the rootfs; the
+   OV5648 driver has no `regs` attribute; and this machine's `/data` holds
+   no register file. No shipped machine applies a per-unit shading table,
+   so ForgeFIRM owes none. Finally the deferred emulator
    homing-image smoke, now that the emulator can be pointed at live snapshots.
 7. **Cloud mode.** A print is no longer capped by the ring: the client holds
    the compressed body, fills the ring before the button, and tops it up as it
