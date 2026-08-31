@@ -41,8 +41,9 @@ Usage:
             but liveness is down meanwhile, so stop the controller and
             forgectrl first)
   --ths N   per-axis threshold register value 0..255 (default 40); the
-            LSB is full-scale dependent, so the printed CTRL4 FS fixes
-            the g conversion (+/-2 g default: ~15.6 mg/LSB, 1 g ~= 64)
+            LSB is full scale / 256 (bench-confirmed against gravity:
+            +/-2 g gives ~7.8 mg/LSB, 1 g ~= 128), so the printed CTRL4
+            FS fixes the g conversion
   --dur N   IG_DUR1 duration counter, samples at the running ODR
             (default 0 = fire on the first over-threshold sample)
   --axes    which axes arm high events (default xyz)
@@ -172,7 +173,7 @@ def main():
     if (ctrl1 & 0x70) == 0:      # ODR bits 6:4 zero = power-down; IG needs
         wr(fd, CTRL1, 0x6F)      # a running ODR: 800 Hz, BDU, XYZ on
         ctrl1 = rd(fd, CTRL1)
-    lsb_mg = (fs * 1000.0 / 128.0) if isinstance(fs, int) else 0
+    lsb_mg = (fs * 1000.0 / 256.0) if isinstance(fs, int) else 0
     print('WHO_AM_I=0x%02x CTRL1=0x%02x CTRL4=0x%02x  FS=+/-%sg  '
           'ths=%d (~%.0f mg, ~%.2f g)  dur=%d  axes=%s  mode=%s'
           % (who, ctrl1, ctrl4, fs, ths, ths * lsb_mg, ths * lsb_mg / 1000.0,

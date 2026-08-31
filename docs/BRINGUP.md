@@ -890,8 +890,10 @@ is committed.
   all-positive from that corner.
 - **Factory motion profile** (measured from captured factory pulse streams
   with `puls_profile.py`): accel ≈ 700 mm/s² X / 590 mm/s² Y on v2.6.0 firmware
-  (2018 firmware used ≈1000); header HAxr=132/HAyr=112/HAar=133 ⇒ ≈5.3 mm/s²
-  per HA unit. Travel moves peak 202 mm/s vector (≈ 8 in/s) at STfr=28160 Hz;
+  (2018 firmware used ≈1000). The HAxr/HAyr/HAar header tags are NOT motion
+  accel limits; they are LIS2HH12 IG threshold register values (the crash
+  detector, "The head accelerometer" below).
+  Travel moves peak 202 mm/s vector (≈ 8 in/s) at STfr=28160 Hz;
   prints and hunts run STfr=10000. Cut feed in the sample print: 145 mm/s. Z
   cadence ≈ 61–115 ms per half-step (≈ 5.7 mm/s max).
 - **Factory analog config** (constant across all captured jobs, 2018→2026):
@@ -1048,11 +1050,17 @@ is committed.
   running ODR, so an armed detector must set the ODR itself and re-assert it
   after any liveness read (each one-shot powers the part down again). The IG
   registers coexist with the bound driver over i2c-dev (I2C_SLAVE_FORCE):
-  IG_SRC1 polls at ~166 Hz from Python with `st_accel` raw reads intact. At
-  the factory +/-2 g full scale the threshold LSB is ~15.6 mg, so 1 g ~= 64;
-  gravity rides Z on the head (raw ~-16916), so Z trips any sub-1 g
-  threshold at rest while X and Y stay silent at rest and through a jog at
-  threshold 40 (~0.62 g).
+  IG_SRC1 polls at ~166 Hz from Python with `st_accel` raw reads intact. The
+  IG_THS LSB is **full scale / 256** (bench-confirmed against gravity: at
+  +/-2 g, threshold 100 = 0.78 g trips on the 1.03 g gravity reading and
+  threshold 150 = 1.17 g does not; FS/128 would make the trip at 100
+  impossible). Gravity rides Z on the head (raw ~-16916), so Z trips any
+  sub-1 g threshold at rest while X and Y stay silent at rest and through a
+  jog at threshold 40 (0.31 g). The factory arms the IG per job from the
+  HA* header tags: hunts all-zero (off), travel files abort-only
+  (`HAar=133` at `HAsr=4`, +/-4 g, ~2.08 g), the cut job alert-only
+  (`HAxr=132` ~2.06 g, `HAyr=112` ~1.75 g, +/-4 g), Z and the idle
+  thresholds zero in every captured header.
 - **Beam detect in the head MCU.** PTE16 into ADC0 gives reg 0x16, the raw
   analog level (`beam_detect_analog`, a head sysfs attr): near 1834 dark, 2600
   to 2890 during S300/S400 fire (the acceptance suite's mark witness),

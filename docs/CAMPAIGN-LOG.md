@@ -6828,6 +6828,36 @@ one gentle jog (`$J=G91 X5 F1000`, +X first). No emission, no unbind.
   the strike magnitude, 3x and more over a threshold that gravity
   already trips; a physical tap would add nothing the design needs.
 
+## 2026-08-31: IG threshold LSB confirmed FS/256; the factory HA* seed values recovered
+
+Two facts that size the crash detector's thresholds, found while seeding
+them from the captured headers. They correct the previous entry's g
+conversion, which assumed FS/128 (values half of what it stated: the
+drill's threshold 40 is 0.31 g, not 0.62 g).
+
+- **The captured headers carry the factory's IG programming.** All 23
+  captured `.puls` headers parse (gfutilities `PulseSource`): hunts ship
+  every HA threshold zero (detector off, `HAsi/HAsr=2`); travel files
+  ship abort-only (`HAar=133`, `HAsr=4`); the cut job ships alert-only
+  (`HAxr=132`, `HAyr=112`, `HAsr=4`, `HAar=0`). `HAz*` and every idle
+  (`*i`) threshold are zero in every header. So the factory never arms
+  Z (the gravity axis), never arms the idle state, pauses cuts on a
+  ~2 g event and fails travels on one.
+- **IG_THS LSB = full scale / 256, twice proven.** By the factory's own
+  values: at FS/128 the travel abort 133 would be 4.16 g at +/-4 g,
+  over the measurable range, an abort that could never trip. On the
+  bench (two Z-only coexist windows, dev 20260831204710): threshold
+  100 trips on the 1.03 g gravity reading and threshold 150 does not;
+  under FS/256 those are 0.78 g and 1.17 g, bracketing gravity, while
+  under FS/128 the trip at 100 (1.56 g) would be impossible. The
+  datasheet states no IG_THS LSB (only ACT_THS = FS/128), so the bench
+  check was the proof. The drill script's printed conversion is fixed
+  to FS/256 in the same change.
+- **The factory seed values in g**: X alert 132 = 2.06 g, Y alert
+  112 = 1.75 g, abort 133 = 2.08 g, all at the +/-4 g run full scale.
+  Normal commanded motion reads under 0.2 g and a rail strike 1.8 g
+  and up, so the factory band sits where the bench says it should.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis
