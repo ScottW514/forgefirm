@@ -30,3 +30,7 @@ local_conf_header:
     FORGEFIRM_KERNEL_DEBUG = "1"
     FORGEFIRM_VERSION_STRING:pn-forgefirm-image-dev = "${DATETIME} (dev-debug)"
     FORGEFIRM_VERSION_STRING[vardepsexclude] += "DATETIME"
+    # A distinct deploy basename so the debug image does not share the dev
+    # image's single deploy slot and clobber it. It lands as
+    # forgefirm-image-dev-debug-glowforge.rootfs-*.wic.gz beside the others.
+    IMAGE_BASENAME:pn-forgefirm-image-dev = "forgefirm-image-dev-debug"
