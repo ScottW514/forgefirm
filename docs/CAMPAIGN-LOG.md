@@ -6539,6 +6539,23 @@ up move down one.
    (needs a MITM), a body past the memory guard (the service has no such job
    to send), and a wedged feed (a healthy machine will not stall on request).
 
+### Wi-Fi SDIO CRC watch (item 6), closed 2026-08-31
+
+Closed: the persisted kernel logs hold 97 boots across 16 days
+(2026-08-15 to 2026-08-31, the rotated file and the live one) with
+zero `sdio ... failed` events - the only SDIO lines are the per-boot
+card detect - against the pre-fix baseline of one event in 49 minutes.
+The factory-exact uSDHC pads hold; the 25 MHz cap stays unneeded.
+Items 7 and up move down one.
+
+6. **Wi-Fi SDIO CRC watch.** The uSDHC pads now carry the factory-exact values
+    and ship in every image. Watch `dmesg | grep -c "sdio .* failed"` across
+    sessions (baseline: 1 event in 49 min of uptime). Effect if one lands
+    mid-job: a 1–2 s sender stall — a cut-quality nuisance, never a safety
+    matter. Only if it still recurs, cap the bus with
+    `max-frequency = <25000000>` on `&usdhc1` (halves Wi-Fi throughput — last
+    resort; the factory ran 50 MHz on these pads).
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis
