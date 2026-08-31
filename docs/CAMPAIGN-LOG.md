@@ -4888,6 +4888,58 @@ the watch read `armed` at OK. A first run failed only on its own log
 check racing rsyslog by a second; the checks now poll the tail
 (forgefirm 678a155).
 
+## 2026-08-31: the shared-services polish, closed as a set
+
+The three leftovers of the 2026-08-13 consolidation are done or decided
+(forgectrl c930b41 and 4d3abd4, pinned in forgefirm 78c40ef).
+
+**Diagnostics as an engine mode.** A tool owns the thermal hardware
+between `cool_diag_take` and `cool_diag_release`: take succeeds only
+from an idle engine, every write goes through guarded engine helpers
+(one owner; the air-assist writes now ride the tracked path, so the
+coolant-offset correction stays true through a diagnostic), the tick
+publishes phase `diag` and touches nothing, and the release reasserts
+the idle posture in one place. The polled suspend/resume dance and the
+tool's own attribute writers are gone. The tools keep their airflow
+profile exactly as the flow bands were characterized: exhaust and
+intake at the run duty, the air assist untouched.
+
+**HTTP surface caps.** The daemon starts MHD through ulfius'
+with-options call with the flags ulfius computes reproduced verbatim,
+plus a 64-connection ceiling and 16 per client address, so a flood is
+bounded at the accept side. The first deploy taught the call's footgun:
+the option array must carry ulfius' own connection plumbing
+(`mhd_request_completed`, `ulfius_uri_logger`, both externalized for
+this call), or the dispatcher answers every request with MHD's internal
+error - the bench caught it inside a minute and the fix rode the next
+deploy. The camera pipeline's setup children (media-ctl, v4l2-ctl) run
+in their own process groups under a 10 s deadline and are killed past
+it: a wedged V4L2 pipeline costs one bounded error, never a pinned
+request thread. Moving the setup out of the callback entirely was
+considered and not taken: the bound removes the hazard at a fraction
+of the risk.
+
+**Busy-state arbitration, declined.** With diagnostics folded into the
+engine, the remaining idle/busy gates (`POST /settings`, `/mode`,
+upload/apply) are independent 409 checks that fail closed and are
+drilled; a single arbiter would rearrange them without closing a
+reachable window, so it is not built.
+
+The proof ran on the hot-deployed board through three passes of the
+unattended queue plus a directed set. Along the way the queue itself
+caught two rigid cross-checks the day's gates had introduced (a start
+gate pinned under the ceiling refused the gate-off trip leg, a TEC off
+threshold pinned above the floor refused the floor leg's raised floor);
+both relations came out in favor of the bench patterns, with the
+engine's runtime behavior as the enforcement (forgectrl de1f755 and
+c77f040). The final queue ran 9 of 9 green (the always core,
+floor-and-warm-up, tec-drive, critical-tier, fan-gate-trips), with
+flow-verify, aa-offset-calibrate, gate-off and fans-quiet-after-motion
+green earlier in the same campaign through the folded diagnostics, and
+the directed set - panel-serves, snapshot, sensor-profile, h264-stream,
+frame-health, lid-privacy - green on the capped server with the bounded
+setup children.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
@@ -6555,6 +6607,29 @@ Items 7 and up move down one.
     matter. Only if it still recurs, cap the bus with
     `max-frequency = <25000000>` on `&usdhc1` (halves Wi-Fi throughput — last
     resort; the factory ran 50 MHz on these pads).
+
+### Shared machine services, remaining polish (item 3), closed 2026-08-31
+
+Closed: the diagnostics fold and the HTTP caps are implemented and
+bench-proven, the arbitration is declined with its reasoning (the
+entry above). Items 4 and up move down one.
+
+3. **Shared machine services — remaining polish.** None of it blocking:
+   - **Diagnostics as engine modes.** The flow tools still drive the thermal
+     hardware themselves while the engine suspends its writes; the check
+     parameters are already shared (`cool.h`), so what remains is folding the
+     tools into the engine and retiring the suspend/resume dance.
+   - **Busy-state arbitration under one lock.** The idle/busy gates (`POST
+     /settings`, `/mode`, diagnostics start, upload/apply) each cross-check
+     `machine_is_idle()` and `update_job_running()` at their own call sites.
+     They fail closed and are drilled, but a single arbiter would close the
+     remaining request-interleaving windows by construction.
+   - **HTTP surface caps.** An explicit `MHD_OPTION_CONNECTION_LIMIT` plus a
+     per-IP cap is the right hardening (a 500-connection flood plateaued at 379
+     fds under the raised 4096 `RLIMIT_NOFILE`, no crash), and the camera
+     `ensure_engine` `popen()`s should move out of the HTTP callback so a slow
+     media-ctl cannot stall the request thread. Changing the MHD start flags
+     touches the streaming model, so this wants a bench slot of its own.
 
 ## Reference notes
 
