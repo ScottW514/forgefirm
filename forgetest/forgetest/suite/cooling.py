@@ -436,6 +436,160 @@ def gate_off(ctx):
 CRIT_KEYS = ("cool_temp_max", "cool_temp_resume", "cool_temp_critical_c")
 
 
+LOW_KEYS = ("cool_temp_min", "cool_temp_start")
+WARMUP_ABOVE_C = 1.0        # the start gate this far above the loop: a few heater minutes
+WARMUP_RELEASE_S = 720      # the flow heater warms the bulk 0.4 to 0.8 C a minute
+HEATER_PWM = "thermal/heater_pwm"
+
+
+def _hold_session(ctx, g, fc, until, what, wait):
+    """M8 opens a run session and leaves it open: wait for `until(cool)`
+    and return the sample. The caller ends the session."""
+    ctx.check(_cool(fc).get("phase") != "run", "%s: a run session is already open", what)
+    g.command("M8")
+    t0 = time.time()
+    c = {}
+    while time.time() - t0 < wait:
+        ctx.sleep(1)
+        c = _cool(fc)
+        if until(c):
+            break
+    ctx.log("%s: verdict %s phase %s fire_ok %s hold %s (after %.0f s)", what, c.get("verdict"),
+            c.get("phase"), c.get("fire_ok"), c.get("hold"), time.time() - t0)
+    return c
+
+
+@test("cooling.floor-and-warm-up", title="The coolant floor blocks fire and the warm-up gate holds a cold start",
+      subsystem="cooling", kind="auto", mode="grbl", est_min=9,
+      covers=_COOL_COVERS, requires=["kernel.latch-locked-idle", "cooling.gate-off"],
+      steps=["Machine idle, coolant at room temperature (10 to 30 C). The test writes the coolant "
+             "floor and the warm-up gate and restores them; four M8/M9 sessions, the first with "
+             "the loop heater on for a few minutes."],
+      description="Both low-side gates, proven at room temperature by moving them above the "
+                  "loop. Warm-up: the start gate set 1 C above the coolant makes the next run "
+                  "session hold (WARMUP, hold, fire blocked, phase warm-up) with the loop heater "
+                  "on and the fans idle; the coolant climbs to the gate and the session releases "
+                  "into run with the verdict OK, the heater off and the run fans up. Floor: with "
+                  "the start gate off, a floor set 2 C above the coolant makes the next session "
+                  "hold COLD with fire blocked. Both at 0 are off, reported in gates_off with the "
+                  "run-start log line, and the session reads OK. Restored, everything reads as "
+                  "before.")
+def floor_and_warm_up(ctx):
+    fc = ctx.forgectrl
+    ev = ctx.evidence
+    before = fc.settings()
+    orig = {k: before.get(k, "") for k in LOW_KEYS}
+    ev["orig"] = orig
+    ctx.log("original: %s", orig)
+    up = (fc.status().get("coolant") or {}).get("up_c")
+    ctx.check(up is not None and 10.0 <= up <= 30.0, "coolant outside the test's range (up_c %s)", up)
+    c0 = _cool(fc)
+    ctx.check(c0.get("verdict") == "OK" and c0.get("gates_off") == [],
+              "engine is not at OK with every gate on before the test: %s", c0)
+    gates = before.get("gates") or {}
+    g_min, g_start = gates.get("cool_temp_min") or {}, gates.get("cool_temp_start") or {}
+    ctx.check(g_min.get("gate") == "coolant_min" and g_min.get("off") == "low",
+              "settings reply does not describe cool_temp_min as the coolant_min gate, off at zero: %s", g_min)
+    ctx.check(g_start.get("gate") == "warm_up" and g_start.get("off") == "low",
+              "settings reply does not describe cool_temp_start as the warm_up gate, off at zero: %s", g_start)
+
+    restored = False
+    with ctx.grbl() as grbl:
+        ctx.check(grbl.status_report()["state"].startswith("Idle"), "controller is not idle")
+        try:
+            # Leg 1: the warm-up hold and its release. The gate sits just
+            # above the loop, so the heater reaches it in a few minutes.
+            gate = round(up + WARMUP_ABOVE_C, 1)
+            _set_gates(ctx, fc, {"cool_temp_start": str(gate), "cool_temp_min": orig["cool_temp_min"]})
+            c = _hold_session(ctx, grbl, fc, lambda c: c.get("verdict") == "WARMUP", "warm-up hold", VERDICT_WAIT_S)
+            ev["warmup_hold"] = c
+            heater = hw.sysfs_int(HEATER_PWM)
+            duty = _duties()
+            ev["warmup_heater_pwm"] = heater
+            ev["warmup_duty"] = duty
+            ctx.check(c.get("verdict") == "WARMUP", "start gate %s C over coolant %.1f C did not hold the session: %s",
+                      gate, up, c)
+            ctx.check(c.get("fire_ok") is False and c.get("hold") is True, "WARMUP without fire blocked and a hold: %s", c)
+            ctx.check(c.get("phase") == "warm-up", "phase %r during the warm-up hold, expected warm-up", c.get("phase"))
+            ctx.check(heater is not None and heater > 0, "the loop heater is not on during the warm-up (%s=%s)", HEATER_PWM, heater)
+            ctx.check(duty == IDLE_DUTY, "the fans are not idle during the warm-up: %s", duty)
+            t0 = time.time()
+            c = {}
+            while time.time() - t0 < WARMUP_RELEASE_S:
+                ctx.checkpoint()
+                ctx.sleep(5)
+                c = _cool(fc)
+                if c.get("verdict") != "WARMUP" or c.get("phase") != "warm-up":
+                    break
+            ev["warmup_release_s"] = round(time.time() - t0)
+            ev["warmup_release"] = c
+            ctx.log("warm-up release after %s s: verdict %s phase %s up %s (gate %s)", ev["warmup_release_s"],
+                    c.get("verdict"), c.get("phase"), c.get("up_c"), gate)
+            ctx.check(c.get("verdict") == "OK" and c.get("phase") == "run",
+                      "the warm-up did not release into a run session within %d s: %s", WARMUP_RELEASE_S, c)
+            ctx.check(c.get("fire_ok") is True and c.get("hold") is False, "released warm-up without fire_ok and no hold: %s", c)
+            ctx.sleep(2)
+            heater = hw.sysfs_int(HEATER_PWM)
+            duty = _duties()
+            ev["run_heater_pwm"] = heater
+            ev["run_duty"] = duty
+            ctx.check(heater == 0, "the loop heater stayed on after the release (%s=%s)", HEATER_PWM, heater)
+            ctx.check(duty != IDLE_DUTY, "the run fans did not come up at the release: %s", duty)
+            ctx.check(_tail_has(fc, "warm-up complete: coolant "), "the warm-up release line is missing from the forgectrl log")
+            grbl.command("M9")
+            _session_ended(ctx, fc, "warm-up")
+
+            # Leg 2: the floor. The start gate off, the floor above the
+            # (now warmer) loop.
+            up2 = (fc.status().get("coolant") or {}).get("up_c") or up
+            floor = round(min(up2 + 2.0, 32.0), 1)
+            ctx.check(up2 < floor, "coolant %.1f C leaves no room under the ceiling for a floor above it", up2)
+            _set_gates(ctx, fc, {"cool_temp_start": "0", "cool_temp_min": str(floor)})
+            c = _run_session(ctx, grbl, fc, lambda c: c.get("verdict") == "COLD", "floor")
+            ev["floor"] = c
+            ctx.check(c.get("verdict") == "COLD", "floor %s C over coolant %.1f C did not trip: %s", floor, up2, c)
+            ctx.check(c.get("fire_ok") is False and c.get("hold") is True, "COLD without fire blocked and a hold: %s", c)
+            ctx.check(c.get("gates_off") == ["warm_up"], "gates_off %s with the start gate at 0, expected [warm_up]",
+                      c.get("gates_off"))
+
+            # Leg 3: both at zero: off, said so, and the session reads OK.
+            _set_gates(ctx, fc, {"cool_temp_start": "0", "cool_temp_min": "0"})
+            c = _run_session(ctx, grbl, fc, lambda c: c.get("verdict") == "OK" and len(c.get("gates_off") or []) == 2,
+                             "both off")
+            ev["both_off"] = c
+            ctx.check(c.get("verdict") == "OK", "gates at 0 did not clear the hold: %s", c)
+            ctx.check(sorted(c.get("gates_off") or []) == ["coolant_min", "warm_up"],
+                      "gates_off %s, expected [coolant_min, warm_up]", c.get("gates_off"))
+            ctx.check(_tail_has(fc, "gate coolant_min OFF: cool_temp_min = 0"),
+                      "the run-start log line for the floor off is missing from the forgectrl log")
+
+            # Restore, and prove the restore at the next run start.
+            _set_gates(ctx, fc, orig)
+            restored = True
+            c = _run_session(ctx, grbl, fc, lambda c: c.get("verdict") == "OK" and not c.get("gates_off"), "restored")
+            ev["restored"] = c
+            ctx.check(c.get("verdict") == "OK" and c.get("gates_off") == [],
+                      "engine did not return to OK with no gate off after the restore: %s", c)
+        finally:
+            if not restored:
+                st, body = fc.post("/settings", params=orig)
+                ctx.log("restore on failure: POST /settings %s -> %s", orig, st)
+                try:
+                    grbl.command("M9")
+                    _session_ended(ctx, fc, "restore on failure")
+                    c = _run_session(ctx, grbl, fc,
+                                     lambda c: c.get("verdict") == "OK" and not c.get("gates_off"),
+                                     "restore on failure")
+                    ctx.log("restore on failure: engine %s gates_off %s", c.get("verdict"), c.get("gates_off"))
+                except Exception as e:      # the original failure is the one to report
+                    ctx.log("restore on failure: run session did not complete (%s)", e)
+    after = fc.settings()
+    ctx.check(all(after.get(k, "") == orig[k] for k in LOW_KEYS),
+              "settings not restored: %s", {k: after.get(k) for k in LOW_KEYS})
+    ctx.check(hw.sysfs_int(HEATER_PWM) == 0, "the loop heater is on after the test")
+    ctx.check(fc.wait_idle(60, abort=ctx.aborted), "machine did not return to idle")
+
+
 @test("cooling.critical-tier", title="The coolant critical line is a fault above the ceiling's pause",
       subsystem="cooling", kind="auto", mode="grbl", est_min=3,
       covers=_COOL_COVERS + [("forgectrl", "src/main.c")], requires=["cooling.gate-off"],
