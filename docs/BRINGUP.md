@@ -1225,36 +1225,12 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
 5. **Update system Phase 5 — recovery refresh.** The remaining phase of
     `docs/UPDATE-SYSTEM.md` (a refreshed recovery image in boot0); Phases 0–4
     are done.
-6. **Head accelerometer crash detector, and the head IRQ (planned;
-    exploratory).** The factory's head crash detector is the head
-    accelerometer's own on-chip interrupt generator, armed per job from the
-    HA* header thresholds and read by polling the sensor; the head IRQ is the
-    coarse aggregate path to that event and the others (hall, beam). Both are
-    one mechanism (the facts bank, "The head MCU flag register and HEAD_IRQ"
-    and "The head accelerometer"), which is why these two items are one. The
-    detector is adopted, not measured from scratch: the earlier plan to
-    bench-measure a filter is moot now that the HA* thresholds are known to be
-    LIS2HH12 register values at a known full scale.
-
-    The detector arms the LIS2HH12 interrupt generator over i2c-3 (per-axis
-    threshold, duration) and polls IG_SRC1 for a latched per-axis trip, on
-    the factory's two-tier shape (an alert that pauses, an abort that fails).
-    The rail-contact signature in the facts bank sets the first threshold in
-    register units; a pause on contact is the first use. ForgeFIRM already
-    reads the head accel raw for liveness, so this shares the bus, not new
-    hardware. The readout path is settled by the de-risk drill
-    (`scripts/bench/accel_crash_probe.py`, on the bench page; the record is
-    in CAMPAIGN-LOG): the detector is **forgectrl-only**. The IG registers
-    (0x30 to 0x35) program and poll over i2c-dev (I2C_SLAVE_FORCE) while
-    `st_accel` stays bound, and the liveness raw reads keep working through
-    an armed window. Keeping the factory full scale (no CTRL4 write) keeps
-    the coexistence clean, and the armed detector must own the ODR: the
-    facts bank ("The head accelerometer") has the power-down behavior. The
-    gravity axis rules the thresholds: X and Y arm below 1 g, a Z threshold
-    must sit above 1 g plus margin. Owed: the forgectrl detector itself,
-    per-state (idle/run) thresholds seeded from a captured cut header's HA*
-    values, and the two tiers wired into the existing feed-hold and
-    stop-plus-latch paths.
+6. **Crash-watch bench commissioning, and the head IRQ (exploratory).**
+    Commission the crash watch on the bench, on the next image: a knock
+    inside an armed window must walk both tiers (`BUMP` holds and
+    releases after the quiet polls; `CRASH` stops motion and locks the
+    latch for the session), and judge the shipped thresholds against
+    that knock.
 
     Owed for the head IRQ, only if a coarse hardware interrupt is wanted
     instead of the poll: arm the accel bit in the head MCU (reg 0x03/0x04),

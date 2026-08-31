@@ -70,7 +70,8 @@ WHO_AM_I = 0x0F
 WHO_AM_I_LIS2HH12 = 0x41
 CTRL1 = 0x20
 CTRL4 = 0x23                     # bits 5:4 = FS (00=+/-2g, 10=+/-4g, 11=+/-8g)
-CTRL7 = 0x26                     # bit 0 = LIR1 (latch IG_SRC1, read-to-clear)
+CTRL7 = 0x26                     # bit 2 = LIR1 (latch IG_SRC1, read-to-clear;
+                                 # bit 3 = LIR2, bits 1:0 are the 4D enables)
 OUT_X_L = 0x28
 IG_CFG1 = 0x30                   # AOI,6D,ZHIE,ZLIE,YHIE,YLIE,XHIE,XLIE
 IG_SRC1 = 0x31                   # IA(6),ZH,ZL,YH,YL,XH,XL
@@ -182,7 +183,7 @@ def main():
     # Arm IG1: latch the source (CTRL7 LIR1), set the thresholds and
     # duration, then enable the axes last. Preserve CTRL7's other bits.
     ctrl7 = rd(fd, CTRL7)
-    wr(fd, CTRL7, ctrl7 | 0x01)
+    wr(fd, CTRL7, ctrl7 | 0x04)
     wr(fd, IG_THS_X1, ths)
     wr(fd, IG_THS_Y1, ths)
     wr(fd, IG_THS_Z1, ths)

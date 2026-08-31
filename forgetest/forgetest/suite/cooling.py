@@ -12,6 +12,7 @@ from .. import hw
 
 _COOL_COVERS = [("forgectrl", "src/cool.*"), ("forgectrl", "src/coolfmt.*"), ("forgectrl", "src/diag.*"),
                 ("forgectrl", "src/gates.*"), ("forgectrl", "src/airflow.*"),
+                ("forgectrl", "src/accel.*"),
                 ("forgectrl", "src/settings.*"),
                 ("forgectrl", "src/status.*"), ("forgectrl", "src/ui/**"),
                 ("grblhal-glowforge", "src/glowforge_cooling.*"),
@@ -833,6 +834,84 @@ def fire_watch_tiers(ctx):
     after = fc.settings()
     ctx.check(all(after.get(k, "") == orig[k] for k in FIRE_KEYS),
               "settings not restored: %s", {k: after.get(k) for k in FIRE_KEYS})
+    ctx.check(fc.wait_idle(60, abort=ctx.aborted), "machine did not return to idle")
+
+
+CRASH_KEYS = ("cool_accel_x_alert", "cool_accel_y_alert", "cool_accel_abort")
+CRASH_GATES = ["crash_abort", "crash_x_alert", "crash_y_alert"]
+
+
+@test("cooling.crash-watch-plumbing", title="The crash watch stays off the accelerometer unarmed and its gates say off",
+      subsystem="cooling", kind="auto", mode="grbl", est_min=3,
+      covers=_COOL_COVERS, requires=["kernel.latch-locked-idle"],
+      steps=["Machine idle, lid closed. The test writes the three crash thresholds and restores "
+             "them; two M8/M9 sessions, no fire, no motion."],
+      description="The head-accelerometer crash watch's plumbing, provable without an armed "
+                  "window: /cool/status carries accel_watch at watch with the factory-seeded "
+                  "thresholds standing; an unarmed run session never arms the watch (the "
+                  "coexistence contract: liveness and homing own the accel outside the armed "
+                  "window), so accel_watch reads watch through it; the three thresholds at 0 "
+                  "read as the three crash gates off by value (gates_off names them) with the "
+                  "session OK; a threshold past the register range is refused; restored, the "
+                  "gates read ok. The tiers themselves (BUMP, CRASH) trip only on a physical "
+                  "knock inside an armed window and are commissioned at the bench, not here.")
+def crash_watch_plumbing(ctx):
+    fc = ctx.forgectrl
+    ev = ctx.evidence
+    before = fc.settings()
+    orig = {k: before.get(k, "") for k in CRASH_KEYS}
+    ev["orig"] = orig
+    ctx.log("original: %s", orig)
+    gates = (before.get("gates") or {})
+    for k in CRASH_KEYS:
+        g = gates.get(k) or {}
+        ctx.check(g.get("gate", "").startswith("crash_"), "settings gates has no %s row: %s", k, g)
+    c0 = _cool(fc)
+    ctx.check(c0.get("accel_watch") == "watch",
+              "accel_watch %r at idle with thresholds set, expected watch", c0.get("accel_watch"))
+
+    st, body = fc.post("/settings", params={"cool_accel_x_alert": "300"})
+    ctx.check(st != 200 or body.get("cool_accel_x_alert") != "300",
+              "a threshold past the register range (300) was accepted")
+
+    restored = False
+    with ctx.grbl() as grbl:
+        ctx.check(grbl.status_report()["state"].startswith("Idle"), "controller is not idle")
+        try:
+            # Leg 1: an unarmed session never arms the watch.
+            c = _run_session(ctx, grbl, fc, lambda c: c.get("phase") == "run", "unarmed session")
+            ev["unarmed"] = c
+            ctx.check(c.get("accel_watch") == "watch",
+                      "accel_watch %r in an unarmed run session, expected watch", c.get("accel_watch"))
+            ctx.check(c.get("verdict") == "OK", "unarmed session not OK: %s", c)
+
+            # Leg 2: the three thresholds at zero are the gates off.
+            _set_gates(ctx, fc, {k: "0" for k in CRASH_KEYS})
+            c = _run_session(ctx, grbl, fc,
+                             lambda c: c.get("verdict") == "OK" and
+                             set(CRASH_GATES) <= set(c.get("gates_off") or []),
+                             "watch off")
+            ev["off"] = c
+            ctx.check(set(CRASH_GATES) <= set(c.get("gates_off") or []),
+                      "gates_off %s does not name the three crash gates", c.get("gates_off"))
+            ctx.check(c.get("verdict") == "OK", "the watch at zero did not read OK: %s", c)
+
+            # Restore, and prove the gates read ok again.
+            _set_gates(ctx, fc, orig)
+            restored = True
+            c = _run_session(ctx, grbl, fc,
+                             lambda c: not (set(CRASH_GATES) & set(c.get("gates_off") or [])),
+                             "restored")
+            ev["restored"] = c
+            ctx.check(not (set(CRASH_GATES) & set(c.get("gates_off") or [])),
+                      "the crash gates stayed off after the restore: %s", c.get("gates_off"))
+        finally:
+            if not restored:
+                st, body = fc.post("/settings", params=orig)
+                ctx.log("restore on failure: POST /settings %s -> %s", orig, st)
+    after = fc.settings()
+    ctx.check(all(after.get(k, "") == orig[k] for k in CRASH_KEYS),
+              "settings not restored: %s", {k: after.get(k) for k in CRASH_KEYS})
     ctx.check(fc.wait_idle(60, abort=ctx.aborted), "machine did not return to idle")
 
 
