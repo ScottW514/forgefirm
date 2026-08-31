@@ -593,6 +593,104 @@ def floor_and_warm_up(ctx):
     ctx.check(fc.wait_idle(60, abort=ctx.aborted), "machine did not return to idle")
 
 
+TEC_KEYS = ("cool_tec_present", "cool_tec_on_c", "cool_tec_off_c")
+TEC_ATTR = "thermal/tec_on"
+TEC_WAIT_S = 20             # settings re-read at run start, 1 Hz ticks
+
+
+@test("cooling.tec-drive", title="The TEC runs on its hysteresis only with airflow and only when declared fitted",
+      subsystem="cooling", kind="auto", mode="grbl", est_min=5,
+      covers=_COOL_COVERS, requires=["kernel.latch-locked-idle"],
+      steps=["Machine idle, coolant at room temperature (10 to 30 C). The test declares the TEC "
+             "fitted, moves its thresholds under the loop, runs two short M8/M9 sessions and "
+             "restores everything. On a machine without the part the line toggles into nothing."],
+      description="TEC policy at room temperature, thresholds moved under the loop so the "
+                  "hysteresis wants the cooler on. Declared fitted, a run session drives "
+                  "thermal/tec_on to 1 (airflow up) and the session's end returns it to 0 (no "
+                  "airflow at idle). Declared not fitted, the same session leaves the line at 0. "
+                  "The cross-check refuses an off threshold at or under the coolant floor, and "
+                  "off must sit under on. The line has no readback, so the last written value is "
+                  "what the test reads; the drive rule is the engine's, never the cloud's.")
+def tec_drive(ctx):
+    fc = ctx.forgectrl
+    ev = ctx.evidence
+    before = fc.settings()
+    orig = {k: before.get(k, "") for k in TEC_KEYS}
+    ev["orig"] = orig
+    ctx.log("original: %s", orig)
+    up = (fc.status().get("coolant") or {}).get("up_c")
+    ctx.check(up is not None and 10.0 <= up <= 30.0, "coolant outside the test's range (up_c %s)", up)
+    ctx.check(hw.sysfs_int(TEC_ATTR) == 0, "the TEC line is not 0 at idle before the test")
+    on_c, off_c = round(up - 2.0, 1), round(up - 4.0, 1)
+
+    # The cross-checks, before anything runs: off under on, off above the floor.
+    st, body = fc.post("/settings", params={"cool_tec_on_c": "18", "cool_tec_off_c": "19"})
+    ctx.check(st == 400, "an off threshold over the on threshold was accepted (%s %s)", st, body)
+    st, body = fc.post("/settings", params={"cool_tec_off_c": "6", "cool_temp_min": "7"})
+    ctx.check(st == 400, "an off threshold under the coolant floor was accepted (%s %s)", st, body)
+
+    restored = False
+    with ctx.grbl() as grbl:
+        ctx.check(grbl.status_report()["state"].startswith("Idle"), "controller is not idle")
+        try:
+            # Leg 1: fitted, thresholds under the loop: on with the session's
+            # airflow, off again at idle.
+            _set_gates(ctx, fc, {"cool_tec_present": "1", "cool_tec_on_c": str(on_c),
+                                 "cool_tec_off_c": str(off_c)})
+            ctx.check(_cool(fc).get("phase") != "run", "a run session is already open")
+            grbl.command("M8")
+            t0 = time.time()
+            tec = 0
+            while time.time() - t0 < TEC_WAIT_S:
+                ctx.sleep(1)
+                tec = hw.sysfs_int(TEC_ATTR)
+                if tec:
+                    break
+            ev["tec_on_after_s"] = round(time.time() - t0)
+            ctx.log("fitted, in session: %s=%s after %s s", TEC_ATTR, tec, ev["tec_on_after_s"])
+            ctx.check(tec == 1, "the TEC did not come on in a run session with its threshold under the loop")
+            ctx.check(_tail_has(fc, "TEC on: coolant "), "the TEC-on line is missing from the forgectrl log")
+            grbl.command("M9")
+            _session_ended(ctx, fc, "tec leg 1")
+            t0 = time.time()
+            while time.time() - t0 < 30:
+                ctx.sleep(1)
+                if _cool(fc).get("phase") == "idle" and hw.sysfs_int(TEC_ATTR) == 0:
+                    break
+            tec = hw.sysfs_int(TEC_ATTR)
+            ev["tec_after_session"] = tec
+            ctx.log("after the session: phase %s %s=%s", _cool(fc).get("phase"), TEC_ATTR, tec)
+            ctx.check(tec == 0, "the TEC stayed on with no airflow (idle after the session)")
+
+            # Leg 2: not fitted: the same session leaves the line alone.
+            _set_gates(ctx, fc, {"cool_tec_present": "0", "cool_tec_on_c": str(on_c),
+                                 "cool_tec_off_c": str(off_c)})
+            c = _run_session(ctx, grbl, fc, lambda c: c.get("phase") == "run", "tec leg 2")
+            tec = hw.sysfs_int(TEC_ATTR)
+            ev["tec_not_fitted"] = tec
+            ctx.check(tec == 0, "the TEC was driven while declared not fitted (%s=%s)", TEC_ATTR, tec)
+
+            # Restore, and prove the next session reads it back.
+            _set_gates(ctx, fc, orig)
+            restored = True
+            c = _run_session(ctx, grbl, fc, lambda c: c.get("verdict") == "OK", "restored")
+            ev["restored"] = c
+        finally:
+            if not restored:
+                st, body = fc.post("/settings", params=orig)
+                ctx.log("restore on failure: POST /settings %s -> %s", orig, st)
+                try:
+                    grbl.command("M9")
+                    _session_ended(ctx, fc, "restore on failure")
+                except Exception as e:
+                    ctx.log("restore on failure: session end did not complete (%s)", e)
+    after = fc.settings()
+    ctx.check(all(after.get(k, "") == orig[k] for k in TEC_KEYS),
+              "settings not restored: %s", {k: after.get(k) for k in TEC_KEYS})
+    ctx.check(hw.sysfs_int(TEC_ATTR) == 0, "the TEC line is not 0 after the test")
+    ctx.check(fc.wait_idle(60, abort=ctx.aborted), "machine did not return to idle")
+
+
 @test("cooling.critical-tier", title="The coolant critical line is a fault above the ceiling's pause",
       subsystem="cooling", kind="auto", mode="grbl", est_min=3,
       covers=_COOL_COVERS + [("forgectrl", "src/main.c")], requires=["cooling.gate-off"],
