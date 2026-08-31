@@ -1225,13 +1225,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
 5. **Update system Phase 5 — recovery refresh.** The remaining phase of
     `docs/UPDATE-SYSTEM.md` (a refreshed recovery image in boot0); Phases 0–4
     are done.
-6. **Crash-watch bench commissioning, and the head IRQ (exploratory).**
-    Commission the crash watch on the bench, on the next image: a knock
-    inside an armed window must walk both tiers (`BUMP` holds and
-    releases after the quiet polls; `CRASH` stops motion and locks the
-    latch for the session), and judge the shipped thresholds against
-    that knock.
-
+6. **Head IRQ (exploratory).**
     Owed for the head IRQ, only if a coarse hardware interrupt is wanted
     instead of the poll: arm the accel bit in the head MCU (reg 0x03/0x04),
     watch GPIO3_22, and read reg 0x02 to identify and clear. The beam-detect
