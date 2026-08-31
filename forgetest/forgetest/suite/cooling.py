@@ -691,6 +691,138 @@ def tec_drive(ctx):
     ctx.check(fc.wait_idle(60, abort=ctx.aborted), "machine did not return to idle")
 
 
+FIRE_KEYS = ("cool_fire_q1_alert", "cool_fire_q1_critical", "cool_fire_q2_alert", "cool_fire_q2_critical")
+FIRE_WAIT_S = 25            # settings re-read at run start, two-tick breach, 1 Hz
+
+
+@test("cooling.fire-watch-tiers", title="The lid-IR fire watch pauses at its alert and fails at its critical",
+      subsystem="cooling", kind="auto", mode="grbl", est_min=6,
+      covers=_COOL_COVERS, requires=["kernel.latch-locked-idle"],
+      steps=["Machine idle, lid closed, lid lamp at its resting level. The test moves the flame "
+             "thresholds under the lamp's own reading and restores them; three M8/M9 sessions, "
+             "no fire."],
+      description="The factory-shaped fire watch, proven with the lid lamp as the flame "
+                  "stand-in: the four lid-IR channels read the resting lamp at a known level, "
+                  "so a q1 alert moved under that level must hold the session (FLAME, hold, "
+                  "fire blocked, fire_watch alert) and release once the threshold is restored "
+                  "mid-session; a q1 critical moved under it must stop motion, lock the laser "
+                  "latch and latch FIRE for the rest of the session; all four thresholds at 0 "
+                  "read as the four flame gates off and the watch reads watch. Restored, the "
+                  "watch reads armed at OK.")
+def fire_watch_tiers(ctx):
+    fc = ctx.forgectrl
+    ev = ctx.evidence
+    before = fc.settings()
+    orig = {k: before.get(k, "") for k in FIRE_KEYS}
+    ev["orig"] = orig
+    ctx.log("original: %s", orig)
+    st0 = fc.status()
+    irs = st0.get("lid_ir")
+    ctx.check(isinstance(irs, list) and len(irs) == 4 and all(isinstance(v, int) for v in irs),
+              "/status lid_ir is not four readings: %s", irs)
+    q1 = sorted(irs)[0]
+    ev["lid_ir_idle"] = irs
+    ctx.check(20 <= q1 <= 250, "the resting lamp reads %s on the lowest channel; the test needs 20 to 250", q1)
+    c0 = _cool(fc)
+    ctx.check(c0.get("verdict") == "OK" and c0.get("fire_watch") == "armed",
+              "engine not at OK with the watch armed before the test: %s", c0)
+
+    restored = False
+    with ctx.grbl() as grbl:
+        ctx.check(grbl.status_report()["state"].startswith("Idle"), "controller is not idle")
+        try:
+            # Leg 1: the pause tier. The q1 alert under the lamp reading
+            # holds the session; restoring it mid-session releases the hold.
+            _set_gates(ctx, fc, {"cool_fire_q1_alert": str(max(1, q1 - 10))})
+            grbl.command("M8")
+            t0 = time.time()
+            c = {}
+            while time.time() - t0 < FIRE_WAIT_S:
+                ctx.sleep(1)
+                c = _cool(fc)
+                if c.get("verdict") == "FLAME":
+                    break
+            ev["alert"] = c
+            ctx.log("alert leg: verdict %s fire_watch %s hold %s fire_ok %s", c.get("verdict"),
+                    c.get("fire_watch"), c.get("hold"), c.get("fire_ok"))
+            ctx.check(c.get("verdict") == "FLAME", "q1 alert under the lamp did not hold the session: %s", c)
+            ctx.check(c.get("hold") is True and c.get("fire_ok") is False, "FLAME without a hold and fire blocked: %s", c)
+            ctx.check(c.get("fire_watch") == "alert", "fire_watch %r during the alert, expected alert", c.get("fire_watch"))
+            ctx.check(_tail_has(fc, "lid IR flame alert (quartiles "), "the flame-alert line is missing from the forgectrl log")
+            # The release: the settings re-read is at run start, so the
+            # release lever mid-session is the env-free path - restore the
+            # threshold and end the session; the alert must not survive
+            # into the next one.
+            _set_gates(ctx, fc, {"cool_fire_q1_alert": orig["cool_fire_q1_alert"]})
+            grbl.command("M9")
+            _session_ended(ctx, fc, "alert leg")
+            c = _run_session(ctx, grbl, fc, lambda c: c.get("verdict") == "OK", "post-alert")
+            ctx.check(c.get("verdict") == "OK", "the alert survived into a fresh session: %s", c)
+
+            # Leg 2: the fail tier. The q1 critical under the lamp reading
+            # stops the session and latches FIRE until it ends.
+            _set_gates(ctx, fc, {"cool_fire_q1_critical": str(max(2, q1 - 5)),
+                                 "cool_fire_q1_alert": str(max(1, q1 - 10))})
+            grbl.command("M8")
+            t0 = time.time()
+            c = {}
+            while time.time() - t0 < FIRE_WAIT_S:
+                ctx.sleep(1)
+                c = _cool(fc)
+                if c.get("verdict") == "FIRE":
+                    break
+            ev["critical"] = c
+            ctx.log("critical leg: verdict %s fire_watch %s", c.get("verdict"), c.get("fire_watch"))
+            ctx.check(c.get("verdict") == "FIRE", "q1 critical under the lamp did not latch FIRE: %s", c)
+            ctx.check(c.get("fire_watch") == "ALARM", "fire_watch %r during FIRE, expected ALARM", c.get("fire_watch"))
+            ilk = hw.sysfs_int("cnc/interlock_circuit")
+            ev["interlock_circuit"] = ilk
+            ctx.check(ilk is not None and (ilk & 8), "the laser latch is not locked under FIRE (interlock_circuit=%s)", ilk)
+            ctx.check(_tail_has(fc, "LID IR FIRE SIGNAL (quartiles "), "the FIRE line is missing from the forgectrl log")
+            _set_gates(ctx, fc, {"cool_fire_q1_critical": orig["cool_fire_q1_critical"],
+                                 "cool_fire_q1_alert": orig["cool_fire_q1_alert"]})
+            grbl.command("M9")
+            _session_ended(ctx, fc, "critical leg")
+
+            # Leg 3: all four at zero: the watch off, said so, session OK.
+            _set_gates(ctx, fc, {k: "0" for k in FIRE_KEYS})
+            c = _run_session(ctx, grbl, fc, lambda c: c.get("verdict") == "OK" and len(c.get("gates_off") or []) == 4,
+                             "watch off")
+            ev["off"] = c
+            ctx.check(c.get("verdict") == "OK", "the watch at zero did not read OK: %s", c)
+            ctx.check(sorted(c.get("gates_off") or []) == ["flame_q1_alert", "flame_q1_critical",
+                                                           "flame_q2_alert", "flame_q2_critical"],
+                      "gates_off %s, expected the four flame gates", c.get("gates_off"))
+            ctx.check(c.get("fire_watch") == "watch", "fire_watch %r with every tier at 0, expected watch",
+                      c.get("fire_watch"))
+
+            # Restore, and prove the watch is armed again.
+            _set_gates(ctx, fc, orig)
+            restored = True
+            c = _run_session(ctx, grbl, fc,
+                             lambda c: c.get("verdict") == "OK" and not c.get("gates_off"), "restored")
+            ev["restored"] = c
+            ctx.check(c.get("verdict") == "OK" and c.get("fire_watch") == "armed",
+                      "engine did not return to OK with the watch armed: %s", c)
+        finally:
+            if not restored:
+                st, body = fc.post("/settings", params=orig)
+                ctx.log("restore on failure: POST /settings %s -> %s", orig, st)
+                try:
+                    grbl.command("M9")
+                    _session_ended(ctx, fc, "restore on failure")
+                    c = _run_session(ctx, grbl, fc,
+                                     lambda c: c.get("verdict") == "OK" and not c.get("gates_off"),
+                                     "restore on failure")
+                    ctx.log("restore on failure: engine %s gates_off %s", c.get("verdict"), c.get("gates_off"))
+                except Exception as e:
+                    ctx.log("restore on failure: run session did not complete (%s)", e)
+    after = fc.settings()
+    ctx.check(all(after.get(k, "") == orig[k] for k in FIRE_KEYS),
+              "settings not restored: %s", {k: after.get(k) for k in FIRE_KEYS})
+    ctx.check(fc.wait_idle(60, abort=ctx.aborted), "machine did not return to idle")
+
+
 @test("cooling.critical-tier", title="The coolant critical line is a fault above the ceiling's pause",
       subsystem="cooling", kind="auto", mode="grbl", est_min=3,
       covers=_COOL_COVERS + [("forgectrl", "src/main.c")], requires=["cooling.gate-off"],
