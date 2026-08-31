@@ -827,8 +827,9 @@ is committed.
   too: CMD/DATA `0x17069`, CLK `0x10069` (SPEED_MED, DSE 48 Ω, fast slew, HYS;
   47 kΩ pull-up on CMD/DATA only). eMMC (uSDHC3) and the SD slot (uSDHC2) use
   `0x17059`/`0x10059` (80 Ω), SD2_DAT3 `0x13059`. An SDIO CRC error surfaces as
-  `sdio write failed (-84)` and costs ~1 s of Wi-Fi (wlcore firmware recovery)
-  — see "Wi-Fi SDIO CRC watch" under Next work.
+  `sdio write failed (-84)` and costs ~1 s of Wi-Fi (wlcore firmware recovery);
+  with these pad values it does not recur (the closed watch record is in
+  `CAMPAIGN-LOG.md`).
 - **SDMA pulse engine**: ring size = the `ring_mb` module parameter (default
   32 MiB, the factory ring size; power of two, must fit the 32 MiB
   `cnc-pulsebuf` no-map DT pool). Free = size − 32 KiB gap, so 33,521,664 bytes.
@@ -969,6 +970,24 @@ is committed.
   share off. With the pump on, a heater slug reaches the upstream sensor
   within seconds and inflates the instant reading by a degree; the warm-up
   release therefore judges a one-minute rolling minimum of that reading.
+- **Coolant-ADC offsets around a lit tube.** The air-assist fan's return
+  current rides a ground path the thermistor reference shares, so both coolant
+  sensors read about 1.2 C low at the run duty (proportional to the fan's
+  current, both sensors alike; not crosstalk on the sensor cable and not HV).
+  `cool_aa_offset_counts` carries the machine's measured value (the
+  `aa-offset-calibrate` diagnostic measures it, the panel's Apply writes it;
+  zero is the factory's uncorrected reading; the bench machine carries 16):
+  without it the over-temperature gates read the coolant about 1.2 C cooler
+  than it is while the air assist runs. The flow check is immune either way
+  because it reads means and takes its baseline under the run profile. A lit
+  CW window adds about 1.5 C to the check's rise (0.5 C at 45 percent
+  density); the engine takes the tube's share off (`cool_laser_heat_cw`,
+  `cool_laser_heat_density`, bench-measured, per machine). With the tube lit
+  the offset also toggles between two levels mid-run (0.6 to 1.1 C, both
+  sensors together; not with the fans alone, not under motion, not in an
+  armed dark window). The toggling sits inside the ceiling's 2 C hysteresis
+  and the flow check reads means, so it has no gate consequence; its source
+  stays uncharacterized by decision.
 - **The four `pic/lid_ir_*` channels are first of all a photometer for the lid
   lamp.** Measured against `lid_led` (sysfs brightness, 0 to 1023): all four
   channels follow it as a straight line, 2 counts dark, 32 to 35 at 128, 54 to
@@ -987,6 +1006,21 @@ is committed.
   firing) and is the only live HV telemetry on this PSU (`hv_voltage` is
   grounded). `cnc/laser_pgood_sampled` stays 0 through real cutting: not usable
   here.
+- **The head IRQ and beam detect.** The EV_SW `head` bit (GPIO3_22, factory
+  pad HEAD_IRQ; the panel's "Head sense" row) is the head MCU's attention
+  line: idle LOW with a healthy head, pulsing on a head reboot (hence the
+  60 ms DT debounce), floating to the SoC pull-up with no head. The raw level
+  is not a presence signal; presence is the head answering at I²C 0x47. The
+  factory app answers the IRQ by reading the head's flag register (reg 0x05:
+  b0 hall_sensor, b1 accel_irq, b2 beam_detect_digital), so there are exactly
+  three candidate sources. The beam detector reads back as the digital flag
+  plus an analog level (reg 0x16), both head sysfs attrs: `beam_detect_analog`
+  sits near 1834 dark and reads 2600 to 2890 during S300/S400 fire (the
+  acceptance suite's mark witness), unmeasured at low fire energies. The
+  tunable detection model (regs 0x22 to 0x2a) is written with fixed values at
+  probe and not exposed as attrs. Whether the factory enables beam detect in
+  production is unknown: the v2.6.0 app carries a complete but config-gated
+  subsystem.
 - **Switches**: truthy = closed/OK for lid/doors/button. **SW_INTERLOCK is
   INVERTED**: the remote interlock (the regulatory 2-pin lockout connector)
   reads ACTIVE only when the loop is OPEN. Basic/Plus — including the bench
@@ -1119,9 +1153,8 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     and runs as designed: dev image `20260824230512`, 45 of 45 from nothing,
     36 of them unattended with the bench actuator in the loop, release
     authorized (the export is on the board at `/data/forgetest/export/`).
-    What is left is small. The ported bench tools are registered and
-    unit-tested but not yet driven from the page. Two catalog gaps from the
-    tool's own plan, `cooling.confirm-escalate` and
+    What is left is small. Two catalog gaps from the tool's own plan,
+    `cooling.confirm-escalate` and
     `cooling.fire-gate-blocks-arm`, are not ported (both need the pump
     switched by hand mid-run, so they are bench-tab material first). From
     the coverage maps: splitting gfutilities' `websocket.py`
@@ -1140,44 +1173,34 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
 5. **Update system Phase 5 — recovery refresh.** The remaining phase of
     `docs/UPDATE-SYSTEM.md` (a refreshed recovery image in boot0); Phases 0–4
     are done.
-6. **Head-IRQ source validation — beam-emission hypothesis (exploratory, not
-    gating).** The EV_SW `head` bit (GPIO3_22, factory pad HEAD_IRQ) is the head
-    MCU's attention line — idle LOW with a healthy head, pulsing on head reboot,
-    floating to the SoC pull-up with no head — so the raw level is not a
-    presence signal (presence = the head answering at I²C 0x47). The factory app
-    answers the IRQ by reading the head's flag register (reg 0x05: b0
-    hall_sensor, b1 accel_irq, b2 beam_detect_digital), so there are exactly
-    three candidate sources; the working hypothesis is the head's IR
-    beam-emission detector (digital flag + analog level reg 0x16, both already
-    head sysfs attrs; the tunable detection model at regs 0x22–0x2a is not
-    exposed). Whether the factory actually uses beam detect is unknown — the
-    v2.6.0 app carries a complete but config-gated subsystem — and detection at
-    low fire energies is unverified. Cheap opportunistic check during live fire:
-    log EV_SW head-bit edges plus `head/beam_detect_digital|_analog` while
-    firing.
+6. **Head-IRQ source validation (exploratory, not gating).** Which of the
+    three head flag sources drives the EV_SW `head` bit during a cut is
+    unknown; the working hypothesis is the beam-emission detector (the facts
+    bank, "The head IRQ and beam detect"). Owed, cheap and opportunistic
+    during live fire: log EV_SW head-bit edges plus
+    `head/beam_detect_digital|_analog` while firing, low fire energies
+    included. If the beam flag level-holds the IRQ, the panel row asserts
+    during sustained emission.
 
 7. **Gapless pause and resume in GRBL mode (planned).** A pause leaves a mark
     in the cut. With laser mode on, the core stops the beam at the start of the
     hold (`disable_laser_during_hold`, on by default), so the head travels the
     whole deceleration dark, and the resume re-accelerates from a standstill at
-    the point the decel ended — an unburned length, then a restart that dwells
+    the point the decel ended: an unburned length, then a restart that dwells
     through the accel. At constant power (`M3`) that restart is a deeper spot
     you can see; `M4` scales power with velocity and mostly hides it, but
     neither closes the gap. GRBL mode should pause and resume with no
     discontinuity in the cut, the way the factory does.
 
-    Cloud mode already does, on the kernel's waypoint resume: controlled stop,
-    laser-off backtrack (`cloud_pause_backtrack_ticks` 2000), then a laser-off
-    lead back up to speed on the next press (`cloud_resume_lead_ticks` 1950),
-    so the beam returns only once the head is retracing ground it already cut
-    and is back at feed. The kernel offers that mechanism to a live feed as
-    well: what bounds a backward run is the ring's retained history, not how
-    the ring was filled, and the 32 KiB the writer must leave clear is 3.2 s of
-    history at the print tick (`cnc/max_backtrack`, `UAPI.md`). What is not
-    settled is the bookkeeping above it: a backward run moves the head and the
-    kernel's counters while grblHAL's planner still holds a partly executed
-    block, so borrowing the mechanism means reconciling the two, and a GRBL
-    cut runs a much shorter queue than a cloud print does.
+    Cloud mode already does, on the kernel's waypoint resume
+    (`cloud_pause_backtrack_ticks` 2000, `cloud_resume_lead_ticks` 1950), and
+    the kernel offers the same mechanism to a live feed, bounded by the ring's
+    retained history (`cnc/max_backtrack`; the facts bank "SDMA pulse engine"
+    and `UAPI.md`). What is not settled is the bookkeeping above it: a
+    backward run moves the head and the kernel's counters while grblHAL's
+    planner still holds a partly executed block, so borrowing the mechanism
+    means reconciling the two, and a GRBL cut runs a much shorter queue than a
+    cloud print does.
 
     So the equivalent likely belongs above the ring, where grblHAL still holds
     what the kernel does not: the planned path. Shape to evaluate: capture the
@@ -1185,35 +1208,29 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     retrace back along the path and a laser-off accelerate-in, and unmask FIRE
     only once the head is at feed and has passed the captured point. Open: how
     far back is enough (2000/1950 ticks is a reference, not a transferable
-    number — the tick rates differ), whether the retrace can reuse planner
-    blocks or needs a synthesized one, what a hold inside an arc or a raster
-    line does to it, and how it composes with the armed window's disarm grace
-    across a long hold.
+    number, since the tick rates differ), whether the retrace can reuse
+    planner blocks or needs a synthesized one, what a hold inside an arc or a
+    raster line does to it, and how it composes with the armed window's disarm
+    grace across a long hold.
 
-8. **Head crash and rail-contact detector (planned).** The head
-    accelerometer is the motion-liveness probe and nothing more; the
-    factory runs two tiers off the same sensor (a per-axis alert that
-    pauses, a per-axis abort), and its thresholds arrive in every pulse
-    header in a unit and behind a filter that are not known. A detector
-    here is bench-measured from scratch, not adopted from the header: the
-    rail-contact signature in the facts bank (a 20 to 40 times jump within
-    4 ms on a fast strike, near-silent on a slow one) is the starting
-    point, and the header values are only a cross-check once the units
-    are established. A pause on contact, on the factory's shape, would be
-    the first use.
+8. **Head crash and rail-contact detector (planned).** Bench-measured from
+    scratch, not adopted from the pulse header: the factory's per-axis
+    alert/abort thresholds arrive in every header in a unit and behind a
+    filter that are not known, so the rail-contact signature in the facts
+    bank is the starting point and the header values are only a cross-check
+    once the units are established. A pause on contact, on the factory's
+    shape (an alert tier that pauses, an abort tier), would be the first
+    use.
 
 9. **A sender change while a job runs: discussion.** Today a sender that
     disconnects mid-job leaves the motion running to the end of what the
     controller holds, with the window closed and fire suppressed (the
     consent belonged to the displaced session), so the job finishes dark
     and the material is left with an unfinished cut. This is the stock
-    Grbl and grblHAL expectation for the motion: the controller has no
-    notion of sender presence, executes what its planner and RX ring hold,
-    and then waits; the core's stream code (`stream.c`,
-    `stream_disconnect`) only switches streams, with no hold and no
-    alarm, and senders treat a lost connection as a failed job (LightBurn
-    stops its own side and resumes nothing). ForgeFIRM adds only the
-    disarm on top. The open question is whether the disarm should also
+    Grbl and grblHAL expectation for the motion (the core switches streams
+    with no hold and no alarm, and senders treat a lost connection as a
+    failed job); ForgeFIRM adds only the disarm on top. The open question
+    is whether the disarm should also
     feed-hold the job, so a reconnecting sender can press and resume where
     the cut stopped instead of finding the head at the end of a dark pass:
     a hold parks the head over hot material with the assist air on the run
@@ -1221,39 +1238,16 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     running on leaves a clean stop position but wastes the piece. Decide
     with the gapless pause and resume item (7), which owns the resume
     mechanics.
-10. **The flow check while the tube is lit.** The arm-time heater check
-    starts at the session open, so with a prompt press the tube is lit
-    for most of its window, and a lit CW window adds about 1.5 C to the
-    rise (0.5 C at 45 % density) against a 1.6 C margin; on top of that the
-    engine takes its baseline from one sample while the coolant ADC
-    carries a common-mode offset of about 1 C that steps in when the
-    airflow goes to the run profile, steps out when it returns to idle,
-    and toggles between two levels in between. Together they put an
-    ordinary job's check within a few tenths of the limit. The engine now
-    reads means and takes the tube's share off (`cool_laser_heat_cw`,
-    `cool_laser_heat_density`), and `cooling.flow-under-load` is the
-    catalog's case. Owed: a re-measure of the two coefficients once a
-    second machine is on the bench (one tube, one supply so far); and if a
-    lit check still trips, the void-on-emission design with the tube as
-    its own flow tracer.
-    The offset's source is the air-assist fan's return current on a ground
-    path the thermistor reference shares (about 1.2 C at the run duty,
-    proportional to the fan's current, both sensors alike; not crosstalk
-    on the sensor cable and not HV). The check cancels it now that its
-    baseline is taken under the run profile, but the over-temperature
-    gates read the coolant about 1.2 C cooler than it is while the air
-    assist runs unless `cool_aa_offset_counts` carries the machine's value
-    (the `aa-offset-calibrate` diagnostic measures it, the panel's Apply
-    writes it; zero is the factory's uncorrected reading; the bench
-    machine carries 16). Owed: a second machine's value when one is on
-    the bench; and the mid-run
-    toggling between two levels (0.6 to 1.1 C, both sensors together),
-    which comes only with the tube lit: not with the fans alone, not under
-    motion, not in an armed dark window. The HV supply's input current on
-    a return the thermistor reference shares, or its switching, is what
-    remains; a scope on the two sensor lines during a cut is the next
-    instrument. It sits inside the ceiling's 2 C hysteresis and the flow
-    check reads means, so it is a measurement item, not a gate item.
+10. **The flow check on a second machine.** The lit-tube flow check is in
+    place: the engine reads means, takes its baseline under the run
+    profile, and takes the tube's share off (`cool_laser_heat_cw`,
+    `cool_laser_heat_density`); `cooling.flow-under-load` is the catalog's
+    case, and the coolant-ADC facts (the air-assist ground offset,
+    `cool_aa_offset_counts`, the tube-lit toggling) are in the facts bank.
+    Owed, when a second machine is on the bench (one tube, one supply so
+    far): re-measure the two heat coefficients and the machine's
+    air-assist offset; and if a lit check still trips, the
+    void-on-emission design with the tube as its own flow tracer.
 11. **Laser power-good: what the line means.** `cnc/laser_pgood` and its
     sampled count are defined in the UAPI (active low, one sample every
     ~3.9 ms), the facts bank records that the sampled count reads 0 through
