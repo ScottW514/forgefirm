@@ -1077,7 +1077,8 @@ is committed.
   `{version, download_url}` → resumable download to `/data/glowforge.fw` →
   verify against `/glowforge/pubkeys` → apply to the INACTIVE slot →
   `fw_setenv mmcpart mmcroot` → reboot. Factory `rootfs.ext4` is 65 MiB; the
-  ForgeFIRM rootfs is ~141 MB used, so it fits a 200 MiB slot with headroom.
+  ForgeFIRM release rootfs uses about 89 MiB, so it fits a 200 MiB slot with
+  headroom.
 - **Facts about the factory 2024 firmware** (learned during the slot install):
   no `/factory/imgN` mounts, the generic `fw_env.config` points at the WRONG
   device (use the per-device `fw_env_mmcblk2.config` — ffboot's selection
@@ -1328,23 +1329,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     are established. A pause on contact, on the factory's shape, would be
     the first use.
 
-18. **Image trims not taken.** Two rootfs reductions the kernel review left
-    on the table, each wanting a check before it lands. The `python3`
-    meta-package installs `python3-modules` (tkinter, idle, 2to3, pydoc,
-    ensurepip, venv, the debugger, doctest, asyncio, multiprocessing,
-    xmlrpc: ~10 MB) where the apps declare `python3-core` and a few modules,
-    so replacing it with the explicit set needs an import audit of gfcloud,
-    gfhome, gfhardware and gfutilities (the cloud tests are the check).
-    `libgnutls30`, `libunistring5`, `nettle` and `libgmp10` (~4.9 MB) sit on
-    the rootfs with no package depending on them and no binary linking them;
-    a `PACKAGE_EXCLUDE` experiment on a build would name the holder if there
-    is one. Five helper modules are built and not shipped (`crc7`,
-    `crc-ccitt`, `libcrc32c`, `st-accel-spi`, `st-sensors-spi`: 0.1 MB,
-    harmless). The debug features stay in the release kernel by decision
-    (`KPROBES`, `PERF_EVENTS`, `BPF_SYSCALL`, `DEBUG_FS`, `DEVMEM`,
-    `MAGIC_SYSRQ`: no runtime cost unused, root-only exposure, and root can
-    load modules anyway).
-19. **A sender change while a job runs: discussion.** Today a sender that
+18. **A sender change while a job runs: discussion.** Today a sender that
     disconnects mid-job leaves the motion running to the end of what the
     controller holds, with the window closed and fire suppressed (the
     consent belonged to the displaced session), so the job finishes dark
@@ -1363,7 +1348,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     running on leaves a clean stop position but wastes the piece. Decide
     with the gapless pause and resume item (16), which owns the resume
     mechanics.
-20. **The flow check while the tube is lit.** The arm-time heater check
+19. **The flow check while the tube is lit.** The arm-time heater check
     starts at the session open, so with a prompt press the tube is lit
     for most of its window, and a lit CW window adds about 1.5 C to the
     rise (0.5 C at 45 % density) against a 1.6 C margin; on top of that the
@@ -1396,7 +1381,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     remains; a scope on the two sensor lines during a cut is the next
     instrument. It sits inside the ceiling's 2 C hysteresis and the flow
     check reads means, so it is a measurement item, not a gate item.
-21. **Laser power-good: what the line means.** `cnc/laser_pgood` and its
+20. **Laser power-good: what the line means.** `cnc/laser_pgood` and its
     sampled count are defined in the UAPI (active low, one sample every
     ~3.9 ms), the facts bank records that the sampled count reads 0 through
     real cutting, and the cooling engine warns
@@ -1408,7 +1393,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     scope against `hv_current` through an armed cut, its meaning written
     into the facts bank and the UAPI, and then either a warning that means
     something or no warning.
-22. **Initial commissioning: measure and set the machine's own numbers
+21. **Initial commissioning: measure and set the machine's own numbers
     methodically.** Every tunable that was measured on the bench machine
     and shipped as a default varies from machine to machine: the flow
     check's bands and `cool_flow_rise`, the tube's heat coefficients

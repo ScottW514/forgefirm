@@ -4559,6 +4559,121 @@ check takes the tube's share off; `cool_flow_rise` needs no warm-end
 value. Records `bench-data/flow_warm_log_20260829b.txt`,
 `flow_warm_results_20260829b.json`.
 
+## 2026-08-31: the low-hanging items, one pass
+
+One session over the small open items, grouped into one build and one
+bench window. Host proof first, bench facts second, build third.
+
+**Rail policy (item 8, closed).** The GRBL driver wrote `cnc/enable` at
+init and at homing resume under the broker too. Now both writes run only
+when the driver opened the device itself (`!gfio_pulse_inherited()`);
+under the broker forgectrl owns the rail. The kernel probe starts in
+`disabled`, so a standalone controller still needs the write.
+grblHAL-glowforge fa9ed78; SERVICES.md "Rail policy" retagged
+`[implemented]`, no `[contract]` item is left. Proof: the null-sink build,
+`laser_stream_test.py` and `laser_lifecycle_test.py` green; a `$H` homing
+pass on the built image is the bench check.
+
+**`/cool/status` (item 8, closed).** Two changes in forgectrl 0e907f7.
+`armed` in the document now comes from `coolfmt_armed()`: the last
+report's flag while that report is within the 5 s timeout, false after
+(`tests/coolfmt_test.c`, five cases). A run session that never had the
+armed window open gets a zero-length smoke phase (`session_armed`,
+cleared as a session opens and set on any armed tick), so a homing
+motion, a hunt or a dark job goes run, thermal gate, idle. The cloud
+hunt keeps reporting `run`: the cloud catalog asserts it (the hunt's
+run phase carries the factory's motion fan profile), so the client is
+right and the engine changed. forgectrl host tests 14 of 14 under
+`-Werror`.
+
+**`laser.armed-kill` placement (item 12, decided).** It stays in the
+laser domain. The always-required core carries the emission witness with
+the armed-window disarm; the kill path is the forgectrl supervisor, and
+the `forgectrl/src/main.c` entry in the test's map re-requires it on each
+forgectrl change. Recorded in the site's Acceptance page (forgefirm-docs
+657d32e).
+
+**Image trims (item 18).** The import audit (an AST pass over
+python3-gfhardware, gfutilities, forgetest and the bench scripts against
+poky's `python3-manifest.json`) maps the runtime imports to `python3-core`
+plus `fcntl`, `json`, `logging`, `netclient`, `threading` (gfhardware and
+the apps) and `datetime`, `io`, `json`, `logging`, `threading`
+(gfutilities); forgetest adds `compression`, `crypt`, `io`, `math`,
+`netclient`, `netserver`, `shell`, `statistics`. The recipes declare
+those (meta-openglow 722bc00, forgetest.bb) and the image drops the
+`python3` meta-package that pulled `python3-modules`. The four libraries
+were not orphans: pkgdata names `libmicrohttpd` (its `https`
+PACKAGECONFIG) and `ulfius` (`WITH_GNUTLS`) as the holders of gnutls,
+which pulls nettle, gmp, libunistring and libtasn1. forgectrl serves
+plain HTTP and no websockets, so `libmicrohttpd_%.bbappend` removes
+`https` and ulfius builds with `-DWITH_GNUTLS=off -DWITH_WEBSOCKET=off`.
+forgefirm b334c4c. Built as release 20260831130656: the manifest lists 30 `python3-*`
+packages where the previous image had 62 (`python3-modules`,
+`python3-tkinter`, `-2to3`, `-asyncio`, `-idle`, `-pydoc`, `-venv` and
+the rest of the meta-package family gone; `python3-core`, `-fcntl`,
+`-json`, `-logging`, `-netclient`, `-threading`, `-datetime`, `-io` and
+what `requests`, `urllib3` and `websocket-client` pull stay), and
+`libgnutls30`, `nettle`, `libgmp10` and `libtasn1-6` are gone.
+`libunistring5` stays: `libidn2-0` holds it, and `libcurl4` holds
+`libidn2-0` (curl's IDN support, about 1 MB together; not taken). The
+release rootfs ext4 went from 151.3 MB to 129.8 MB and the wic.gz from
+44.0 MB to 35.1 MB. Platform change: the full campaign is owed on this
+image, and the cloud tests are the module check. The dev image is 20260831141210; against the release it adds only the
+emulator fixtures, `python3-statistics` (declared by forgetest for the
+bench scripts, with `python3-numbers` behind it) and `libgmp10` (gdb,
+from `tools-debug`), so the campaign on it proves the release module set.
+
+**Lid IR against the lamp (item 4).** The four `pic/lid_ir_*` channels
+read at eleven `lid_led` levels (sysfs brightness 0 to 1023, 2 s settle,
+three samples 1 s apart), lid closed, machine idle, on dev 20260831021059:
+
+| lid_led | ir1 | ir2 | ir3 | ir4 |
+|---|---|---|---|---|
+| 0 | 2 | 2 | 1 to 2 | 2 |
+| 64 | 18 to 19 | 17 | 18 to 19 | 20 |
+| 128 | 32 to 33 | 32 | 33 to 35 | 34 to 35 |
+| 192 | 43 to 44 | 42 to 43 | 44 to 45 | 45 to 46 |
+| 256 | 54 to 56 | 54 to 55 | 57 to 60 | 60 to 61 |
+| 384 | 77 | 75 to 77 | 81 to 83 | 82 to 85 |
+| 512 | 96 to 98 | 95 to 97 | 103 to 104 | 104 to 105 |
+| 640 | 115 | 113 to 115 | 121 to 123 | 123 to 124 |
+| 768 | 131 to 133 | 131 to 133 | 139 to 140 | 141 to 143 |
+| 896 | 146 to 148 | 147 to 148 | 157 to 160 | 157 to 159 |
+| 1023 | 161 to 162 | 161 to 163 | 172 | 173 to 177 |
+
+A straight line on every channel, about 0.16 counts per unit, channels 3
+and 4 about 7 percent above 1 and 2. The factory header's alert (275)
+and critical (688) sit above a fully lit lamp, and its baseline (3)
+matches the dark floor (2): the factory rides out the lamp by choosing
+thresholds above it. What stays unproven is the header's channel
+mapping, since all four channels behave alike while the header leaves
+the third and fourth quartiles at zero. The next cloud job's header is
+the comparison.
+
+**Wi-Fi SDIO (item 11).** `dmesg | grep -c "sdio .* failed"` read 0 after
+30 min on dev 20260831021059.
+
+**Lens-shading files (item 6).** `/data` is one partition for every slot,
+and a search of it (names with cam, lenc, regs, lens, shad, calib, four
+levels deep) found no camera register file. If the factory pushes such
+files, the app fetches them at run time; a factory-slot session with the
+app running is the step before any reimplementation.
+
+**Debug-kernel checks (item 10, assessed).** Not a quick check: a module
+unload powers the 40 V rail off (`stepper_power_off` in the remove path),
+and a forced `-EPROBE_DEFER` needs the 40 V regulator or the SDMA device
+unbound under the module's probe. Both are the rail-cycle gamble the
+rail policy exists to avoid. The item now says so; it waits for a bench
+slot that accepts the gamble.
+
+**Bench hygiene.** The 2026-08-20 factory-session shim was still on the
+board: `/data/manufacturing/run.sh` (the app launcher with the bench CA)
+and `/data/glowforge.conf` (server URLs and pin pointed at the bench
+proxy), while their `/data/bench-scratch/f1` was already gone. Removed as
+the tool's teardown does (no `glowforge.conf.orig` existed, so the conf
+is deleted and the factory app runs on its built-in defaults). `/data`
+holds only factory state and ForgeFIRM's own files again.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
@@ -6025,6 +6140,60 @@ The first live recording on image 20260831021059 then fit all seven rungs and th
 ### The laser power model closes; the working file retires, 2026-08-31
 
 The corner look on image 20260831021059 with the machine's own recorded curve: the operator lowered the corner rolloff from the default 2 to 1.5 and expects to go lower - the knob works, its right value is per machine, and the commissioning item gains a side-by-side chooser (the same pattern cut at several settings, the operator picks by eye, Apply writes the winner) as the tool for it. With that, every question the tree-root working file `LASER_DUTY_WORK.md` held is answered or homed: the model decision (density only), the measured curves, the floors, the switch's rise and removal, the rolloff, the recorder, and the raster proofs. Its conclusions live in BRINGUP's "Laser control (GRBL mode)" and the facts bank, its dated record in this log, and the file is deleted per its own charter. BRINGUP's "Next work" item 16 (the laser power model) closes and the later items renumber down by one (17 to 23 become 16 to 22).
+
+### Rail policy (item 8 bullet), closed 2026-08-31
+
+Closed: grblHAL-glowforge fa9ed78 writes `cnc/enable` only standalone;
+SERVICES.md "Rail policy" is `[implemented]`. The entry above has the proof.
+
+   - **Rail policy** (the one `[contract]` item left in SERVICES.md). The GRBL
+     driver still writes `cnc/enable` at init and at homing resume —
+     idempotent, since the rail is already up, so this is tidiness rather than
+     a bounce source.
+
+### `/cool/status` cosmetics (item 8 bullet), closed 2026-08-31
+
+Closed: forgectrl 0e907f7, `armed` from a fresh report only and a
+zero-length smoke phase for a session that never armed. The hunt keeps
+reporting `run` by design. The entry above has the proof.
+
+   - **`/cool/status` cosmetics.** The endpoint echoes the last reported `armed`
+     flag even when that report is stale (`report_age_s` tells the truth), and a
+     gfcloud homing session reports every motion as a job, so the engine cycles
+     run → smoke → idle per motion. Both are silent and safe.
+
+### The armed-kill core question (item 12), closed 2026-08-31
+
+Closed: `laser.armed-kill` stays in its domain, recorded in the site's
+Acceptance page (forgefirm-docs 657d32e).
+
+    whether `laser.armed-kill` belongs in the always-required core rather
+    than its domain is still an open call (the core carries the emission
+    witness).
+
+### Image trims not taken (item 18), closed 2026-08-31
+
+Closed: both reductions landed in forgefirm b334c4c and meta-openglow
+722bc00 and are on release 20260831130656 (the entry above has the
+manifest). The five unshipped helper modules and the debug features
+stay as decided there.
+
+18. **Image trims not taken.** Two rootfs reductions the kernel review left
+    on the table, each wanting a check before it lands. The `python3`
+    meta-package installs `python3-modules` (tkinter, idle, 2to3, pydoc,
+    ensurepip, venv, the debugger, doctest, asyncio, multiprocessing,
+    xmlrpc: ~10 MB) where the apps declare `python3-core` and a few modules,
+    so replacing it with the explicit set needs an import audit of gfcloud,
+    gfhome, gfhardware and gfutilities (the cloud tests are the check).
+    `libgnutls30`, `libunistring5`, `nettle` and `libgmp10` (~4.9 MB) sit on
+    the rootfs with no package depending on them and no binary linking them;
+    a `PACKAGE_EXCLUDE` experiment on a build would name the holder if there
+    is one. Five helper modules are built and not shipped (`crc7`,
+    `crc-ccitt`, `libcrc32c`, `st-accel-spi`, `st-sensors-spi`: 0.1 MB,
+    harmless). The debug features stay in the release kernel by decision
+    (`KPROBES`, `PERF_EVENTS`, `BPF_SYSCALL`, `DEBUG_FS`, `DEVMEM`,
+    `MAGIC_SYSRQ`: no runtime cost unused, root-only exposure, and root can
+    load modules anyway).
 
 ## Reference notes
 
