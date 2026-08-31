@@ -256,7 +256,9 @@ slows, so corners over-burned on the bench; `laser_corner_gamma`
 (default 2, range 0.25 to 4) bends the rolloff to light proportional to
 (v/v_programmed)^gamma, starving the slow spots the way the raw convex
 mapping used to by accident, while the programmed level at speed stays
-exactly the curve's. An owner measures their own curve from the panel:
+exactly the curve's. The knob is per machine and per taste: this bench
+runs 1.5, and the commissioning side-by-side chooser (the "Initial
+commissioning" item under Next work) is how a machine finds its own. An owner measures their own curve from the panel:
 the dose-curve recorder streams the ladder job itself from one Record
 press (absolute from X0 Y0, refused while a sender is connected; the
 operator's button press starts the fire with every arm gate standing),
@@ -353,7 +355,7 @@ factory 2.6.0-2228 session; measured numbers in the facts bank).
   alike: the retrace is sized to `cnc/max_backtrack` and the lead follows it,
   so a pause with little history behind it shortens both rather than failing.
   GRBL mode uses feed hold / cycle start, so a resumed GRBL cut picks up where
-  the deceleration ended (item 17). A pause is not a cancel: the latch
+  the deceleration ended (item 16). A pause is not a cancel: the latch
   stays unlocked and the window open across it. There is no resume dwell: the
   safing chain re-arms ~216 ms before the first step (facts bank).
 - **`lid_policy = hold`** selects stock grblHAL door behavior instead (park in
@@ -1280,149 +1282,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     log EV_SW head-bit edges plus `head/beam_detect_digital|_analog` while
     firing.
 
-16. **Laser power model: dose by FIRE-bit density.** grblHAL maps S onto the
-    analog PWM duty (`$30`/`$31` → `$35`/`$36`, written raw into PWMSAR against
-    the 127-count period). `$35` now ships at 16, the measured lasing
-    threshold (facts bank), which keeps M4's velocity-scaled power out of the
-    dead band at corners, reversals and segments shorter than the
-    accelerate-in-and-out distance (~1.6 mm at 2000 mm/min with the default
-    700 mm/s²) — where an unfloored duty is commanded below the threshold and
-    does not burn at all.
-
-    The floor is a patch on a model this tube does not fit. Only 16–100 % of
-    the duty range does anything, so analog control has a ~6:1 span, and the
-    floor buys freedom from dropout by putting its full 16 % into corners
-    where velocity — and dose per unit length — goes the other way. The
-    factory does not use duty as a power control at all: all five firing jobs
-    in the captured pulse files pin the power byte at 127 (one also uses 102)
-    and modulate dose entirely by dithering the FIRE bit at the 10 kHz tick,
-    at 6.5–18.8 % density. The measured dead band is why. Dose set by pulse
-    density cannot fall below the lasing threshold by construction, which is
-    what the per-tick FIRE bit exists for, and it is the only power model this
-    tube and supply are known to work well with. The duty → optical-power
-    transfer function is still unmeasured — nothing has ever depended on it.
-
-    The factory's implementation is now measured rather than inferred (facts
-    bank): power byte pinned at 127, dose set by a fixed 7-tick period
-    (~1.43 kHz) whose on-count is dithered between adjacent integers, and a
-    velocity compensation that is real but partial. Two things follow for the
-    ForgeFIRM implementation. The base period is a free parameter — the
-    factory's 700 µs is 7 ticks at its 10 kHz print rate, and GRBL mode ships
-    the stream at 28 160 Hz, so the same PRF is ~20 ticks; the accumulator, not
-    the period, is what recovers fractional density. And velocity scaling
-    arrives for free: under M4 the core already scales S by velocity, so
-    mapping S onto density inherits compensation that is *more* complete than
-    the factory's, which still lets dose per unit length rise ~1.8× at a
-    corner.
-
-    The model itself is implemented and host-proven, off by default
-    (`laser_power_model`, above). What the harness holds: density renders
-    the commanded level exactly (level/127 to four decimals at every rung),
-    no level ever reaches PWMSAR, a level change inside a run costs no
-    stream byte where analog pays one each, and - run against the same job
-    under both models - the motion grid is identical and every density FIRE
-    tick is one the analog run also fired, so the model only ever masks.
-
-    **Both dose and pulse length matter, in different regimes.** Four
-    ladders run with no minimum pulse (F300 at periods 20, 40 and 10, then
-    F100 at 20) put the same six rungs on the material every time - 20 %
-    and up - and their matched pairs looked like a clean answer: at
-    identical pulse length, halving density killed the mark; at identical
-    density, varying pulse length 3x changed nothing; and feed did not move
-    it either, 10 % at F100 carrying 44 % more energy per millimeter than a
-    marking 20 % at F300 and still leaving nothing.
-
-    That reading was too broad. Every one of those comparisons sat at or
-    above 20 % density, where the pulses in play were already long enough.
-    A fifth ladder with a 3-tick minimum moved 10 % from nothing to a mark
-    at the **same density and less dose**, purely by lengthening its pulses
-    from 36-71 us to 106 us. So above ~100 us the outcome follows dose;
-    below it pulse length dominates - too short and the energy does
-    nothing, shorter still (36 us, one tick) and the supply does not strike
-    at all, which the `hv_current` trace showed as a rung with no discharge
-    for its full 15 s. That is what the factory's 100 us quantum protects,
-    and what `laser_pulse_min_ticks` now protects.
-
-    With a minimum in place the low end is decoupled from the base period,
-    so the period is free to be chosen on other grounds. It stays at 20.
-
-    **The low end is a scaling problem, not a modulation one.** The band
-    this tube gives is ~5 % density to strike and ~10 % to mark (facts
-    bank); below that the pulse interval outruns the discharge whatever the
-    pulse shape. So a commanded 1 % can only be made useful by mapping it
-    onto that band, which is what the factory does and what `$35` is under
-    this model.
-
-    **The defaults are flipped:** `laser_power_model` defaults to `density`
-    with a 10 % floor (`laser_floor_density`), so a stock machine runs the
-    model and a commanded 1 % marks. The analog rendering is not a
-    product mode (it fires the strike transient as a spot at every
-    beam-on; removed 2026-08-30) and survives only as the host harness's
-    conservatism reference; the controller derives `$35` from
-    `laser_floor_density` at every precompute, so no floor is typed
-    ("Laser control (GRBL mode)" above).
-
-    Owed: validation at production feeds. Every ladder behind these
-    defaults ran at F300 or F100, where dose per millimeter is generous and
-    the power is constant - none of them exercised M4's velocity scaling
-    into corners, a real sender's level changes, or the raster path, which
-    has not run at all. The arithmetic says dotting will not be the
-    problem (at 10 % density the pulse interval is 1.07 ms, which at
-    2000 mm/min is 35 um against a ~200 um spot), but that is reasoning,
-    not a cut.
-
-    For reference, the factory maps its whole 1-100 power
-    scale onto density 18.9-79.5 % (fit from the three captures; Full Power
-    is off that line at ~99.7 %), so its "1 %" is the bottom of the band
-    that does useful work rather than 1 % of the physical range. Under the
-    density model `$35` and `$36` are exactly that control - a density
-    floor and ceiling - so the scale is a settings choice, not new code.
-    The floor's value wants one more ladder: the step from 10 % to 20 % is
-    coarse, and the factory's own answer is 18.9 %. Note the captures also
-    run 6.5-18.8 % density on other jobs, so that intercept is a product
-    decision about cutting, not a physical limit - which is why the
-    minimum-pulse fix matters for the raster low end regardless of where
-    the cut scale starts. The factory never emits a pulse shorter than
-    100 us; a tick here is 35.5 us, and every pulse restarts the discharge,
-    so each carries the strike transient the threshold ladder made visible
-    - dose per pulse is therefore probably not proportional to pulse length
-    and density -> dose may be superlinear at the low end. A density ladder
-    on scrap at two or three `laser_pulse_ticks` values answers both that
-    and the shortest pulse that marks reliably. grblHAL is userspace, so it
-    deploys by replacing the binary; no image flash. Then the raster path
-    below.
-
-    What that model means for image engraving, since it decides the design as
-    much as cutting does. LightBurn has two image paths. Its 1-bit modes
-    (Dither, Stucki, Jarvis, Halftone, Ordered) dither in the image domain and
-    emit only `Smax` or 0, so density is solid whenever a dot is on. Grayscale
-    mode emits a level per pixel, and that is the path the present duty model
-    breaks worst: dark pixels map below the striking threshold and mark
-    nothing, so shadows do not fade, they drop out. FIRE-bit density fixes that
-    by construction — a low level becomes sparse full-power pulses, every one
-    of which marks. Three consequences to design around:
-    - **Tonal resolution is set by ticks per pixel**, `rate × pixel_mm ÷
-      speed_mm_s`: 56 ticks at 254 DPI and 3000 mm/min, 14 at 508 DPI and
-      6000 mm/min. Fine, fast rasters have few pulse slots per pixel and lose
-      levels. The factory works at 10 kHz with ~20 ticks per pixel at 254 DPI,
-      so this envelope is livable, not comfortable.
-    - **The dither accumulator must carry across pixels**, so a level too fine
-      to express inside one pixel still averages over a run of them — that
-      spatial averaging is what recovers the levels the arithmetic above
-      loses. It follows that the accumulator resets only on fire-off, run
-      boundaries, disarm and abort, never per pixel.
-    - **A 1-bit image run below full layer power stacks two dithers**, and a
-      plain integer carry repeats on a short period, so it can beat against
-      LightBurn's own pattern as moiré. Perturbing the accumulator removes the
-      short period; the workflow answer is that 1-bit modes belong at 100 %
-      power with darkness set by speed, where density is solid and no second
-      dither exists.
-
-    Rasters also gain from the model directly: a level change costs a power
-    byte in the stream today, and the feeder contract forbids back-to-back
-    power bytes, while under FIRE dithering the duty is a constant sent once
-    per run and a per-pixel level change costs no stream byte at all.
-17. **Gapless pause and resume in GRBL mode (planned).** A pause leaves a mark
+16. **Gapless pause and resume in GRBL mode (planned).** A pause leaves a mark
     in the cut. With laser mode on, the core stops the beam at the start of the
     hold (`disable_laser_during_hold`, on by default), so the head travels the
     whole deceleration dark, and the resume re-accelerates from a standstill at
@@ -1456,7 +1316,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     line does to it, and how it composes with the armed window's disarm grace
     across a long hold.
 
-18. **Head crash and rail-contact detector (planned).** The head
+17. **Head crash and rail-contact detector (planned).** The head
     accelerometer is the motion-liveness probe and nothing more; the
     factory runs two tiers off the same sensor (a per-axis alert that
     pauses, a per-axis abort), and its thresholds arrive in every pulse
@@ -1468,7 +1328,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     are established. A pause on contact, on the factory's shape, would be
     the first use.
 
-19. **Image trims not taken.** Two rootfs reductions the kernel review left
+18. **Image trims not taken.** Two rootfs reductions the kernel review left
     on the table, each wanting a check before it lands. The `python3`
     meta-package installs `python3-modules` (tkinter, idle, 2to3, pydoc,
     ensurepip, venv, the debugger, doctest, asyncio, multiprocessing,
@@ -1484,7 +1344,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     (`KPROBES`, `PERF_EVENTS`, `BPF_SYSCALL`, `DEBUG_FS`, `DEVMEM`,
     `MAGIC_SYSRQ`: no runtime cost unused, root-only exposure, and root can
     load modules anyway).
-20. **A sender change while a job runs: discussion.** Today a sender that
+19. **A sender change while a job runs: discussion.** Today a sender that
     disconnects mid-job leaves the motion running to the end of what the
     controller holds, with the window closed and fire suppressed (the
     consent belonged to the displaced session), so the job finishes dark
@@ -1501,9 +1361,9 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     a hold parks the head over hot material with the assist air on the run
     profile, and the grace then closes the window in Hold as it does today;
     running on leaves a clean stop position but wastes the piece. Decide
-    with the gapless pause and resume item (17), which owns the resume
+    with the gapless pause and resume item (16), which owns the resume
     mechanics.
-21. **The flow check while the tube is lit.** The arm-time heater check
+20. **The flow check while the tube is lit.** The arm-time heater check
     starts at the session open, so with a prompt press the tube is lit
     for most of its window, and a lit CW window adds about 1.5 C to the
     rise (0.5 C at 45 % density) against a 1.6 C margin; on top of that the
@@ -1536,7 +1396,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     remains; a scope on the two sensor lines during a cut is the next
     instrument. It sits inside the ceiling's 2 C hysteresis and the flow
     check reads means, so it is a measurement item, not a gate item.
-22. **Laser power-good: what the line means.** `cnc/laser_pgood` and its
+21. **Laser power-good: what the line means.** `cnc/laser_pgood` and its
     sampled count are defined in the UAPI (active low, one sample every
     ~3.9 ms), the facts bank records that the sampled count reads 0 through
     real cutting, and the cooling engine warns
@@ -1548,7 +1408,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     scope against `hv_current` through an armed cut, its meaning written
     into the facts bank and the UAPI, and then either a warning that means
     something or no warning.
-23. **Initial commissioning: measure and set the machine's own numbers
+22. **Initial commissioning: measure and set the machine's own numbers
     methodically.** Every tunable that was measured on the bench machine
     and shipped as a default varies from machine to machine: the flow
     check's bands and `cool_flow_rise`, the tube's heat coefficients
@@ -1563,7 +1423,16 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     taken from cloud cuts (the pulse header carries the factory's
     per-machine values), so the commissioning can start from the
     factory's own numbers where they exist and note where they differ
-    from the measured ones.
+    from the measured ones. The dose-curve recorder (the panel's one-press
+    ladder, fit and apply) is the first piece of this tool family and the
+    template for the rest. Next piece, from the corner work: a
+    **side-by-side chooser** - the tool cuts the same corner-heavy pattern
+    at several settings of a knob (the corner rolloff first: a row of
+    passes at, say, 1.0 / 1.25 / 1.5 / 1.75 / 2.0), labels them, and the
+    operator picks the best by eye; Apply writes the winner. The rolloff
+    is the proof case (this bench settled at 1.5 and may go lower, so the
+    shipped default of 2 is a starting point, not a truth), and the same
+    shape fits any by-eye tunable the commissioning flow meets.
 
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the
@@ -1575,7 +1444,7 @@ covers the warm-up hold), the supply temperature window (the service sends
 the whole ADC range and the factory binds it to nothing; the supply is
 watched per job instead), the head, lid, interconnect and fused temperature
 ceilings (no sensor at those locations; the chassis is watched per job), the
-head accelerometer thresholds (item 18), the lid IR thresholds (item 4), the
+head accelerometer thresholds (item 17), the lid IR thresholds (item 4), the
 HV current caps (the sampled emission witness covers the idle case, and HV
 current is ranged per job), the thermal report upload conditions and the
 pump flag. Beam detect stays with item 15.
