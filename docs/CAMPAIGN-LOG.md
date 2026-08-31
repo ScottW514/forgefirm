@@ -4979,6 +4979,33 @@ userspace i2c-dev serialize under the adapter lock, so flooding the bus
 does not collide on the wire - the head reset is the reachable way to
 make a present head answer badly.
 
+## 2026-08-31: the debug-kernel drills, on the lock-debugging image
+
+Both drills passed on the debug-kernel image
+(forgefirm-image-dev-debug-glowforge.rootfs-20260831203241, kernel
+`DEBUG_MUTEXES=y PROVE_LOCKING=y LOCKDEP=y DEBUG_ATOMIC_SLEEP=y
+DEBUG_SPINLOCK=y`, verified in /proc/config.gz).
+
+**Load/unload.** forgectrl stopped, `glowforge.ko` unloaded and reloaded
+three times with a rail-settle between; each cycle clean, and the kernel
+log over the three carried no lock splat.
+
+**Forced `-EPROBE_DEFER`.** The cnc device unbound, its 40 V regulator
+(`regulators:40v` on `reg-fixed-voltage`) unbound, then cnc re-bound:
+the probe deferred (cnc did not bind while the regulator was gone) and
+its devm unwind left the log free of splats; restoring the regulator
+let the deferred probe complete and cnc bind again.
+
+The machine ended healthy: cnc idle, the GRBL controller running with
+motion verified, the head present, and no BUG/WARNING/lockdep splat
+anywhere after the first drill mark. Both drills cycle the 40 V rail (5
+`40V on` events across the session) and the drivers came back each time.
+Three bench facts hardened the drill in the running (forgefirm 2319735):
+the splat filter ignores the benign lockdep boot banner, the regulator
+search reaches the `reg-fixed-voltage` driver, and the idle gate waits
+out the transient `running` a forgectrl restart passes through. The
+debug image and the drill scripts were staged in `/tmp` and removed.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
@@ -6680,6 +6707,20 @@ was dropped by operator decision. Items 4 and up move down one.
    badly (the K-11 runtime case) needs the head connected and the fault
    injected: flood the head's bus from userspace while the driver talks, one
    bench slot.
+
+### Debug-kernel checks (item 3), closed 2026-08-31
+
+Closed: both drills passed on the debug-kernel image (the entry above);
+the variant and the drill tool are in the tree. Items 4 and up move
+down one.
+
+3. **Debug-kernel checks.** Run the module load/unload and forced
+    `-EPROBE_DEFER` drills (`scripts/bench/debug_kernel_drills.py`) on the
+    debug-kernel image (`kas/forgefirm-glowforge-debug.yml`, built beside the
+    closing image). Both cycle the 40 V rail: a module unload powers it off (a
+    stepper driver can come out of the power-up unserviceable), and the forced
+    defer needs the 40 V regulator unbound under the probe. It is a bench slot
+    with the rail-cycle gamble accepted, and it rides the closing burn.
 
 ## Reference notes
 
