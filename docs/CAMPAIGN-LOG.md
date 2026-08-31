@@ -4811,6 +4811,41 @@ holding, so a shop colder than about 8 C under the gate needs the gate
 lowered or the room warmed. The TEC item owns the chill side, with
 `cool_temp_min` as its floor.
 
+## 2026-08-31: the TEC drive, on the bench
+
+TEC handling landed (forgectrl 7d8a580, pinned in forgefirm 6edd3e5) and
+ran on the hot-deployed board. `thermal/tec_on` has no readback, so the
+part's presence is the operator's word: `cool_tec_present` on the
+Machine tab, default 0, and the engine never touches the line otherwise,
+which also covers retrofits. When present, the engine drives it on a
+hysteresis pair over the upstream reading (`cool_tec_on_c` 20 C,
+`cool_tec_off_c` 18 C) and only while the fans run - the run, smoke-clear
+and thermal phases, or a forced cooldown - because the cooler's heat
+sink sits in their airflow. Off at idle, off in the warm-up hold, off
+within a degree of the coolant floor; off is immediate, on waits a 30 s
+dwell; the state is rewritten after a diagnostic hand-back. The settings
+cross-check keeps off under on and above the floor.
+
+A correction to the item as written: `CMet`/`CMdt` are readings, not
+setpoints (attribute word 1, not header-legal; the coolant notes). The
+factory's knob is `tec_temp_threshold` (`TCth`), on above it on the
+filtered upstream reading; the non-Pro capture parks it at INT32_MAX and
+no Pro capture is on hand, so the defaults are chosen, not inherited:
+near the observed Pro loop point (18.1 to 18.4 C readings), above the
+warm-up gate, above an ordinary room's dew point.
+
+`cooling.tec-drive` passed on the deployed board (16:55Z): the
+cross-checks refused off over on and off under the floor; declared
+fitted with the pair moved under the loop, the line went to 1 one
+second into an M8 session ("TEC on: coolant 26.4 C over 24.1 C,
+airflow up") and back to 0 at the session's end ("TEC off: no
+airflow"); declared not fitted, the same session left the line at 0;
+the settings were blank before and are blank again.
+
+Host proof: the two table rows in `cool_gate_test`. This machine is not
+teardown-verified to carry the part, so the drive is proven at the GPIO;
+the first Pro on the bench proves the cooling itself.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
@@ -6360,6 +6395,25 @@ the catalog case is `cooling.floor-and-warm-up`. Items 2 to 20 are now
    coolant. Sequencing: warm-up first, flow check after. Measured physics on
    this bench: 50 % duty warms the bulk ~0.5–0.8 °C/min and plateaus ~8–9 °C
    above ambient — the same unaided limit the factory has.
+
+### TEC handling (item 1), closed 2026-08-31
+
+Closed: implemented and bench-proven at the GPIO the same day (the
+entry above, with the CMet/CMdt correction); the catalog case is
+`cooling.tec-drive`. Items 2 to 19 are now 1 to 18.
+
+1. **TEC handling (planned).** `thermal/tec_on` is a bare on/off output with no
+   readback, so presence cannot be detected: it becomes a `tec_present` user
+   setting (Machine tab, default off; ForgeFIRM never drives `tec_on` unless
+   set), which also covers retrofits. Operation when present: simple hysteresis
+   while a job runs — TEC on above `cool_tec_on_c`, off below `cool_tec_off_c`,
+   defaults from the factory setpoints (CMet/CMdt 18134/18364 mdeg — the same
+   WTub/WTvb raw-754/751 pair that proved the thermistor curve), off at idle —
+   with `cool_temp_min` as the chill floor, so the TEC can never drive the loop
+   toward condensation or freeze territory. Whether a given unit has a TEC at
+   all is a spec-level claim (Glowforge ships it on the Pro; Basic/Plus use the
+   same passive closed-loop cooling), not teardown-verified per unit — another
+   reason it is a setting.
 
 ## Reference notes
 

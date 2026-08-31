@@ -355,7 +355,7 @@ factory 2.6.0-2228 session; measured numbers in the facts bank).
   alike: the retrace is sized to `cnc/max_backtrack` and the lead follows it,
   so a pause with little history behind it shortens both rather than failing.
   GRBL mode uses feed hold / cycle start, so a resumed GRBL cut picks up where
-  the deceleration ended (item 14). A pause is not a cancel: the latch
+  the deceleration ended (item 13). A pause is not a cancel: the latch
   stays unlocked and the window open across it. There is no resume dwell: the
   safing chain re-arms ~216 ms before the first step (facts bank).
 - **`lid_policy = hold`** selects stock grblHAL door behavior instead (park in
@@ -1101,19 +1101,7 @@ is committed.
 
 Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
 
-1. **TEC handling (planned).** `thermal/tec_on` is a bare on/off output with no
-   readback, so presence cannot be detected: it becomes a `tec_present` user
-   setting (Machine tab, default off; ForgeFIRM never drives `tec_on` unless
-   set), which also covers retrofits. Operation when present: simple hysteresis
-   while a job runs — TEC on above `cool_tec_on_c`, off below `cool_tec_off_c`,
-   defaults from the factory setpoints (CMet/CMdt 18134/18364 mdeg — the same
-   WTub/WTvb raw-754/751 pair that proved the thermistor curve), off at idle —
-   with `cool_temp_min` as the chill floor, so the TEC can never drive the loop
-   toward condensation or freeze territory. Whether a given unit has a TEC at
-   all is a spec-level claim (Glowforge ships it on the Pro; Basic/Plus use the
-   same passive closed-loop cooling), not teardown-verified per unit — another
-   reason it is a setting.
-2. **Fire watch (lid IR) redesign.** The gate stays disabled
+1. **Fire watch (lid IR) redesign.** The gate stays disabled
    (`cool_fire_ir_delta = 0`) until it is lamp-aware: the engine must own or
    observe the lamp level (suspend the watch and re-baseline for a few ticks
    after any `lid_led` change) and the threshold must be relative to the
@@ -1136,11 +1124,11 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
    cloud job carries. By decision those header thresholds (`IR??`) are the
    prior for this redesign and nothing else: the cloud client declares them
    ignored, and the watch stays disabled until it is lamp-aware.
-3. **Limit-switch homing.** The planned second homing method (`$22` stays 0
+2. **Limit-switch homing.** The planned second homing method (`$22` stays 0
    until it lands); printable brackets are in `3d-models/`. Also: calibrate
    `gfcloud_home_x/y` against a jog to a known reference if the factory corner
    offset matters.
-4. **Cameras.** **First light on an 8 MP (OV8856) machine**: the
+3. **Cameras.** **First light on an 8 MP (OV8856) machine**: the
    whole path is written but nothing has run on one, and only that hardware can
    answer whether the 2-lane RAW8 full-resolution mode locks the D-PHY at
    720 Mbps/lane and what exposure/gain the sensor wants; the details, the
@@ -1155,7 +1143,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
    no register file. No shipped machine applies a per-unit shading table,
    so ForgeFIRM owes none. Finally the deferred emulator
    homing-image smoke, now that the emulator can be pointed at live snapshots.
-5. **Cloud mode.** A print is no longer capped by the ring: the client holds
+4. **Cloud mode.** A print is no longer capped by the ring: the client holds
    the compressed body, fills the ring before the button, and tops it up as it
    plays, with the body bounded by `pulse_reject_threshold_bytes` because
    memory is what that costs. A feed that wedges is caught by progress rather
@@ -1197,7 +1185,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
    the cancel-with-a-rejected-`settings`-action case, a malformed frame
    (needs a MITM), a body past the memory guard (the service has no such job
    to send), and a wedged feed (a healthy machine will not stall on request).
-6. **Shared machine services — remaining polish.** None of it blocking:
+5. **Shared machine services — remaining polish.** None of it blocking:
    - **Diagnostics as engine modes.** The flow tools still drive the thermal
      hardware themselves while the engine suspends its writes; the check
      parameters are already shared (`cool.h`), so what remains is folding the
@@ -1213,26 +1201,26 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
      `ensure_engine` `popen()`s should move out of the HTTP callback so a slow
      media-ctl cannot stall the request thread. Changing the MHD start flags
      touches the streaming model, so this wants a bench slot of its own.
-7. **Physical-evidence negatives still open.** A present head answering I²C
+6. **Physical-evidence negatives still open.** A present head answering I²C
    badly (the K-11 runtime case) and a failed head capture leaving the measure
    laser off — both need the head connected and a fault injected. Opportunistic:
    `STATE_FAULT` recovery via `enable` the next time a DRV8825 fault line
    actually trips.
-8. **Debug-kernel checks.** Module load/unload under `CONFIG_DEBUG_MUTEXES`
+7. **Debug-kernel checks.** Module load/unload under `CONFIG_DEBUG_MUTEXES`
     and a forced `-EPROBE_DEFER` unwind still need a debug kernel build. Both
     drills cycle what the rail policy avoids: a module unload powers the 40 V
     rail off (a stepper driver can come out of the power-up unserviceable),
     and a forced defer needs the 40 V regulator or the SDMA device unbound
     under the module's probe. This is a bench slot with the rail-cycle gamble
     accepted, not a quick check.
-9. **Wi-Fi SDIO CRC watch.** The uSDHC pads now carry the factory-exact values
+8. **Wi-Fi SDIO CRC watch.** The uSDHC pads now carry the factory-exact values
     and ship in every image. Watch `dmesg | grep -c "sdio .* failed"` across
     sessions (baseline: 1 event in 49 min of uptime). Effect if one lands
     mid-job: a 1–2 s sender stall — a cut-quality nuisance, never a safety
     matter. Only if it still recurs, cap the bus with
     `max-frequency = <25000000>` on `&usdhc1` (halves Wi-Fi throughput — last
     resort; the factory ran 50 MHz on these pads).
-10. **Release acceptance follow-through.** The campaign is the release gate
+9. **Release acceptance follow-through.** The campaign is the release gate
     and runs as designed: dev image `20260824230512`, 45 of 45 from nothing,
     36 of them unattended with the bench actuator in the loop, release
     authorized (the export is on the board at `/data/forgetest/export/`).
@@ -1246,16 +1234,16 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     changes off the offline tests (a gfutilities refactor, not a map).
     Tools that genuinely need a second host (LAN flood, remote auth probes)
     stay host-side by design, and the registry marks them so. The first
-    release is item 11.
-11. **Publish.** The first release: `releases/v<version>/acceptance.json`
+    release is item 10.
+10. **Publish.** The first release: `releases/v<version>/acceptance.json`
     from the authorized export, `scripts/release.sh`, the kas flip and the
     first GitHub release, per the site (Developers, "Release flow"), once
     ready to publish. Repoint the core submodule to
     upstream if the `step_us_min` sizing fix merges.
-12. **Update system Phase 5 — recovery refresh.** The remaining phase of
+11. **Update system Phase 5 — recovery refresh.** The remaining phase of
     `docs/UPDATE-SYSTEM.md` (a refreshed recovery image in boot0); Phases 0–4
     are done.
-13. **Head-IRQ source validation — beam-emission hypothesis (exploratory, not
+12. **Head-IRQ source validation — beam-emission hypothesis (exploratory, not
     gating).** The EV_SW `head` bit (GPIO3_22, factory pad HEAD_IRQ) is the head
     MCU's attention line — idle LOW with a healthy head, pulsing on head reboot,
     floating to the SoC pull-up with no head — so the raw level is not a
@@ -1271,7 +1259,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     log EV_SW head-bit edges plus `head/beam_detect_digital|_analog` while
     firing.
 
-14. **Gapless pause and resume in GRBL mode (planned).** A pause leaves a mark
+13. **Gapless pause and resume in GRBL mode (planned).** A pause leaves a mark
     in the cut. With laser mode on, the core stops the beam at the start of the
     hold (`disable_laser_during_hold`, on by default), so the head travels the
     whole deceleration dark, and the resume re-accelerates from a standstill at
@@ -1305,7 +1293,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     line does to it, and how it composes with the armed window's disarm grace
     across a long hold.
 
-15. **Head crash and rail-contact detector (planned).** The head
+14. **Head crash and rail-contact detector (planned).** The head
     accelerometer is the motion-liveness probe and nothing more; the
     factory runs two tiers off the same sensor (a per-axis alert that
     pauses, a per-axis abort), and its thresholds arrive in every pulse
@@ -1317,7 +1305,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     are established. A pause on contact, on the factory's shape, would be
     the first use.
 
-16. **A sender change while a job runs: discussion.** Today a sender that
+15. **A sender change while a job runs: discussion.** Today a sender that
     disconnects mid-job leaves the motion running to the end of what the
     controller holds, with the window closed and fire suppressed (the
     consent belonged to the displaced session), so the job finishes dark
@@ -1334,9 +1322,9 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     a hold parks the head over hot material with the assist air on the run
     profile, and the grace then closes the window in Hold as it does today;
     running on leaves a clean stop position but wastes the piece. Decide
-    with the gapless pause and resume item (14), which owns the resume
+    with the gapless pause and resume item (13), which owns the resume
     mechanics.
-17. **The flow check while the tube is lit.** The arm-time heater check
+16. **The flow check while the tube is lit.** The arm-time heater check
     starts at the session open, so with a prompt press the tube is lit
     for most of its window, and a lit CW window adds about 1.5 C to the
     rise (0.5 C at 45 % density) against a 1.6 C margin; on top of that the
@@ -1369,7 +1357,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     remains; a scope on the two sensor lines during a cut is the next
     instrument. It sits inside the ceiling's 2 C hysteresis and the flow
     check reads means, so it is a measurement item, not a gate item.
-18. **Laser power-good: what the line means.** `cnc/laser_pgood` and its
+17. **Laser power-good: what the line means.** `cnc/laser_pgood` and its
     sampled count are defined in the UAPI (active low, one sample every
     ~3.9 ms), the facts bank records that the sampled count reads 0 through
     real cutting, and the cooling engine warns
@@ -1381,7 +1369,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     scope against `hv_current` through an armed cut, its meaning written
     into the facts bank and the UAPI, and then either a warning that means
     something or no warning.
-19. **Initial commissioning: measure and set the machine's own numbers
+18. **Initial commissioning: measure and set the machine's own numbers
     methodically.** Every tunable that was measured on the bench machine
     and shipped as a default varies from machine to machine: the flow
     check's bands and `cool_flow_rise`, the tube's heat coefficients
@@ -1417,7 +1405,7 @@ covers the warm-up hold), the supply temperature window (the service sends
 the whole ADC range and the factory binds it to nothing; the supply is
 watched per job instead), the head, lid, interconnect and fused temperature
 ceilings (no sensor at those locations; the chassis is watched per job), the
-head accelerometer thresholds (item 15), the lid IR thresholds (item 2), the
+head accelerometer thresholds (item 14), the lid IR thresholds (item 1), the
 HV current caps (the sampled emission witness covers the idle case, and HV
 current is ranged per job), the thermal report upload conditions and the
-pump flag. Beam detect stays with item 13.
+pump flag. Beam detect stays with item 12.
