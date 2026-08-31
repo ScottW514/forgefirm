@@ -692,6 +692,18 @@ def tec_drive(ctx):
 
 
 FIRE_KEYS = ("cool_fire_q1_alert", "cool_fire_q1_critical", "cool_fire_q2_alert", "cool_fire_q2_critical")
+
+
+def _tail_wait(ctx, fc, needle, wait=8):
+    """A log line lands through rsyslog a beat after the engine acts;
+    poll the tail instead of reading it once."""
+    t0 = time.time()
+    while time.time() - t0 < wait:
+        if _tail_has(fc, needle):
+            return True
+        ctx.sleep(1)
+    return False
+
 FIRE_WAIT_S = 25            # settings re-read at run start, two-tick breach, 1 Hz
 
 
@@ -748,7 +760,8 @@ def fire_watch_tiers(ctx):
             ctx.check(c.get("verdict") == "FLAME", "q1 alert under the lamp did not hold the session: %s", c)
             ctx.check(c.get("hold") is True and c.get("fire_ok") is False, "FLAME without a hold and fire blocked: %s", c)
             ctx.check(c.get("fire_watch") == "alert", "fire_watch %r during the alert, expected alert", c.get("fire_watch"))
-            ctx.check(_tail_has(fc, "lid IR flame alert (quartiles "), "the flame-alert line is missing from the forgectrl log")
+            ctx.check(_tail_wait(ctx, fc, "lid IR flame alert (quartiles "),
+                      "the flame-alert line is missing from the forgectrl log")
             # The release: the settings re-read is at run start, so the
             # release lever mid-session is the env-free path - restore the
             # threshold and end the session; the alert must not survive
@@ -778,7 +791,8 @@ def fire_watch_tiers(ctx):
             ilk = hw.sysfs_int("cnc/interlock_circuit")
             ev["interlock_circuit"] = ilk
             ctx.check(ilk is not None and (ilk & 8), "the laser latch is not locked under FIRE (interlock_circuit=%s)", ilk)
-            ctx.check(_tail_has(fc, "LID IR FIRE SIGNAL (quartiles "), "the FIRE line is missing from the forgectrl log")
+            ctx.check(_tail_wait(ctx, fc, "LID IR FIRE SIGNAL (quartiles "),
+                      "the FIRE line is missing from the forgectrl log")
             _set_gates(ctx, fc, {"cool_fire_q1_critical": orig["cool_fire_q1_critical"],
                                  "cool_fire_q1_alert": orig["cool_fire_q1_alert"]})
             grbl.command("M9")
