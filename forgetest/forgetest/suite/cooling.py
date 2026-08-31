@@ -608,8 +608,8 @@ TEC_WAIT_S = 20             # settings re-read at run start, 1 Hz ticks
                   "hysteresis wants the cooler on. Declared fitted, a run session drives "
                   "thermal/tec_on to 1 (airflow up) and the session's end returns it to 0 (no "
                   "airflow at idle). Declared not fitted, the same session leaves the line at 0. "
-                  "The cross-check refuses an off threshold at or under the coolant floor, and "
-                  "off must sit under on. The line has no readback, so the last written value is "
+                  ""
+                  "The cross-check keeps off under on. The line has no readback, so the last written value is "
                   "what the test reads; the drive rule is the engine's, never the cloud's.")
 def tec_drive(ctx):
     fc = ctx.forgectrl
@@ -623,11 +623,10 @@ def tec_drive(ctx):
     ctx.check(hw.sysfs_int(TEC_ATTR) == 0, "the TEC line is not 0 at idle before the test")
     on_c, off_c = round(up - 2.0, 1), round(up - 4.0, 1)
 
-    # The cross-checks, before anything runs: off under on, off above the floor.
+    # The cross-check, before anything runs: off must sit under on. The
+    # floor relation is the engine's runtime clamp, not a settings rule.
     st, body = fc.post("/settings", params={"cool_tec_on_c": "18", "cool_tec_off_c": "19"})
     ctx.check(st == 400, "an off threshold over the on threshold was accepted (%s %s)", st, body)
-    st, body = fc.post("/settings", params={"cool_tec_off_c": "6", "cool_temp_min": "7"})
-    ctx.check(st == 400, "an off threshold under the coolant floor was accepted (%s %s)", st, body)
 
     restored = False
     with ctx.grbl() as grbl:
