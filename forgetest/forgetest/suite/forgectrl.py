@@ -223,7 +223,7 @@ def settings_bounds(ctx):
       covers=[("forgectrl", "src/ui.*"), ("forgectrl", "src/ui/**"), ("forgectrl", "src/status.*"),
               ("forgectrl", "src/cam.c"), ("forgectrl", "src/main.c"), ("forgectrl", "src/super.c"),
               ("grblhal-glowforge", "src/glowforge_status.c"), ("grblhal-glowforge", "src/serial.c"),
-              ("forgectrl", "src/curverec.c")],
+              ("forgectrl", "src/curverec.*")],
       description="The panel page is served, /status carries the machine telemetry the panel and "
                   "the acceptance tool read (including the sys block: CPU busy percent over the "
                   "interval since the previous read, memory used percent), and /cam/status "

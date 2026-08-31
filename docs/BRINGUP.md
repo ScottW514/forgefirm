@@ -250,11 +250,18 @@ pairs, ships with the bench-measured default compiled in, accepts
 `off` for the identity, falls back loudly on a bad value, and is
 reloaded at every precompute with the arm naming it (`laser armed
 (density, floor 10 %, curve bench-default)`). `$35`/`$36` still floor
-and ceil the result. An owner measures their own curve from the panel:
-the dose-curve recorder hands them a ladder G-code to run from their
-sender - every arm gate stands, forgectrl records the tube current and
-the head thermopile passively, fits the rungs, and Apply writes the
-result (`forgectrl/docs/SERVICES.md`). Rasters hold their tonality down
+and ceil the result. Under M4 the curve makes delivered light exactly
+proportional to velocity - and heat still accumulates where the head
+slows, so corners over-burned on the bench; `laser_corner_gamma`
+(default 2, range 0.25 to 4) bends the rolloff to light proportional to
+(v/v_programmed)^gamma, starving the slow spots the way the raw convex
+mapping used to by accident, while the programmed level at speed stays
+exactly the curve's. An owner measures their own curve from the panel:
+the dose-curve recorder streams the ladder job itself from one Record
+press (absolute from X0 Y0, refused while a sender is connected; the
+operator's button press starts the fire with every arm gate standing),
+records the tube current and the head thermopile, fits the rungs, and
+Apply writes the result (`forgectrl/docs/SERVICES.md`). Rasters hold their tonality down
 to ~14 pulse slots per pixel (508 DPI at 6000 mm/min): the dither
 accumulator's cross-pixel averaging recovers the levels, with no
 visible dither pattern.

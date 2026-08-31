@@ -68,6 +68,11 @@ over TCP, then checks the dumps against the kernel feeder contract:
      near 80 percent density), monotonic, floored and ceiled by
      $35/$36; every other session runs with laser_dose_curve = off so
      its S-to-level arithmetic stays exact
+ 20. the corner rolloff starves the slow spots: under M4 with the curve
+     in force, the accelerate-in head of a line renders less density at
+     the default gamma of 2 than at gamma 1, and the cruise middle
+     renders the same - the exponent shapes only the velocity-scaled
+     rolloff, never the programmed level
 
 The analog sessions select the reference mode through the config; on
 hardware the controller ignores it (density is the only product model -
@@ -860,6 +865,41 @@ def main():
     print("PASS [floor-derived]: a typed $35=0 is overwritten at the arm; the "
           "ladder renders through the %g %% floor key, levels %s"
           % (PWM_MIN_PCT, list(expect_levels)))
+
+    # --- rule 20: the corner rolloff starves the accel head -------------
+    # One long M4 line from rest under the curve, at gamma 1 and the
+    # default 2. The accelerate-in head runs velocity-scaled; its
+    # rendered density must drop with the exponent while the cruise
+    # middle stays put.
+    # F6000 = 100 mm/s: the accel from rest lasts ~143 ms (~4000 ticks),
+    # so the first 2000 ticks are genuinely velocity-scaled.
+    JOB_M4_LONG = ["G91", "G21", "M4 S1000", "G1 X60 F6000", "M5"]
+    head_ticks = 2000
+    dens_head = {}
+    dens_mid = {}
+    for gname, gconf in (("g1", "laser_corner_gamma = 1\n"), ("g2", "")):
+        data = run_session("rolloff-" + gname, JOB_M4_LONG,
+                           conf=DENSITY_CONF_CURVED + gconf)
+        ticks = tick_bytes(data)
+        spans = fire_spans(ticks)
+        if len(spans) != 1:
+            fail("[rolloff-%s] %d fire spans, expected 1" % (gname, len(spans)))
+        a, b = spans[0]
+        seg = ticks[a:b]
+        head = seg[:head_ticks]
+        mid_a = len(seg) // 2 - 2000
+        mid = seg[mid_a:mid_a + 4000]
+        dens_head[gname] = sum(1 for t in head if t & 0x10) / float(len(head))
+        dens_mid[gname] = sum(1 for t in mid if t & 0x10) / float(len(mid))
+    if not dens_head["g2"] < dens_head["g1"] - 0.02:
+        fail("[rolloff] gamma 2 does not starve the accel head (g1 %.3f, g2 %.3f)"
+             % (dens_head["g1"], dens_head["g2"]))
+    if abs(dens_mid["g2"] - dens_mid["g1"]) > 0.02:
+        fail("[rolloff] gamma changed the cruise density (g1 %.3f, g2 %.3f): it "
+             "must shape only the rolloff" % (dens_mid["g1"], dens_mid["g2"]))
+    print("PASS [rolloff]: accel-head density %.3f at gamma 1 -> %.3f at the "
+          "default 2; cruise %.3f alike" % (dens_head["g1"], dens_head["g2"],
+                                            dens_mid["g1"]))
 
     # --- rule 19: the dose curve bends S onto delivered light -----------
     cur = run_session("curve", JOB_CURVE, conf=DENSITY_CONF_CURVED)
