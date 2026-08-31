@@ -527,6 +527,9 @@ def floor_and_warm_up(ctx):
                     c.get("verdict"), c.get("phase"), c.get("up_c"), gate)
             ctx.check(c.get("verdict") == "OK" and c.get("phase") == "run",
                       "the warm-up did not release into a run session within %d s: %s", WARMUP_RELEASE_S, c)
+            ctx.check(ev["warmup_release_s"] >= 60,
+                      "the warm-up released in %s s: an instant reading, not the bulk (the release "
+                      "judges a one-minute rolling minimum)", ev["warmup_release_s"])
             ctx.check(c.get("fire_ok") is True and c.get("hold") is False, "released warm-up without fire_ok and no hold: %s", c)
             ctx.sleep(2)
             heater = hw.sysfs_int(HEATER_PWM)
