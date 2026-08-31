@@ -29,9 +29,12 @@ import sys
 import time
 
 CNC_DRV = '/sys/bus/platform/drivers/glowforge_cnc'
-SPLAT = re.compile(r'BUG:|WARNING:|INFO: possible|held lock|lockdep|'
+# Real splat markers only - not the benign "RCU lockdep checking is
+# enabled" boot banner (a bare "lockdep" match would flag it).
+SPLAT = re.compile(r'BUG:|WARNING:|INFO: possible|held lock|'
                    r'circular locking|bad unlock|sleeping function|'
-                   r'still has locks held|DEBUG_LOCKS_WARN')
+                   r'still has locks held|DEBUG_LOCKS_WARN|'
+                   r'lock held when returning')
 
 
 def sh(cmd, check=False):
@@ -68,19 +71,25 @@ def require_debug_kernel():
 
 
 def require_idle():
+    # The controller re-init after a forgectrl restart passes briefly
+    # through 'running'; wait a few seconds for it to settle before
+    # refusing.
     st = ''
-    try:
-        st = open('/sys/glowforge/cnc/state').read().strip()
-    except OSError:
-        pass
-    if st not in ('idle', 'disabled'):
-        print('REFUSED: cnc/state is %r, not idle.' % st)
-        sys.exit(2)
+    for _ in range(8):
+        try:
+            st = open('/sys/glowforge/cnc/state').read().strip()
+        except OSError:
+            st = ''
+        if st in ('idle', 'disabled'):
+            return
+        time.sleep(1)
+    print('REFUSED: cnc/state is %r, not idle.' % st)
+    sys.exit(2)
 
 
 def forgectrl(action):
     sh('/etc/init.d/forgectrl %s' % action)
-    time.sleep(3)
+    time.sleep(5)
 
 
 def drill_load_unload():
@@ -117,11 +126,13 @@ def regulator_provider():
     # The 40 V regulator the cnc probe holds exclusively; unbinding its
     # provider makes the re-bind probe defer. Resolve from the cnc node's
     # 40v-supply phandle if present, else the known fixed regulator name.
-    for d in glob.glob('/sys/bus/platform/drivers/*regulator*'):
+    drivers = (glob.glob('/sys/bus/platform/drivers/*regulator*') +
+               glob.glob('/sys/bus/platform/drivers/reg-fixed*'))
+    for d in drivers:
         for dev in os.listdir(d):
             if dev in ('bind', 'unbind', 'module', 'uevent'):
                 continue
-            if '40v' in dev.lower() or 'reg_40v' in dev.lower():
+            if '40v' in dev.lower():          # e.g. regulators:40v
                 return os.path.basename(d), dev
     return None, None
 
