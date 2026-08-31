@@ -4775,6 +4775,42 @@ before the fix was in). The attended set is deferred by decision. The
 campaign that authorizes a release runs on the image that carries every
 fix, burned once.
 
+## 2026-08-31: the coolant floor and the warm-up gate, on the bench
+
+The low-temperature gates landed (forgectrl 5a12f55 and 9d0b757, pinned
+in forgefirm f773866) and are bench-proven on the hot-deployed board,
+image 20260831141210. `cool_temp_min` is the `coolant_min` gate: under
+it the verdict is COLD with a hold, clearing 1 C above the floor
+(`gate_floor_trip`, host-tested); a header floor (CMrn) can only raise
+it. `cool_temp_start` is the `warm_up` gate: a run session opening under
+it holds (WARMUP, fire blocked, phase `warm-up`) with the loop heater at
+the flow duty and the fans idle, and releases into a normal run session
+with the run fans up and the flow check requested on a fresh history.
+The settings cross-check keeps floor under start under ceiling between
+gates that are on; both fields are on the panel's Cooling card.
+
+The first bench run (16:15Z) passed its checks but released 11 s after
+the hold: with the pump on, the heater's slug reaches the upstream
+sensor within seconds and inflated the instant reading past the gate,
+while the bulk warms about half a degree a minute. The release now
+judges a one-minute rolling minimum of the upstream reading (between
+slugs it falls back to the bulk), the stall warning tracks the same
+number, and the catalog test refuses a release under 60 s. The second
+run (16:33Z) passed with the right physics: WARMUP held with the heater
+at 40 percent (26214 of 65535) and the fans idle, released at 75 s on
+the bulk minimum, heater off and run fans up after the release, COLD
+tripped with the start gate off, both gates at zero reported off with
+the run-start log line, and the settings restored.
+
+`cooling.floor-and-warm-up` is the catalog case, proving both gates at
+room temperature by moving them above the loop; `cool_gate_test` holds
+the table rows and the floor hysteresis on the host. The warm-up
+holds indefinitely under its gate by design: a loop that stops warming
+(the heater plateaus 8 to 9 C over ambient) is named once and keeps
+holding, so a shop colder than about 8 C under the gate needs the gate
+lowered or the room warmed. The TEC item owns the chill side, with
+`cool_temp_min` as its floor.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
@@ -6308,6 +6344,22 @@ sentence is in the facts bank. Items 2 to 21 are now 1 to 20.
    hold from 19 to 27 C, the loop heater's ceiling in a 20 C room, with the
    margin widening warm; above that only a running tube warms the loop,
    and the check takes the tube's share off.
+
+### Low-temperature gates and warm-up (item 1), closed 2026-08-31
+
+Closed: implemented and bench-proven the same day (the entry above);
+the catalog case is `cooling.floor-and-warm-up`. Items 2 to 20 are now
+1 to 19.
+
+1. **Low-temperature gates and warm-up (planned).** Two keys in the Cooling
+   card: `cool_temp_min` (hard floor, default ~5 °C, a fire gate) and
+   `cool_temp_start` (warm-up gate, default ~16 °C) — a job starting below the
+   gate holds in a factory-style warm-up phase with the loop heater on and
+   releases above it; below the floor nothing fires. Rationale: cold-tube
+   thermal shock, condensation when the TEC pulls below the dew point, frozen
+   coolant. Sequencing: warm-up first, flow check after. Measured physics on
+   this bench: 50 % duty warms the bulk ~0.5–0.8 °C/min and plateaus ~8–9 °C
+   above ambient — the same unaided limit the factory has.
 
 ## Reference notes
 
