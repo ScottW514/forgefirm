@@ -4940,6 +4940,21 @@ the directed set - panel-serves, snapshot, sensor-profile, h264-stream,
 frame-health, lid-privacy - green on the capped server with the bounded
 setup children.
 
+## 2026-08-31: a failed head capture leaves the measure laser off
+
+The physical-evidence negative, proven on the bench with the head
+connected. The injection: a `v4l2-ctl` streamer held the shared
+`ipu1_csi0` capture node busy, then the real `machine._head_image` path
+ran with `HCil` arming the measure laser (verified lit at 1023 on the
+real sysfs first). The busy pipeline refused the link change, the
+capture raised, and the path's finally left `head/measure_laser` at 0.
+forgectrl's camera engine recovered on its next request (snapshot 200,
+engine running). The `STATE_FAULT`-recovery note is dropped from the
+item by operator decision: the fault line has never tripped and the
+recovery lever is documented in the UAPI; nothing is held open for it.
+What remains of the item is the K-11 runtime case, one bench slot with
+the head's bus flooded from userspace.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13

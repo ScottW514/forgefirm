@@ -1115,11 +1115,10 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
    reachable-mode reasoning and the factory fallback configuration are in
    the headers of kernel patches 0011-0013 (`meta-glowforge-bsp`,
    `recipes-kernel/linux/`).
-3. **Physical-evidence negatives still open.** A present head answering I²C
-   badly (the K-11 runtime case) and a failed head capture leaving the measure
-   laser off — both need the head connected and a fault injected. Opportunistic:
-   `STATE_FAULT` recovery via `enable` the next time a DRV8825 fault line
-   actually trips.
+3. **Physical-evidence negative still open.** A present head answering I²C
+   badly (the K-11 runtime case) needs the head connected and the fault
+   injected: flood the head's bus from userspace while the driver talks, one
+   bench slot.
 4. **Debug-kernel checks.** Module load/unload under `CONFIG_DEBUG_MUTEXES`
     and a forced `-EPROBE_DEFER` unwind still need a debug kernel build. Both
     drills cycle what the rail policy avoids: a module unload powers the 40 V
