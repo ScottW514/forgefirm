@@ -296,6 +296,8 @@ def test_status_files():
         assert '"armed":false' in st, "armed before any job: %r" % st
         assert '"model":"density"' in st and '"floor_pct":10' in st, \
             "model/floor missing (the floor must be derived from boot): %r" % st
+        assert '"curve":"bench-default"' in st, \
+            "the curve in force is not published: %r" % st
         assert '"modals":"[GC:' in st, "modal report missing: %r" % st
         ts0 = float(st.split('"ts_mono":')[1].split(',')[0])
 

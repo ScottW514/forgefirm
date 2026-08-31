@@ -152,12 +152,16 @@ restart the controller with the head re-parked.)
 The controller drives the tube the way the factory does: every pulse
 fires at full power, and the power setting decides how many ticks of
 each 710 us period fire. Every power level marks, low levels included,
-because no pulse is ever too weak to strike. The response is not linear:
-on this machine 80 % gives about half the light of 100 %, 60 % about a
-third, 30 % about a fourteenth - so pick engrave power by test card, and
-prefer setting darkness with speed. Grayscale images fade cleanly into
-the shadows (a low level becomes sparse full-power pulses), and 254 to
-508 DPI rasters hold their tonal steps.
+because no pulse is ever too weak to strike. The raw response is not
+linear - 80 % of the pulses deliver about half the light - so the
+controller maps your power setting through a measured dose curve: 50 %
+commands half the light, not half the pulses. The machine ships with
+the bench-measured curve; record your own tube's from the control
+panel (GRBL tab, "Dose-curve recorder": download the ladder file, press
+Record, run the file from LightBurn on scrap, press the button, Apply
+the fit). Grayscale images fade cleanly into the shadows (a low level
+becomes sparse full-power pulses), and 254 to 508 DPI rasters hold
+their tonal steps.
 
 `$35`, the power floor, is set by the controller from the machine config
 (the control panel's GRBL tab, "Laser dose"): do not type it, it is

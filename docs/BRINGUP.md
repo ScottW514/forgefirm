@@ -238,16 +238,26 @@ spot. The arm report names it (`laser armed (density, floor 10 %)`), and
 a floor of 0 is honored with a note (the ladders run that way). The
 cooling report carries the model with the job state.
 
-**Measured dose response (this bench, 2026-08-30, by the head thermopile,
-the tube current and the operator's eye on Thick Draftboard and acrylic).**
-Density delivers about half of the CW light at 80 % density, a third at
-60 %, a fifth at 45 % and a fourteenth at 30 %: the curve is the tube's
-(pulsed against CW), not the sensor's, and it is the same physics behind
-the factory's 18.9 to 79.5 % mapping with Full Power kept apart. An S
-correction from that curve (E4 in the working file) is the open item that
-follows. Rasters hold their tonality down to ~14 pulse slots per pixel
-(508 DPI at 6000 mm/min): the dither accumulator's cross-pixel averaging
-recovers the levels, with no visible dither pattern.
+**S commands light, through the measured curve.** The tube's output is
+convex in pulse density (this bench, 2026-08-30, by the head thermopile,
+the tube current and the operator's eye: 80 % density delivers about
+half the CW light, 60 % a third, 45 % a fifth, 30 % a fourteenth - the
+same physics behind the factory's 18.9 to 79.5 % mapping with Full
+Power kept apart). So the driver maps the commanded fraction through
+the measured curve's inverse onto the density that delivers it:
+`laser_dose_curve` in the machine config holds density:light percent
+pairs, ships with the bench-measured default compiled in, accepts
+`off` for the identity, falls back loudly on a bad value, and is
+reloaded at every precompute with the arm naming it (`laser armed
+(density, floor 10 %, curve bench-default)`). `$35`/`$36` still floor
+and ceil the result. An owner measures their own curve from the panel:
+the dose-curve recorder hands them a ladder G-code to run from their
+sender - every arm gate stands, forgectrl records the tube current and
+the head thermopile passively, fits the rungs, and Apply writes the
+result (`forgectrl/docs/SERVICES.md`). Rasters hold their tonality down
+to ~14 pulse slots per pixel (508 DPI at 6000 mm/min): the dither
+accumulator's cross-pixel averaging recovers the levels, with no
+visible dither pattern.
 
 An S word takes effect whether or not motion is in progress. Per-segment
 updates carry the level inside a laser block, but an S executed between

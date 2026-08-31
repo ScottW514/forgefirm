@@ -427,6 +427,7 @@ only be changed while the machine is idle.
 | `laser_button_timeout_s` | 300 | How long the machine waits at the button prompt. |
 | `laser_disarm_s` | 60 | Spindle-off grace before the armed window closes. |
 | `laser_floor_density` | 10 | The S-range floor, percent of full: the lowest pulse density that still marks. Loaded into `$35` at every spindle precompute; `$35` is derived, never typed. |
+| `laser_dose_curve` | (bench default) | The measured dose curve as density:light percent pairs; S commands a light fraction and the driver maps it onto the density that delivers it. `off` = identity; a bad value falls back to the default. The panel's recorder measures and applies a machine's own. |
 | `laser_pulse_ticks` | 20 | Density base period in machine ticks (35.5 us each). |
 | `laser_pulse_min_ticks` | 3 | Shortest density pulse in ticks; below it a period is skipped and its debt carried. |
 | `rail_settle_s` | 2.5 | Motor-rail off period when a controller takes the device standalone. |

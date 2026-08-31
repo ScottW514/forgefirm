@@ -61,7 +61,13 @@ over TCP, then checks the dumps against the kernel feeder contract:
  18. the floor is derived, never typed: $35 is loaded from the floor
      key at every precompute, so a $35 typed by the sender is
      overwritten - the ladder renders through the key's floor, and the
-     arm report names the model and the floor in force
+     arm report names the model, the floor and the curve in force
+ 19. the dose curve bends S onto the density that delivers the
+     commanded light fraction: with the bench-default curve in force a
+     ladder of S rungs renders the curve's densities (half light lands
+     near 80 percent density), monotonic, floored and ceiled by
+     $35/$36; every other session runs with laser_dose_curve = off so
+     its S-to-level arithmetic stays exact
 
 The analog sessions select the reference mode through the config; on
 hardware the controller ignores it (density is the only product model -
@@ -169,6 +175,7 @@ JOB_LADDER.append("M5")
 # tube's lasing duty (16), covered by the switch sessions below.
 ANALOG_FLOOR_DEFAULT_PCT = 16.0
 ANALOG_CONF = ("laser_power_model = analog\n"
+               "laser_dose_curve = off\n"
                "laser_floor_analog = %g\n" % PWM_MIN_PCT)
 DENSITY_PERIOD = 20
 DENSITY_MIN_TICKS = 3
@@ -179,9 +186,43 @@ DENSITY_CONF_BASE = ("laser_pulse_ticks = %d\n"
 # analog duty out of the tube's dead band, and here it would just clamp
 # the light end of the range. A floor of 0 is honored as written.
 DENSITY_CONF = ("laser_power_model = density\n"
+                "laser_dose_curve = off\n"
                 "laser_floor_density = 0\n" + DENSITY_CONF_BASE)
 # The shipped density default: no floor key, so the board's floor applies.
-DENSITY_CONF_FLOORED = "laser_power_model = density\n" + DENSITY_CONF_BASE
+DENSITY_CONF_FLOORED = ("laser_power_model = density\n"
+                        "laser_dose_curve = off\n" + DENSITY_CONF_BASE)
+# The shipped default: the bench curve in force (no keys at all).
+DENSITY_CONF_CURVED = "laser_power_model = density\n" + DENSITY_CONF_BASE
+
+# The compiled bench-default curve (glowforge_laser.c curve_default),
+# mirrored here the way the floor is: changing it changes rule 19.
+CURVE_DEFAULT = ((10.0, 0.5), (20.0, 2.0), (30.0, 7.0), (45.0, 21.0),
+                 (60.0, 37.0), (80.0, 50.0), (100.0, 100.0))
+
+
+def curve_density_for(s_val):
+    """The density fraction the bench-default curve maps an S onto,
+    before the $35/$36 clamp (mirrors curve_apply)."""
+    l = s_val / RPM_MAX * 100.0
+    pts = CURVE_DEFAULT
+    if l <= pts[0][1]:
+        return pts[0][0] * (l / pts[0][1]) / 100.0
+    i = 1
+    while i < len(pts) - 1 and l > pts[i][1]:
+        i += 1
+    d0, l0 = pts[i - 1]
+    d1, l1 = pts[i]
+    f = min(1.0, (l - l0) / (l1 - l0))
+    return (d0 + f * (d1 - d0)) / 100.0
+
+
+CURVE_S = (100, 300, 500, 800, 1000)
+JOB_CURVE = ["G91", "G21", "M3"]
+for _s in CURVE_S:
+    JOB_CURVE.append("S%d" % _s)
+    JOB_CURVE.append("G1 X%g F300" % (LADDER_MM if _s % 2 == 0 else LADDER_MM))
+    JOB_CURVE.append("G0 Y1")
+JOB_CURVE.append("M5")
 DENSITY_LEVEL = tuple(int(x * PWM_PERIOD / RPM_MAX) for x in LADDER_S)
 # A $35 typed ahead of the job: rule 18 says the arm overwrites it.
 JOB_DENSITY = ["$35=0"] + JOB_LADDER
@@ -191,6 +232,73 @@ def duty_for_floor(s, floor_pct):
     """Duty the core computes for an S word against a given floor."""
     lo = int(PWM_PERIOD * floor_pct / 100.0)
     return int(s * (PWM_PERIOD - lo) / RPM_MAX) + lo
+
+
+# Session H: three levels inside one kernel run. The moves are short and
+# fast so the planner never drains, and each carries its own S word, so
+# the level changes land mid-run. Analog pays a power byte per level;
+# density pays none, because the level rides the FIRE bits.
+JOB_LEVELS = ["G91", "G21", "M3"]
+for _s in (100, 300, 600):
+    for _ in range(20):
+        JOB_LEVELS.append("G1 X0.5 F3000 S%d" % _s)
+JOB_LEVELS.append("M5")
+
+
+# Session I: the levels arrive on their own lines, and the moves are long
+# enough that the planner drains between them, so each S is executed with
+# nothing streaming. The state has no event to ride and must be
+# re-asserted at the next run's first byte.
+IDLE_S_LEVELS = (100, 300, 600)
+IDLE_S_MM = 5.0
+IDLE_S_FEED = 300
+JOB_IDLE_S = ["G91", "G21", "M3"]
+for _i, _s in enumerate(IDLE_S_LEVELS):
+    JOB_IDLE_S.append("S%d" % _s)
+    JOB_IDLE_S.append("G1 X%g F%d" % (IDLE_S_MM if _i % 2 == 0 else -IDLE_S_MM,
+                                      IDLE_S_FEED))
+JOB_IDLE_S.append("M5")
+
+
+# Session J: the bench ladder's shape. M5 executes with the planner
+# drained and the kernel run over, and the rapids that follow start a
+# new run; the core issues no per-segment laser update for moves made
+# with the spindle off, so the stream's wanted state is all that decides
+# whether those rapids fire. A bare G0 with no M3 since the M5 is the
+# same case one step further.
+M5_IDLE_MM = 5.0
+M5_IDLE_FEED = 600
+M5_IDLE_TICKS = M5_IDLE_MM / (M5_IDLE_FEED / 60.0) * 28160
+JOB_M5_IDLE = [
+    "G91", "G21",
+    "M3 S500",
+    "G1 X%g F%d" % (M5_IDLE_MM, M5_IDLE_FEED),
+    WAIT_IDLE, ("sleep", 0.5),
+    "M5", ("sleep", 0.5),
+    "G0 X%g" % -M5_IDLE_MM, "G0 Y1",
+    WAIT_IDLE,
+    "G0 X%g" % M5_IDLE_MM,
+    WAIT_IDLE,
+    "M3 S500",
+    "G1 X%g" % -M5_IDLE_MM,
+    WAIT_IDLE, ("sleep", 0.5),
+    "M5",
+]
+
+
+# Session K: two jobs in one controller process, the second at the level
+# the first ended at. M2 leaves S modal and resets the motion mode to G1,
+# so the next job's M3 executes at that S; the core records it and issues
+# no per-segment update for a G1 at the same level, so the set_state is
+# the only thing that can light it. The parser starts in G0, which is why
+# a process's FIRST job never shows this: its M3 runs at rpm 0.
+JOB_NEXT = [
+    "G91", "G21", "M3", "S500",
+    "G1 X%g F%d" % (M5_IDLE_MM, M5_IDLE_FEED),
+    WAIT_IDLE, ("sleep", 0.5),
+    "M5", "G0 X%g" % -M5_IDLE_MM, "G0 Y1",
+    WAIT_IDLE, "G90", "M2", ("sleep", 1.0),
+]
 
 
 def fail(msg):
@@ -636,7 +744,7 @@ def main():
     rendered = check_density("density", dens, DENSITY_LEVEL, DENSITY_PERIOD,
                              DENSITY_MIN_TICKS)
     check_termination("density", dens)
-    if "laser armed (density, floor 0 %)" not in run_session.text:
+    if "laser armed (density, floor 0 %, curve off)" not in run_session.text:
         fail("[density] the arm did not select the density model at floor 0")
     print("PASS [density]: %d bytes, %d power bytes all at full duty, "
           "level->density %s"
@@ -746,12 +854,40 @@ def main():
     expect_levels = tuple(duty_for(x) for x in LADDER_S)
     check_density("floor-derived", floored, expect_levels, DENSITY_PERIOD,
                   DENSITY_MIN_TICKS)
-    if "laser armed (density, floor %g %%)" % PWM_MIN_PCT not in run_session.text:
+    if "laser armed (density, floor %g %%, curve off)" % PWM_MIN_PCT not in run_session.text:
         fail("[floor-derived] the arm report does not name the derived floor "
              "(text: %r)" % run_session.text[-400:])
     print("PASS [floor-derived]: a typed $35=0 is overwritten at the arm; the "
           "ladder renders through the %g %% floor key, levels %s"
           % (PWM_MIN_PCT, list(expect_levels)))
+
+    # --- rule 19: the dose curve bends S onto delivered light -----------
+    cur = run_session("curve", JOB_CURVE, conf=DENSITY_CONF_CURVED)
+    if "curve bench-default" not in run_session.text:
+        fail("[curve] the arm does not name the bench-default curve (text: %r)"
+             % run_session.text[-300:])
+    floor_frac = PWM_MIN / float(PWM_PERIOD)
+    expect = []
+    for s_val in CURVE_S:
+        d = curve_density_for(s_val)
+        expect.append(min(1.0, max(d, floor_frac)))
+    ticks = tick_bytes(cur)
+    spans = fire_spans(ticks)
+    if len(spans) != len(CURVE_S):
+        fail("[curve] %d fire spans, expected %d" % (len(spans), len(CURVE_S)))
+    got = []
+    for (a, b) in spans:
+        seg = ticks[a:b]
+        got.append(sum(1 for t in seg if t & 0x10) / float(len(seg)))
+    for g, w, s_val in zip(got, expect, CURVE_S):
+        if abs(g - w) > max(0.012, w * 0.06):
+            fail("[curve] S%d rendered density %.4f, expected %.4f through the "
+                 "bench-default curve" % (s_val, g, w))
+    if not all(b > a for a, b in zip(got, got[1:])):
+        fail("[curve] densities not monotonic: %s" % [round(g, 4) for g in got])
+    check_termination("curve", cur)
+    print("PASS [curve]: S %s -> densities %s through the bench-default curve "
+          "(floored at %.3f)" % (list(CURVE_S), [round(g, 3) for g in got], floor_frac))
 
     print("PASS: all stream emission rules hold")
 

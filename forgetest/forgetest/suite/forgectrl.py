@@ -222,7 +222,8 @@ def settings_bounds(ctx):
       kind="auto", est_min=1,
       covers=[("forgectrl", "src/ui.*"), ("forgectrl", "src/ui/**"), ("forgectrl", "src/status.*"),
               ("forgectrl", "src/cam.c"), ("forgectrl", "src/main.c"), ("forgectrl", "src/super.c"),
-              ("grblhal-glowforge", "src/glowforge_status.c"), ("grblhal-glowforge", "src/serial.c")],
+              ("grblhal-glowforge", "src/glowforge_status.c"), ("grblhal-glowforge", "src/serial.c"),
+              ("forgectrl", "src/curverec.c")],
       description="The panel page is served, /status carries the machine telemetry the panel and "
                   "the acceptance tool read (including the sys block: CPU busy percent over the "
                   "interval since the previous read, memory used percent), and /cam/status "
@@ -289,9 +290,21 @@ def panel_serves(ctx):
             ctx.check(key in rep, "/status grbl.report lacks %r", key)
         ctx.check((rep.get("laser") or {}).get("model") in ("density", "analog"),
                   "grbl.report.laser carries no model: %s", rep.get("laser"))
+        ctx.check((rep.get("laser") or {}).get("curve"),
+                  "grbl.report.laser carries no dose curve: %s", rep.get("laser"))
         st, text = fc.get("/grbl/settings", raw=True)
         ev["grbl_settings_status"] = st
         ctx.check(st == 200 and b"$35=" in (text or b""),
                   "GET /grbl/settings -> %s without the $$ view", st)
     else:
         ctx.log("no live GRBL controller (%s); grbl block checks skipped", mode)
+
+    # The dose-curve recorder's read surface answers in any mode.
+    st, cs = fc.get("/curve/status")
+    ev["curve_status"] = cs
+    ctx.check(st == 200 and isinstance(cs, dict) and cs.get("state") in
+              ("idle", "waiting", "recording", "done", "failed"),
+              "GET /curve/status -> %s %s", st, cs)
+    st, text = fc.get("/curve/ladder.gcode", raw=True)
+    ctx.check(st == 200 and b"S1000" in (text or b"") and b"M5" in (text or b""),
+              "GET /curve/ladder.gcode -> %s without the ladder", st)
