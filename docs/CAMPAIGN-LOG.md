@@ -4674,6 +4674,33 @@ the tool's teardown does (no `glowforge.conf.orig` existed, so the conf
 is deleted and the factory app runs on its built-in defaults). `/data`
 holds only factory state and ForgeFIRM's own files again.
 
+## 2026-08-31: the bench pass on image 20260831141210
+
+Dev 20260831141210 burned to the SD and booted. The apps and forgetest
+import on the trimmed module set (`gfhardware`, `gfutilities`, the
+machine, the cooling client, the camera, the websocket service; the
+forgetest server, suite, bench and catalog); `/usr/lib/python3.12/tkinter`
+is gone. Wi-Fi SDIO failures: 0 (the count is reset by the boot).
+
+**Rail policy.** `$H` in GRBL mode with `homing_mode = gfcloud`: gfhome
+ran the hunt and the homing motion and homed (X0.00 Y0.00 Z10.60, 10
+motion windows on the head accelerometer), `ok` after 53.8 s, grbl
+`Idle` and `cnc/state` `idle` after it, and a jog out and back (5 mm at
+F600) ran on the resumed controller. `dmesg` carries one `40V on`, at
+boot (18.6 s): the rail did not move through the handover or the
+resume, and the driver wrote no `cnc/enable`.
+
+**`/cool/status`.** Sampled at 2 Hz through both drills (116 and 111
+samples). The homing session's three dark run sessions each went `run`
+to `idle` with no `smoke` phase (13.6 to 15.7 s, 23.8 to 26.8 s, 35.9 to
+38.0 s). The dark GRBL session (M8, a 10 mm jog out and back at F1200,
+M9) went `run` at M8 and `idle` at M9, no `smoke` phase. `armed` read
+false in every sample, `verdict` OK.
+
+Nothing left on the board: the drill script was staged in `/tmp` and
+removed, `/data` holds factory state and ForgeFIRM's own files. Owed on
+this image: the full campaign (platform change).
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
