@@ -71,16 +71,21 @@ def flow_verify(ctx):
     ctx.check(fc.wait_idle(120, abort=ctx.aborted), "machine did not return to idle after the diagnostic")
 
 
+AA_CAL_TIMEOUT_S = 540      # the tool's 420 s settle limit plus its six edges
+
+
 @test("cooling.aa-offset-calibrate", title="The air-assist ground shift on the coolant readings measures cleanly",
-      subsystem="cooling", kind="auto", est_min=2,
+      subsystem="cooling", kind="auto", est_min=6,
       covers=_COOL_COVERS, requires=["kernel.latch-locked-idle"],
       steps=["Coolant loop normal (pump on); the machine idle. The controller is suspended by "
-             "forgectrl for the duration (about a minute); the air assist cycles three times."],
-      description="forgectrl's aa-offset-calibrate diagnostic: the air-assist fan stepped idle to "
-                  "run and back three times with the tube dark and the heater off, both coolant "
-                  "sensors read at every edge. The fan's return current shifts both readings by "
-                  "a number of ADC counts the engine adds back (cool_aa_offset_counts). PASS = the "
-                  "tool reports a recommendation, the six edges agree within its spread limit, and "
+             "forgectrl for the duration; the tool first waits for a stationary loop (up to "
+             "7 minutes after a heater trial), then the air assist cycles three times."],
+      description="forgectrl's aa-offset-calibrate diagnostic: the loop settled to the flow "
+                  "tools' stationary gate, then the air-assist fan stepped idle to run and back "
+                  "three times with the tube dark and the heater off, both coolant sensors read "
+                  "at every edge. The fan's return current shifts both readings by a number of "
+                  "ADC counts the engine adds back (cool_aa_offset_counts). PASS = the tool "
+                  "reports a recommendation, the six edges agree within its spread limit, and "
                   "the value sits inside the setting's legal range. The setting is not written.")
 def aa_offset_calibrate(ctx):
     fc = ctx.forgectrl
@@ -96,7 +101,7 @@ def aa_offset_calibrate(ctx):
     last_phase = None
     t0 = time.time()
     try:
-        while time.time() - t0 < 300:
+        while time.time() - t0 < AA_CAL_TIMEOUT_S:
             ctx.checkpoint()
             st, d = fc.get("/diag/status")
             if st == 200 and isinstance(d, dict):
@@ -112,7 +117,7 @@ def aa_offset_calibrate(ctx):
     except BaseException:
         fc.post("/diag/abort")
         raise
-    ctx.check(result is not None, "aa-offset-calibrate did not finish within 5 minutes")
+    ctx.check(result is not None, "aa-offset-calibrate did not finish within %d s", AA_CAL_TIMEOUT_S)
     ev["result"] = result
     ctx.check("error" not in result, "aa-offset-calibrate error: %s", result.get("error"))
     ctx.log("offset %s counts, spread %s, recommend %s, edges %s", result.get("offset_counts"),
