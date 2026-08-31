@@ -4846,6 +4846,48 @@ Host proof: the two table rows in `cool_gate_test`. This machine is not
 teardown-verified to carry the part, so the drive is proven at the GPIO;
 the first Pro on the bench proves the cooling itself.
 
+## 2026-08-31: the fire watch, armed in the factory's shape
+
+The lid-IR fire watch is redesigned, armed by default, and bench-proven
+on the hot-deployed board (forgectrl 77a6434, pinned in forgefirm
+b506e67). The four channels sorted ascending are the quartiles, the
+factory's own statistic (`IR?v` value tags exist for exactly those, and
+the thresholds ride on quartiles, not channels); a sustained first or
+second quartile over its alert threshold is the pause tier (verdict
+FLAME, hold, fire blocked, released once the signal clears), over its
+critical threshold the fail tier (motion stopped, latch locked, verdict
+FIRE until the next session, smoke airflow held) - the same two classes
+the factory's fault registry gives them (`lid_ir_*_quartile_alert` rings
+the pause chain, `lid_ir_*_quartile_critical` is a hard FAILURE). The
+watch runs through the run, smoke and thermal phases and gates both
+controller modes through the one verdict.
+
+The knobs are four gate rows with the factory's header values as
+defaults: alert 275 / critical 688 on the first quartile, 374 / 1022 on
+the second, quartiles three and four left off as the factory leaves
+them at zero; 0 turns a tier off, and the cross-check keeps each alert
+under its critical. The defaults sit far above a fully lit lid lamp
+(161 to 177 counts plus 22 of drift), so no lamp change can trip them;
+a candle-sized flame (+3 to +6 counts) stays under them too - the watch
+catches a developed fire, which is what the factory's catches. The
+relative `cool_fire_ir_delta` watch retires; per-job baseline and peak
+logging stays. The header's own `IR??` values stay declared-ignored
+(the standing envelope decision); reading what the cloud sets, per
+machine, stays with the commissioning item. One interpretation is
+recorded rather than recovered: that the quartile values are the sorted
+instantaneous readings; the factory's exact computation is not decoded.
+
+`cooling.fire-watch-tiers` passed on the deployed board (17:48Z), the
+lid lamp as the flame stand-in (idle readings 51 to 56): a q1 alert
+moved under the lamp held the session (verdict FLAME, `fire_watch`
+alert, hold, fire blocked, the reason naming the quartiles) and did not
+survive into a fresh session; a q1 critical latched FIRE with the laser
+latch locked (`interlock_circuit` bit 3); all four thresholds at zero
+read as the four flame gates off with the watch at `watch`; restored,
+the watch read `armed` at OK. A first run failed only on its own log
+check racing rsyslog by a second; the checks now poll the tail
+(forgefirm 678a155).
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
@@ -6414,6 +6456,36 @@ entry above, with the CMet/CMdt correction); the catalog case is
    all is a spec-level claim (Glowforge ships it on the Pro; Basic/Plus use the
    same passive closed-loop cooling), not teardown-verified per unit — another
    reason it is a setting.
+
+### Fire watch (lid IR) redesign (item 1), closed 2026-08-31
+
+Closed: armed in the factory's shape with knobs, bench-proven with the
+lamp as the flame stand-in (the entry above). Items 2 to 18 are now 1
+to 17.
+
+1. **Fire watch (lid IR) redesign.** The gate stays disabled
+   (`cool_fire_ir_delta = 0`) until it is lamp-aware: the engine must own or
+   observe the lamp level (suspend the watch and re-baseline for a few ticks
+   after any `lid_led` change) and the threshold must be relative to the
+   lamp-set level, not a fixed count. Even then the signal is weak — a candle
+   reads like a cut — so the head camera or a real flame sensor is the honest
+   path to fire detection that means something.
+
+   One lead worth a bench hour before building anything. The cloud ships flame
+   thresholds in every pulse header, and the numbers do not look lamp-naive:
+   baseline 3 counts on all four channels, alert at 275 and critical at 688 on
+   the first quartile, 374 and 1022 on the second, with the third and fourth
+   left at zero. The lamp response (facts bank) puts a fully lit lamp at 161
+   to 177 counts on every channel and the dark floor at 2, so the factory's
+   alert sits above the lamp and its baseline matches the floor: the factory
+   rides out the lamp by choosing thresholds above it rather than by tracking
+   it, and the watch could be re-armed on fixed numbers after all. Still
+   unproven: that the header's quartiles map onto the raw channels and share
+   their units (all four channels behave alike, while the header leaves the
+   third and fourth quartiles at zero). Confirm against the header the next
+   cloud job carries. By decision those header thresholds (`IR??`) are the
+   prior for this redesign and nothing else: the cloud client declares them
+   ignored, and the watch stays disabled until it is lamp-aware.
 
 ## Reference notes
 
