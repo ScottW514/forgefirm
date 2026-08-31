@@ -4726,6 +4726,55 @@ does not carry, and the 5 MP driver has no way to take one. BRINGUP
 item 6 now says so, and the factory-slot session it asked for is not
 needed.
 
+## 2026-08-31: the mid-job gap question, answered from the chain
+
+Item 1 asked whether the hardware button latch persists across a
+kernel-run gap inside an armed job, with a stream keepalive as the fix if
+it did not. The safing chain answers it (`docs/SAFETY.md` section 2): the
+button latch is U23 latch 1, SET by lid-open OR the SoC lock (U32) and
+RESET by the physical button only. The charge-pump watchdog feeds
+HV_ENABLE, not the latch. A gap (a `G4` dwell, a hold, the end of a cycle
+before the next) drops HV_ENABLE 454 ms after the last pump pulse and
+leaves the latch as it was, while the driver keeps the SoC lock released
+through the armed window; on the next run HV_ENABLE is back within ~3 ms,
+~216 ms before the first step (the pads measurement of 2026-08-15). A
+planner starve is not a gap: the stream pads the ring dark and the run
+keeps playing. A keepalive would hold HV_ENABLE up while nothing is cut,
+the one state the watchdog exists to prevent, so none is built.
+
+The one thing never watched on the bench, the latch readback through a
+lit-dwell-lit sequence, rides `laser.emission-witness` from now on: the
+square carries a `G4 P2` between its second and third sides, the sampler
+reads `cnc/button_latch` and `switches.hv_enable`, and the test checks
+the latch clear in every armed sample, HV_ENABLE dropped across the
+dwell and back with emission after it, and the operator confirms all
+four sides. It runs with the attended set. Item 1 is retired; its
+flow-band sentence is a fact and moved to the facts bank ("Cooling
+operating point").
+
+## 2026-08-31: the unattended set on the hot-deployed board
+
+The first unattended run of the day (campaign c-20260831143855) stopped
+on `cooling.aa-offset-calibrate`, the test's first campaign run ever,
+queued right after `cooling.flow-verify`: the loop was still mixing
+after the no-flow trial (19.6 C rise, the sensors 13.5 C apart), the
+tool's fixed 6 s settle let the trend into its first edge (+44.7 and
++20.6 counts against 13 to 18 on the settled edges), and its spread
+check refused the result (35.5 counts against a limit of 8). Fix: the
+tool waits at the flow tools' stationary gate before its first edge
+(forgectrl 7dbb5e1) and the test gives it 540 s (forgefirm eb8935c).
+
+By operator decision the fix went onto the board without an image:
+the pinned forgectrl built by bitbake (md5 7e1f28cc) and the suite
+file installed over ssh on dev 20260831141210, forgectrl and forgetest
+restarted. The test then passed alone (offset 15.0 counts, spread 6.0,
+edges 12.2 to 18.2), and the unattended queue of 20 ran green behind it
+in campaign c-20260831151846 (21 PASS, the 17 other unattended tests
+inherited from the morning run, one ABORTED record from a page start
+before the fix was in). The attended set is deferred by decision. The
+campaign that authorizes a release runs on the image that carries every
+fix, burned once.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
@@ -6246,6 +6295,19 @@ stay as decided there.
     (`KPROBES`, `PERF_EVENTS`, `BPF_SYSCALL`, `DEBUG_FS`, `DEVMEM`,
     `MAGIC_SYSRQ`: no runtime cost unused, root-only exposure, and root can
     load modules anyway).
+
+### Laser commissioning leftovers (item 1), retired 2026-08-31
+
+Closed: the gap question is answered from the safing chain (the entry
+above); the confirmation rides `laser.emission-witness`; the flow-band
+sentence is in the facts bank. Items 2 to 21 are now 1 to 20.
+
+1. **Laser commissioning leftovers.** Verify the hardware button latch persists
+   across kernel-run gaps mid-job (if OK_2_FIRE drops between motion bursts, the
+   fix is a stream keepalive across armed gaps). The flow check's bands
+   hold from 19 to 27 C, the loop heater's ceiling in a 20 C room, with the
+   margin widening warm; above that only a running tube warms the loop,
+   and the check takes the tube's share off.
 
 ## Reference notes
 

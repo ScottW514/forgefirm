@@ -95,6 +95,8 @@ def sample(ctx):
         "beam": hw.sysfs_int("head/beam_detect_analog"),
         "beam_d": hw.sysfs_int("head/beam_detect_digital"),
         "button_lit": hw.button_lit(),
+        "hv_enable": (st.get("switches") or {}).get("hv_enable"),
+        "button_latch": hw.sysfs_int("cnc/button_latch"),
     }
 
 
@@ -347,14 +349,19 @@ def power_floor(ctx):
       actions=["button"],
       steps=["Scrap under the head with 20 mm of free +X and +Y travel; lid closed; exhaust on.",
              "Press the physical button when it lights white (the arm).",
-             "At the end, confirm the square the laser marked: the one judgment by eye in the "
-             "campaign, the calibration of the sensor witnesses."],
-      description="A 20 mm square outline at S400/F600 in dynamic laser mode: emission_samples "
-                  "(the kernel's LASER_ON sample count) goes nonzero during the fire window and "
-                  "returns to 0 at Idle, HV current rises during the burn, the head's beam "
-                  "detector sees the beam, the armed window is observed, the M2 program end "
-                  "disarms promptly at Idle (job-based, not the 60 s idle grace) and the button "
-                  "goes dark. The operator confirms the mark.")
+             "At the end, confirm the square the laser marked, all four sides: the one judgment "
+             "by eye in the campaign, the calibration of the sensor witnesses."],
+      description="A 20 mm square outline at S400/F600 in dynamic laser mode with a 2 s dwell "
+                  "(G4) between its second and third sides: emission_samples (the kernel's "
+                  "LASER_ON sample count) goes nonzero during the fire window and returns to 0 "
+                  "at Idle, HV current rises during the burn, the head's beam detector sees the "
+                  "beam, the armed window is observed, the M2 program end disarms promptly at "
+                  "Idle (job-based, not the 60 s idle grace) and the button goes dark. Across "
+                  "the dwell the kernel run ends and restarts: HV_ENABLE drops with the "
+                  "charge-pump watchdog and is back for the third side, while the hardware "
+                  "button latch stays clear (cnc/button_latch 0 in every armed sample), so the "
+                  "second half of the square marks without a second press. The operator "
+                  "confirms all four sides.")
 def emission_witness(ctx):
     ev = ctx.evidence
     with ctx.grbl() as g, LiveJob(ctx, g):
@@ -367,7 +374,7 @@ def emission_witness(ctx):
         ctx.check(not base["emission"], "emission_samples nonzero before the job (%s)", base["emission"])
         ctx.ready(ARM_CUE % "20 mm +X and +Y")
         job = ["G91", "G21", "M4", "S400",
-               "G1 X20 F600", "G1 Y20 F600", "G1 X-20 F600", "G1 Y-20 F600",
+               "G1 X20 F600", "G1 Y20 F600", "G4 P2", "G1 X-20 F600", "G1 Y-20 F600",
                "M5", "G90", "M2"]
         ctx.arm_press()
         try:
@@ -391,6 +398,21 @@ def emission_witness(ctx):
                    "pgood_peak": max((s["pgood"] for s in samples if s["pgood"] is not None), default=None)})
         ctx.log("emission_samples peak=%s end=%s; hv %s..%s; lid_ir peak %s; armed seen %s",
                 peak, end, ev["hv_min"], ev["hv_max"], ir_peak, armed_seen)
+        # The dwell: a kernel-run gap inside the armed window. The button
+        # latch has no input from the charge-pump watchdog (its SET inputs
+        # are the lid and the SoC lock), so it must read clear through the
+        # gap, while HV_ENABLE drops with the watchdog and returns for the
+        # third side.
+        latch_armed = [s["button_latch"] for s in samples if s["armed"] and s["button_latch"] is not None]
+        first_fire = next((i for i, s in enumerate(samples) if s["emission"]), None)
+        hv_en = [s["hv_enable"] for s in samples[first_fire:]] if first_fire is not None else []
+        dip = next((i for i, v in enumerate(hv_en) if v is False), None)
+        back_lit = dip is not None and any(
+            s["hv_enable"] and s["emission"] for s in samples[first_fire + dip:])
+        ev.update({"button_latch_armed_max": max(latch_armed) if latch_armed else None,
+                   "hv_enable_dipped": dip is not None, "hv_enable_back_lit": back_lit})
+        ctx.log("dwell gap: button latch through the armed window max=%s; HV_ENABLE dipped=%s, "
+                "back with emission after it=%s", ev["button_latch_armed_max"], dip is not None, back_lit)
         # X-3: job-based disarm at Idle after M2
         dt = wait_disarm(ctx, 75)
         ev["disarm_after_idle_s"] = round(dt, 1) if dt is not None else None
@@ -403,9 +425,14 @@ def emission_witness(ctx):
     ctx.check(dt is not None and dt < 10.0,
               "the M2 job did not disarm promptly at Idle (%s s; the idle grace is ~60 s)",
               ev["disarm_after_idle_s"])
+    ctx.check(latch_armed and max(latch_armed) == 0,
+              "the hardware button latch read SET inside the armed window (max %s over %d samples)",
+              ev["button_latch_armed_max"], len(latch_armed))
+    ctx.check(ev["hv_enable_dipped"], "HV_ENABLE never dropped across the 2 s dwell (the kernel run did not end)")
+    ctx.check(back_lit, "HV_ENABLE did not return with emission after the dwell (the third side ran dark)")
     judge_beam(ctx, beam)
     check_button_dark(ctx, ev)
-    ctx.confirm("Did the laser mark a 20 mm square outline on the scrap?")
+    ctx.confirm("Did the laser mark a 20 mm square outline on the scrap, all four sides?")
     ctx.log("PASS: emission peak %s -> 0, HV %s..%s, beam +%s, disarmed %.1f s after Idle, button "
             "dark, mark confirmed", peak, ev["hv_min"], ev["hv_max"], beam["delta"], dt)
 
