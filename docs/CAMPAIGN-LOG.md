@@ -4955,6 +4955,30 @@ recovery lever is documented in the UAPI; nothing is held open for it.
 What remains of the item is the K-11 runtime case, one bench slot with
 the head's bus flooded from userspace.
 
+## 2026-08-31: the K-11 runtime case, a badly-answering present head
+
+The last physical-evidence negative, proven on the bench with the head
+connected and the fault injected in software. The injection is the
+head's own reset register (`0xc9` <- `0x5a`, forced past the bound
+driver under the adapter lock): the MCU reboots, and through the reboot
+window its I2C reads NAK - a present head answering badly, the one
+condition unreachable with the head unplugged. A tight poll of the four
+witness attributes (`beam_detect_analog`, `accel_irq`, `hall_sensor`,
+`beam_detect_digital`) over the window took 3596 samples; 8 returned an
+errno (the K-11 propagation: `head_read_bit_ascii` and
+`head_read_dword_ascii` return the negative i2c result rather than
+formatting a value), and none returned a spoof-shaped positive (the old
+`beam_detect_analog=65531` / `accel_irq=1`). The head was restored by a
+`glowforge_head` rebind (re-probe rewrites the lambda/theta calibration)
+and recovered fully: witnesses read clean, `info` `id=044c`,
+`head_probe: done` in dmesg, and forgectrl's `/status` `head: true`.
+This closes item 3; the drill's script was staged in `/tmp` and removed.
+
+Note on injection: on the i.MX i2c adapter the kernel driver and
+userspace i2c-dev serialize under the adapter lock, so flooding the bus
+does not collide on the wire - the head reset is the reachable way to
+make a present head answer badly.
+
 ## Superseded status notes
 
 ### Shared machine services — remaining polish, as listed 2026-08-13
@@ -6645,6 +6669,17 @@ entry above). Items 4 and up move down one.
      `ensure_engine` `popen()`s should move out of the HTTP callback so a slow
      media-ctl cannot stall the request thread. Changing the MHD start flags
      touches the streaming model, so this wants a bench slot of its own.
+
+### Physical-evidence negatives (item 3), closed 2026-08-31
+
+Closed: the failed-head-capture negative and the K-11 badly-answering
+head are both proven (the entries above); the STATE_FAULT-recovery note
+was dropped by operator decision. Items 4 and up move down one.
+
+3. **Physical-evidence negative still open.** A present head answering I²C
+   badly (the K-11 runtime case) needs the head connected and the fault
+   injected: flood the head's bus from userspace while the driver talks, one
+   bench slot.
 
 ## Reference notes
 
