@@ -6722,6 +6722,79 @@ down one.
     defer needs the 40 V regulator unbound under the probe. It is a bench slot
     with the rail-cycle gamble accepted, and it rides the closing burn.
 
+## 2026-08-31: head MCU firmware decode - the accel IRQ, HEAD_IRQ arming, and the beam-detect chain
+
+A read of the head MCU firmware (the KL17 at i2c-3 @0x47; disassembly
+in `GF_Reverse/HEAD_PY`, cross-checked against the factory pinout
+tables, the factory `head-board.sh`, and this project's DTS and head
+driver) settles what drives the head IRQ and how the factory's head
+crash detector works. It ties the two open next-work items together:
+the accelerometer crash detector and the head IRQ source are two views
+of one mechanism. The durable result is distilled into the BRINGUP
+facts bank ("The head MCU flag register and HEAD_IRQ", "The head
+accelerometer", "Beam detect in the head MCU"); the decode itself is
+recorded here.
+
+**How the KL17 assembles reg 0x05 and drives the head IRQ.** The MCU
+is I2C-slave-only to the SoC (no I2C-master path is linked, so it never
+touches the accelerometer). Once per main-loop pass it samples four
+head-local GPIO input levels into the read-only flag register 0x05: b0
+hall (pad PTE19), b1 the accelerometer INT pin (PTA1, a bare level, not
+an I2C read and not computed), b2 the beam-detect comparator output
+(PTE18), b3 a fourth, unidentified input (PTA19, pulled down; candidate
+second hall or head-present). A fifth flag, b7, is the processed
+beam-detect verdict (below). No GPIO pin interrupts are configured
+anywhere in the firmware (`PORTA`/`PORTC_PORTD` vectors are the default
+infinite loop); every input is level-polled. The outgoing head IRQ line
+is the MCU's PTC2 output (our EV_SW head bit, GPIO3_22, an active-high
+input at the SoC): it is level-driven and mirrors reg 0x02 (the latched
+IRQ status) being nonzero. reg 0x02 latches edges on the reg-0x05 bits,
+but only those the SoC arms through reg 0x03 (rising) and reg 0x04
+(falling) edge-enable masks; reg 0x02 is read-to-clear. So the SoC
+chooses which head events raise the IRQ, answers it by reading reg 0x02
+to identify and clear, and reads reg 0x05 for live levels. ForgeFIRM
+writes neither 0x03/0x04 nor reads 0x02, so the head IRQ is dormant by
+construction, which is why the bench sees GPIO3_22 idle low with a
+healthy head. (This corrects nothing measured earlier; it explains it.)
+
+**The head accelerometer is a LIS2HH12 with a full on-chip interrupt
+generator, and the factory arms it.** The part (i2c-3 @0x1e; the board
+and lid accels are the same part at @0x1d and i2c-0 @0x1e) carries
+per-axis 8-bit thresholds (IG_THS_X1/Y1/Z1, regs 0x32/0x33/0x34), a
+duration counter (IG_DUR1 0x35), a per-axis event register
+(IG_SRC1 0x31), full-scale +/-2/4/8 g (CTRL4 FS), and two independent
+generators (IG1/IG2). The factory arms this generator from the pulse
+header's HA* accel tags, which map bit-exactly onto its registers
+(per-axis threshold to IG_THS, duration to IG_DUR1, decimator/ODR to
+CTRL5, FIFO to CTRL3/FIFO_CTRL, full scale to CTRL4), and reads trips by
+polling IG_SRC1 over the accel's own bus (the `head_accel_x/y/z_alert`
+sources, from an 8-bit I2C register), running two tiers (alert pauses,
+abort fails). The accel INT pin also wires to the KL17's PTA1, so the
+same event surfaces coarsely as reg 0x05 b1. So the factory head crash
+detector is the sensor's own interrupt generator, and the HA*
+thresholds are LIS2HH12 register values at the full scale the HAsr tag
+sets, not values in an unknown unit or behind an unknown filter. The
+factory DTS does not declare the accel at all (its head I2C controller
+is `status = "disabled"` with no children; the factory drove the accel,
+the head MCU, and the LM75 from userspace over `/dev/i2c-2`), so the
+factory too reaches the accel only over the bus, never as a host
+interrupt.
+
+**Beam detect, fully decoded (contrast, for the emission question).**
+In the MCU: PTE16 to ADC0 gives reg 0x16 (raw analog level); a float
+EWMA/CUSUM over the coefficients LAMBDA_K (0x07ae), LAMBDA_T
+(0x1999 = 0.1), THETA_R (0x20), THETA_T (0x28) and E_T (0x60) feeds an
+N-of-M sliding-window verdict in reg 0x05 b7. A DAC (reg 0x1e, default
+0x3ff) sets an analog comparator threshold whose raw digital output is
+reg 0x05 b2. Our head probe writes those five coefficients, but they are
+the firmware's own power-on defaults. Our head driver exposes b2 (the
+raw comparator) and reg 0x16 (the raw analog), but not b7 (the processed
+verdict) - a gap if the emission question is ever pursued. `0xc9 <- 0x5a`
+is a system reset; `0xc9 <- 0x5b` forces the ROM bootloader; `reg 0x0f`
+enables SEGGER RTT telemetry; regs 0x3c-0x3f read a debug capture ring
+(the previously-unexplained `i2cget 0x47 0x02`, `0x0f`, `0x3c`
+commands).
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis

@@ -1006,21 +1006,56 @@ is committed.
   firing) and is the only live HV telemetry on this PSU (`hv_voltage` is
   grounded). `cnc/laser_pgood_sampled` stays 0 through real cutting: not usable
   here.
-- **The head IRQ and beam detect.** The EV_SW `head` bit (GPIO3_22, factory
-  pad HEAD_IRQ; the panel's "Head sense" row) is the head MCU's attention
-  line: idle LOW with a healthy head, pulsing on a head reboot (hence the
-  60 ms DT debounce), floating to the SoC pull-up with no head. The raw level
-  is not a presence signal; presence is the head answering at I²C 0x47. The
-  factory app answers the IRQ by reading the head's flag register (reg 0x05:
-  b0 hall_sensor, b1 accel_irq, b2 beam_detect_digital), so there are exactly
-  three candidate sources. The beam detector reads back as the digital flag
-  plus an analog level (reg 0x16), both head sysfs attrs: `beam_detect_analog`
-  sits near 1834 dark and reads 2600 to 2890 during S300/S400 fire (the
-  acceptance suite's mark witness), unmeasured at low fire energies. The
-  tunable detection model (regs 0x22 to 0x2a) is written with fixed values at
-  probe and not exposed as attrs. Whether the factory enables beam detect in
-  production is unknown: the v2.6.0 app carries a complete but config-gated
-  subsystem.
+- **The head MCU flag register and HEAD_IRQ.** The head MCU (a KL17 at
+  i2c-3 @0x47, I²C-slave-only to the SoC) samples four head-local GPIO input
+  levels once per main loop into the read-only flag register 0x05: b0
+  `hall_sensor` (Z home), b1 `accel_irq` (the head accelerometer's INT pin, a
+  bare level), b2 `beam_detect_digital` (the raw beam comparator), and a
+  fourth, unidentified input the driver does not expose (candidate second
+  hall or head-present). A fifth flag, b7, is the processed beam-detect
+  verdict (below). The EV_SW `head` bit (GPIO3_22, factory pad HEAD_IRQ; the
+  panel's "Head sense" row) is the MCU's PTC2 output driven back to the SoC:
+  it is level-driven and mirrors reg 0x02 (the latched IRQ status) being
+  nonzero. reg 0x02 latches edges on the reg-0x05 bits, but only those the
+  SoC arms through reg 0x03 (rising) and reg 0x04 (falling) edge-enable masks,
+  and it is read-to-clear. So the SoC chooses which head events raise the IRQ,
+  answers it by reading reg 0x02 to identify and clear, and reads reg 0x05 for
+  live levels. ForgeFIRM writes none of 0x03/0x04 and reads neither 0x02 nor
+  the fourth-input and b7 flags, so the head IRQ is dormant by construction:
+  GPIO3_22 sits idle low with a healthy head, pulses on a head reboot (hence
+  the 60 ms DT debounce), and floats to the SoC pull-up with no head. The raw
+  level is not a presence signal; presence is the head answering at I²C 0x47.
+- **The head accelerometer** is an ST LIS2HH12 (i2c-3 @0x1e; the board and
+  lid accels are the same part at i2c-3 @0x1d and i2c-0 @0x1e), read raw by
+  the mainline `st,lis2hh12` driver for motion liveness. The part has a full
+  on-chip interrupt generator: per-axis 8-bit thresholds (IG_THS_X1/Y1/Z1,
+  regs 0x32/0x33/0x34), a duration counter (IG_DUR1 0x35), a per-axis event
+  register (IG_SRC1 0x31), full scale ±2/4/8 g (CTRL4 FS), two independent
+  generators (IG1/IG2). The factory arms this generator per job from the
+  pulse header's HA* accel tags, which map bit-exactly onto its registers
+  (per-axis threshold → IG_THS, duration → IG_DUR1, full scale → CTRL4,
+  period/decimator → CTRL5/ODR), and reads trips by polling IG_SRC1 over the
+  accel's own bus (per-axis x/y/z alerts), running two tiers. So the factory
+  head crash detector is the sensor's own interrupt generator, and the HA*
+  thresholds are LIS2HH12 register values at the full scale the HAsr tag sets,
+  not values in an unknown unit. The INT pin does not reach the SoC as a host
+  interrupt: it wires to the head MCU's GPIO and surfaces only as reg 0x05 b1,
+  and neither the factory DTS (head I²C `status = "disabled"`, the accel
+  driven from userspace) nor ForgeFIRM's DTS gives the accel an `interrupts`
+  property. ForgeFIRM neither arms the generator nor reads b1; it only polls
+  raw samples.
+- **Beam detect in the head MCU.** PTE16 into ADC0 gives reg 0x16, the raw
+  analog level (`beam_detect_analog`, a head sysfs attr): near 1834 dark, 2600
+  to 2890 during S300/S400 fire (the acceptance suite's mark witness),
+  unmeasured at low fire energies. A float EWMA/CUSUM over the coefficients
+  `LAMBDA_K` (0x07ae), `LAMBDA_T` (0x1999 = 0.1), `THETA_R` (0x20), `THETA_T`
+  (0x28), `E_T` (0x60) feeds an N-of-M sliding-window verdict in reg 0x05 b7;
+  a DAC (reg 0x1e, default 0x3ff) sets a comparator threshold whose raw output
+  is reg 0x05 b2 (`beam_detect_digital`). The head probe writes the five
+  coefficients, but they are the firmware's own power-on defaults. The driver
+  exposes b2 (raw comparator) and reg 0x16 (raw analog), not b7 (the processed
+  verdict). Whether the factory enables beam detect in production is unknown:
+  the v2.6.0 app carries a complete but config-gated subsystem.
 - **Switches**: truthy = closed/OK for lid/doors/button. **SW_INTERLOCK is
   INVERTED**: the remote interlock (the regulatory 2-pin lockout connector)
   reads ACTIVE only when the loop is OPEN. Basic/Plus — including the bench
@@ -1173,14 +1208,36 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
 5. **Update system Phase 5 — recovery refresh.** The remaining phase of
     `docs/UPDATE-SYSTEM.md` (a refreshed recovery image in boot0); Phases 0–4
     are done.
-6. **Head-IRQ source validation (exploratory, not gating).** Which of the
-    three head flag sources drives the EV_SW `head` bit during a cut is
-    unknown; the working hypothesis is the beam-emission detector (the facts
-    bank, "The head IRQ and beam detect"). Owed, cheap and opportunistic
-    during live fire: log EV_SW head-bit edges plus
-    `head/beam_detect_digital|_analog` while firing, low fire energies
-    included. If the beam flag level-holds the IRQ, the panel row asserts
-    during sustained emission.
+6. **Head accelerometer crash detector, and the head IRQ (planned;
+    exploratory).** The factory's head crash detector is the head
+    accelerometer's own on-chip interrupt generator, armed per job from the
+    HA* header thresholds and read by polling the sensor; the head IRQ is the
+    coarse aggregate path to that event and the others (hall, beam). Both are
+    one mechanism (the facts bank, "The head MCU flag register and HEAD_IRQ"
+    and "The head accelerometer"), which is why these two items are one. The
+    detector is adopted, not measured from scratch: the earlier plan to
+    bench-measure a filter is moot now that the HA* thresholds are known to be
+    LIS2HH12 register values at a known full scale.
+
+    Owed for the detector: program the LIS2HH12 interrupt generator over
+    i2c-3 (per-axis threshold, duration, full scale) and poll IG_SRC1 for a
+    latched per-axis trip, on the factory's two-tier shape (an alert that
+    pauses, an abort that fails). The rail-contact signature in the facts
+    bank sets the first threshold in register units; a pause on contact is
+    the first use. ForgeFIRM already reads the head accel raw for liveness,
+    so this shares the bus, not new hardware; the one wrinkle is reaching the
+    interrupt-generator registers past the bound `st_accel` driver (IIO
+    events if the driver exposes them, else a direct-register path as the
+    retired homing spike used).
+
+    Owed for the head IRQ, only if a coarse hardware interrupt is wanted
+    instead of the poll: arm the accel bit in the head MCU (reg 0x03/0x04),
+    watch GPIO3_22, and read reg 0x02 to identify and clear. The beam-detect
+    verdict (reg 0x05 b7, not currently exposed) is the same mechanism for the
+    emission question and stays exploratory: whether the factory enables beam
+    detect is unknown, and detection at low fire energies is unverified. A
+    cheap opportunistic check during live fire still stands: log GPIO3_22
+    edges plus `head/beam_detect_digital|_analog` while firing.
 
 7. **Gapless pause and resume in GRBL mode (planned).** A pause leaves a mark
     in the cut. With laser mode on, the core stops the beam at the start of the
@@ -1213,16 +1270,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     raster line does to it, and how it composes with the armed window's disarm
     grace across a long hold.
 
-8. **Head crash and rail-contact detector (planned).** Bench-measured from
-    scratch, not adopted from the pulse header: the factory's per-axis
-    alert/abort thresholds arrive in every header in a unit and behind a
-    filter that are not known, so the rail-contact signature in the facts
-    bank is the starting point and the header values are only a cross-check
-    once the units are established. A pause on contact, on the factory's
-    shape (an alert tier that pauses, an abort tier), would be the first
-    use.
-
-9. **A sender change while a job runs: discussion.** Today a sender that
+8. **A sender change while a job runs: discussion.** Today a sender that
     disconnects mid-job leaves the motion running to the end of what the
     controller holds, with the window closed and fire suppressed (the
     consent belonged to the displaced session), so the job finishes dark
@@ -1238,7 +1286,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     running on leaves a clean stop position but wastes the piece. Decide
     with the gapless pause and resume item (7), which owns the resume
     mechanics.
-10. **The flow check on a second machine.** The lit-tube flow check is in
+9. **The flow check on a second machine.** The lit-tube flow check is in
     place: the engine reads means, takes its baseline under the run
     profile, and takes the tube's share off (`cool_laser_heat_cw`,
     `cool_laser_heat_density`); `cooling.flow-under-load` is the catalog's
@@ -1248,7 +1296,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     far): re-measure the two heat coefficients and the machine's
     air-assist offset; and if a lit check still trips, the
     void-on-emission design with the tube as its own flow tracer.
-11. **Laser power-good: what the line means.** `cnc/laser_pgood` and its
+10. **Laser power-good: what the line means.** `cnc/laser_pgood` and its
     sampled count are defined in the UAPI (active low, one sample every
     ~3.9 ms), the facts bank records that the sampled count reads 0 through
     real cutting, and the cooling engine warns
@@ -1260,7 +1308,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     scope against `hv_current` through an armed cut, its meaning written
     into the facts bank and the UAPI, and then either a warning that means
     something or no warning.
-12. **Initial commissioning: measure and set the machine's own numbers
+11. **Initial commissioning: measure and set the machine's own numbers
     methodically.** Every tunable that was measured on the bench machine
     and shipped as a default varies from machine to machine: the flow
     check's bands and `cool_flow_rise`, the tube's heat coefficients
@@ -1296,7 +1344,7 @@ covers the warm-up hold), the supply temperature window (the service sends
 the whole ADC range and the factory binds it to nothing; the supply is
 watched per job instead), the head, lid, interconnect and fused temperature
 ceilings (no sensor at those locations; the chassis is watched per job), the
-head accelerometer thresholds (item 8), the lid IR thresholds (the fire
+head accelerometer thresholds (item 6), the lid IR thresholds (the fire
 watch runs on local knobs; the header values stay ignored), the
 HV current caps (the sampled emission witness covers the idle case, and HV
 current is ranged per job), the thermal report upload conditions and the
