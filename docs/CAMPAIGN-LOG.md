@@ -6487,6 +6487,58 @@ to 17.
    prior for this redesign and nothing else: the cloud client declares them
    ignored, and the watch stays disabled until it is lamp-aware.
 
+### Cloud mode (item 3), closed 2026-08-31
+
+Closed as a status recitation: the content is present-state fact that
+lives in `CLOUD.md` (the envelope, the guards, the actions, the
+declined set), and the one open question, whether the service accepts
+an 8 MP machine's larger images, stays in `CLOUD.md` "Outstanding
+items" and rides the 8 MP first light (the cameras item). Items 4 and
+up move down one.
+
+3. **Cloud mode.** A print is no longer capped by the ring: the client holds
+   the compressed body, fills the ring before the button, and tops it up as it
+   plays, with the body bounded by `pulse_reject_threshold_bytes` because
+   memory is what that costs. A feed that wedges is caught by progress rather
+   than by ring depth (a healthy feeder keeps the ring brim-full, so depth
+   only falls an hour after the feed died): thirty seconds of no progress with
+   room in the ring stops the job cleanly and retraces, and it resumes if the
+   feed moves again. A running print also reports itself to the app again, on
+   the carrier a factory-session capture settled: the `type:"progress"` frame
+   that is the periodic settings report, every 30 s and at every phase change,
+   divided by the job's own length rather than by the kernel byte counter that
+   climbs all job long under a live feed. The `cloud.*` acceptance tests
+   cover all of it on the bench, a print longer than the ring fed from the
+   live service included, and the app has been watched reporting a print's
+   progress. `gfcloud.init` autostart with `controller_mode = cloud` is
+   validated on a flashed image, and the lid flash follows the action's
+   `LCfl`. What is left is tracked in
+   `python3-gfhardware/forgefirm-app/docs/CLOUD.md` "Outstanding items" and
+   is short: whether the service accepts an 8 MP machine's larger images (no
+   HD machine has been on the bench). The pulse header's envelope is
+   settled: every tag the service fills in is applied, passed through as a
+   limit that can only tighten, refused on, logged or declared ignored with
+   its reason (`CLOUD.md` "The pulse header"), and the gates behind it live
+   in the cooling engine so they hold in GRBL mode too. The memory guards
+   (`pulse_reject_threshold_bytes`, 128 MiB of compressed body) stay
+   reasoned rather than measured, by decision: nothing the service sends
+   comes near them, and every job logs the body and program sizes the
+   guards are reasoned from. The lifecycle keys (`CFrh`, `CCwp`, `CCrp`,
+   `CCup`) are settled as inert, in the factory too, so the configured
+   warm-up and rest on the factory's measured timings are the model, and
+   `CCbp`/`CCbt` are report-only tags that cannot appear in a header. The
+   four actions the service has never been seen to send were read out of
+   the factory binary: `user_image` is a lid capture and is implemented;
+   `update_check`, `factory_reset` and `head_firmware_update` each hand off
+   to a program this machine does not have (a factory updater, a reset
+   script, a head firmware push), so each is answered on the wire and none
+   is performed, and `focus` is ignored exactly as the factory ignores it.
+   Declined outright: SPKI pinning, emulator full-session parity, and the
+   factory's ten-event pause phase machine. Not inducible from the bench:
+   the cancel-with-a-rejected-`settings`-action case, a malformed frame
+   (needs a MITM), a body past the memory guard (the service has no such job
+   to send), and a wedged feed (a healthy machine will not stall on request).
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis
