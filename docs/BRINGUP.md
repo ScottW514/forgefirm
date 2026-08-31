@@ -788,8 +788,13 @@ is committed.
   TMC2130s belong to the upgraded OpenGlow board only). A glitch can leave the
   drivers unserviceable: SDMA playback and the position counters run normally
   while the motors produce nothing. The supply itself is fine — this is a
-  driver failure mode, not a marginal rail. Their reset lines are strapped (no
-  kernel pin), `cnc/faults` does not flag the state, and whether a given rail
+  driver failure mode, not a marginal rail. The kernel drives their nRESET and
+  nSLEEP pins (`reset-gpio` gpio3 18, `sleep-gpio` gpio3 16), but only as a
+  pair inside every enable/disable cycle, together with the rail: the reset
+  pulse rides along on every recovery attempt and has never shortened the
+  ladder, so a logic reset alone does not clear the state (only the rail-off
+  duration matters, which fits a latched internal state that nRESET does not
+  reach). `cnc/faults` does not flag the state, and whether a given rail
   power-up wedges them is chance. Recovery: a longer true power-off (the
   forgectrl supervisor ladders 5/15/30 s) and, at worst, a full machine power
   cycle. Consequences: **counters, anchors and `H:1` are never proof of
