@@ -25,7 +25,25 @@ inherit python3-dir update-rc.d forgefirm-manifest
 # it identifies the campaign, never a test fingerprint).
 FORGEFIRM_MANIFEST_SRC = "${WORKDIR}/forgetest/forgetest"
 
-RDEPENDS:${PN} = "python3 forgectrl"
+# The standard-library packages the tool imports (the page server, the
+# catalog, the bench scripts), not the python3 meta-package: the dev image
+# must carry no module the release image lacks, or a missing module in
+# the release rootfs would pass the campaign unseen.
+RDEPENDS:${PN} = " \
+    python3-core \
+    python3-compression \
+    python3-crypt \
+    python3-fcntl \
+    python3-io \
+    python3-json \
+    python3-logging \
+    python3-math \
+    python3-netclient \
+    python3-netserver \
+    python3-shell \
+    python3-statistics \
+    forgectrl \
+"
 
 INITSCRIPT_NAME = "forgetest"
 INITSCRIPT_PARAMS = "start 95 2 3 4 5 . stop 70 0 1 6 ."

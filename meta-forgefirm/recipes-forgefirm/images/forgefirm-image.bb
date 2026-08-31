@@ -14,9 +14,13 @@ DESCRIPTION = "OpenGlow/ForgeFIRM image for Glowforge"
 # costs 8.7 MB, most of it libmagic and its database, which nothing else
 # here uses. The dev image blanks FORGEFIRM_RELEASE_TRIM to keep it (a
 # removal spec is expanded when applied, so the variable, not the removal,
-# is what a requiring recipe can override).
+# is what a requiring recipe can override). python3 is the meta-package:
+# it installs every standard-library module (tkinter, idle, 2to3, pydoc,
+# ensurepip, venv, the debugger, asyncio, multiprocessing, xmlrpc), which
+# nothing here imports. Each Python recipe declares the module packages it
+# imports (python3-core plus the few it uses), so the meta-package goes.
 FORGEFIRM_RELEASE_TRIM ?= "nano"
-IMAGE_INSTALL:remove = "gfui-client ${FORGEFIRM_RELEASE_TRIM}"
+IMAGE_INSTALL:remove = "gfui-client python3 ${FORGEFIRM_RELEASE_TRIM}"
 
 # grblhal-glowforge: the grblHAL motion controller (Grbl over TCP:23).
 # forgectrl: the ForgeFIRM machine-services daemon (HTTP :8080): controller

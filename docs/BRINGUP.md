@@ -960,8 +960,10 @@ is committed.
   UAPI "best guess" linear formula was 3–5 °C high and everything derived from
   it had to be re-derived.
 - **The four `pic/lid_ir_*` channels are first of all a photometer for the lid
-  lamp.** Measured against `lid_led`: 0 → `2 2 1 2`, 8 → `2 2 3 2`, 131 →
-  `54 55 61 62`, 255 → `172 171 190 188`. Against that lamp-set level, a
+  lamp.** Measured against `lid_led` (sysfs brightness, 0 to 1023): all four
+  channels follow it as a straight line, 2 counts dark, 32 to 35 at 128, 54 to
+  61 at 256, 96 to 105 at 512, 131 to 143 at 768 and 161 to 177 at 1023;
+  channels 3 and 4 read about 7 percent above 1 and 2. Against that lamp-set level, a
   full-power cut raises them only +4 to +6 counts and a candle burning on the
   bed +3 to +6, with ±3 counts of ambient noise and ~+22 counts of day-to-day
   drift. forgectrl's camera engine drives `pic/lid_led` for every lid capture,
@@ -1132,17 +1134,17 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
    thresholds in every pulse header, and the numbers do not look lamp-naive:
    baseline 3 counts on all four channels, alert at 275 and critical at 688 on
    the first quartile, 374 and 1022 on the second, with the third and fourth
-   left at zero. Measured lamp response on this bench is 0 counts to 2, 131 to
-   58, 255 to 180, so the factory's alert sits above the reading a fully lit
-   lamp produces and its baseline matches the lamp-off floor. If that holds,
-   the factory rides out the lamp by choosing thresholds above it rather than
-   by tracking it, and the watch could be re-armed on fixed numbers after all.
-   Unproven: it assumes the header's quartiles map onto the raw channels and
-   share their units. Confirm both by reading the four channels while stepping
-   the lamp, then compare against the header the next cloud job carries. By
-   decision those header thresholds (`IR??`) are the prior for this redesign
-   and nothing else: the cloud client declares them ignored, and the watch
-   stays disabled until it is lamp-aware.
+   left at zero. The lamp response (facts bank) puts a fully lit lamp at 161
+   to 177 counts on every channel and the dark floor at 2, so the factory's
+   alert sits above the lamp and its baseline matches the floor: the factory
+   rides out the lamp by choosing thresholds above it rather than by tracking
+   it, and the watch could be re-armed on fixed numbers after all. Still
+   unproven: that the header's quartiles map onto the raw channels and share
+   their units (all four channels behave alike, while the header leaves the
+   third and fourth quartiles at zero). Confirm against the header the next
+   cloud job carries. By decision those header thresholds (`IR??`) are the
+   prior for this redesign and nothing else: the cloud client declares them
+   ignored, and the watch stays disabled until it is lamp-aware.
 5. **Limit-switch homing.** The planned second homing method (`$22` stays 0
    until it lands); printable brackets are in `3d-models/`. Also: calibrate
    `gfcloud_home_x/y` against a jog to a known reference if the factory corner
@@ -1157,9 +1159,12 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
    calibration**, an OmniVision LENC register file the factory pushes into the
    sensor at every stream start (`load_cam_regs.sh` → a `regs` sysfs attribute
    its driver adds; OV8858 `0x58xx` addresses remapped to the OV8856's
-   `0x59xx`). The files are per-machine data, not in the factory rootfs — look
-   for them under `/data` on a machine booted into the factory slot before
-   deciding whether to reimplement the mechanism. Finally the deferred emulator
+   `0x59xx`). The files are per-machine data: not in the factory rootfs, and
+   not under `/data` on the bench machine (the partition is shared between the
+   slots and holds no camera register file). Whether the factory app fetches
+   them from the service at run time is the open question, so a factory-slot
+   session with the app running comes before deciding whether to reimplement
+   the mechanism. Finally the deferred emulator
    homing-image smoke, now that the emulator can be pointed at live snapshots.
 7. **Cloud mode.** A print is no longer capped by the ring: the client holds
    the compressed body, fills the ring before the button, and tops it up as it
@@ -1208,10 +1213,6 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
      hardware themselves while the engine suspends its writes; the check
      parameters are already shared (`cool.h`), so what remains is folding the
      tools into the engine and retiring the suspend/resume dance.
-   - **Rail policy** (the one `[contract]` item left in SERVICES.md). The GRBL
-     driver still writes `cnc/enable` at init and at homing resume —
-     idempotent, since the rail is already up, so this is tidiness rather than
-     a bounce source.
    - **Busy-state arbitration under one lock.** The idle/busy gates (`POST
      /settings`, `/mode`, diagnostics start, upload/apply) each cross-check
      `machine_is_idle()` and `update_job_running()` at their own call sites.
@@ -1223,17 +1224,18 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
      `ensure_engine` `popen()`s should move out of the HTTP callback so a slow
      media-ctl cannot stall the request thread. Changing the MHD start flags
      touches the streaming model, so this wants a bench slot of its own.
-   - **`/cool/status` cosmetics.** The endpoint echoes the last reported `armed`
-     flag even when that report is stale (`report_age_s` tells the truth), and a
-     gfcloud homing session reports every motion as a job, so the engine cycles
-     run → smoke → idle per motion. Both are silent and safe.
 9. **Physical-evidence negatives still open.** A present head answering I²C
    badly (the K-11 runtime case) and a failed head capture leaving the measure
    laser off — both need the head connected and a fault injected. Opportunistic:
    `STATE_FAULT` recovery via `enable` the next time a DRV8825 fault line
    actually trips.
 10. **Debug-kernel checks.** Module load/unload under `CONFIG_DEBUG_MUTEXES`
-    and a forced `-EPROBE_DEFER` unwind still need a debug kernel build.
+    and a forced `-EPROBE_DEFER` unwind still need a debug kernel build. Both
+    drills cycle what the rail policy avoids: a module unload powers the 40 V
+    rail off (a stepper driver can come out of the power-up unserviceable),
+    and a forced defer needs the 40 V regulator or the SDMA device unbound
+    under the module's probe. This is a bench slot with the rail-cycle gamble
+    accepted, not a quick check.
 11. **Wi-Fi SDIO CRC watch.** The uSDHC pads now carry the factory-exact values
     and ship in every image. Watch `dmesg | grep -c "sdio .* failed"` across
     sessions (baseline: 1 event in 49 min of uptime). Effect if one lands
@@ -1249,10 +1251,8 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     unit-tested but not yet driven from the page. Two catalog gaps from the
     tool's own plan, `cooling.confirm-escalate` and
     `cooling.fire-gate-blocks-arm`, are not ported (both need the pump
-    switched by hand mid-run, so they are bench-tab material first), and
-    whether `laser.armed-kill` belongs in the always-required core rather
-    than its domain is still an open call (the core carries the emission
-    witness). From the coverage maps: splitting gfutilities' `websocket.py`
+    switched by hand mid-run, so they are bench-tab material first). From
+    the coverage maps: splitting gfutilities' `websocket.py`
     into transport and transfer helpers would take websocket-transport
     changes off the offline tests (a gfutilities refactor, not a map).
     Tools that genuinely need a second host (LAN flood, remote auth probes)
