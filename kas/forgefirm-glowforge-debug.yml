@@ -1,0 +1,32 @@
+# ============================================================================
+# ForgeFIRM — debug-kernel build variant
+# ============================================================================
+# One target: a dev image whose kernel carries the lock-correctness options
+# (DEBUG_MUTEXES, PROVE_LOCKING, DEBUG_ATOMIC_SLEEP, DEBUG_SPINLOCK). It rides
+# the closing build: after the normal release + dev images build, one pass of
+# this config produces a dev image tagged "(dev-debug)". The bench boots it
+# once to run the module load/unload and forced -EPROBE_DEFER drills
+# (forgefirm/scripts/bench/debug_kernel_drills.py), then the real image is
+# flashed. The options never touch a release or a normal dev build.
+#
+#   cd forgefirm
+#   kas build kas/forgefirm-glowforge-debug.yml
+#
+# The debug kernel has a different config signature, so bitbake rebuilds the
+# kernel and the dev image under it without disturbing the images already in
+# build/tmp/deploy/images/glowforge/; the debug dev image lands beside them
+# with its own DATETIME stamp and the "(dev-debug)" version string.
+# ============================================================================
+
+header:
+  version: 14
+  includes:
+    - forgefirm-glowforge.yml
+
+target: forgefirm-image-dev
+
+local_conf_header:
+  debug-kernel: |
+    FORGEFIRM_KERNEL_DEBUG = "1"
+    FORGEFIRM_VERSION_STRING:pn-forgefirm-image-dev = "${DATETIME} (dev-debug)"
+    FORGEFIRM_VERSION_STRING[vardepsexclude] += "DATETIME"

@@ -227,6 +227,12 @@ TOOLS = [
      "safety": "dry", "where": "host", "ported": False, "args": [],
      "desc": "Decodes factory pulse streams into velocity/accel profiles. Runs anywhere; needs a .puls file "
              "(the reference captures live off the machine), so it is not a bench-page tool."},
+    {"id": "debug-kernel-drills", "title": "Debug-kernel lock drills (load/unload, forced defer)",
+     "script": "debug_kernel_drills.py",
+     "safety": "takeover", "where": "board", "ported": True, "args": [],
+     "desc": "Runs only on the debug-kernel image (kas/forgefirm-glowforge-debug.yml): three glowforge.ko "
+             "load/unload cycles under DEBUG_MUTEXES and a forced -EPROBE_DEFER unwind, each read against "
+             "dmesg for lock splats. Cycles the 40 V rail; refuses on a non-debug kernel or a non-idle machine."},
 ]
 
 # Files in scripts/bench that are not tools of their own: the helper module

@@ -1115,13 +1115,13 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
    reachable-mode reasoning and the factory fallback configuration are in
    the headers of kernel patches 0011-0013 (`meta-glowforge-bsp`,
    `recipes-kernel/linux/`).
-3. **Debug-kernel checks.** Module load/unload under `CONFIG_DEBUG_MUTEXES`
-    and a forced `-EPROBE_DEFER` unwind still need a debug kernel build. Both
-    drills cycle what the rail policy avoids: a module unload powers the 40 V
-    rail off (a stepper driver can come out of the power-up unserviceable),
-    and a forced defer needs the 40 V regulator or the SDMA device unbound
-    under the module's probe. This is a bench slot with the rail-cycle gamble
-    accepted, not a quick check.
+3. **Debug-kernel checks.** Run the module load/unload and forced
+    `-EPROBE_DEFER` drills (`scripts/bench/debug_kernel_drills.py`) on the
+    debug-kernel image (`kas/forgefirm-glowforge-debug.yml`, built beside the
+    closing image). Both cycle the 40 V rail: a module unload powers it off (a
+    stepper driver can come out of the power-up unserviceable), and the forced
+    defer needs the 40 V regulator unbound under the probe. It is a bench slot
+    with the rail-cycle gamble accepted, and it rides the closing burn.
 4. **Release acceptance follow-through.** The campaign is the release gate
     and runs as designed: dev image `20260824230512`, 45 of 45 from nothing,
     36 of them unattended with the bench actuator in the loop, release
