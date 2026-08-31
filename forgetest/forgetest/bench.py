@@ -75,6 +75,19 @@ TOOLS = [
               _arg("feed", "int", 120, "creep feed"), _arg("segment_mm", "float", 15.0, "jog segment"),
               _arg("max_mm", "float", 200.0, "travel bound")],
      "desc": "Creeps toward a rail in bounded jog segments, detects the contact jolt, jog-cancels and backs off."},
+    {"id": "accel-crash-probe", "title": "Head accel crash-detector probe", "script": "accel_crash_probe.py",
+     "safety": "dry", "where": "board", "ported": True,
+     "args": [_arg("seconds", "float", 20.0, "arm-and-watch window"),
+              _arg("mode", "choice", "coexist", "coexist keeps st_accel bound (forgectrl up); unbind frees it",
+                   ["coexist", "unbind"], flag="--mode"),
+              _arg("ths", "int", 40, "per-axis threshold register value 0..255", flag="--ths"),
+              _arg("dur", "int", 0, "IG_DUR1 duration counter (ODR samples)", flag="--dur"),
+              _arg("axes", "str", "xyz", "axes to arm for high events", flag="--axes"),
+              _arg("jog", "str", None, "optional one jog at t=2 s, e.g. $J=G91X5F1000 (+X only)", flag="--jog")],
+     "desc": "Arms the head LIS2HH12's on-chip interrupt generator (IG1) and polls IG_SRC1 for a latched strike. "
+             "coexist mode reaches the IG registers over i2c-dev with st_accel still bound (the forgectrl-only "
+             "path proof); provoke a trip by hand or with --jog. Touches only the IG registers, no emission, "
+             "no full-scale change. CSV to /tmp/accel_crash.csv."},
     # -- board-side, takeover / scope ------------------------------------------
     {"id": "pwm-sweep", "title": "LASER_PWM scope sweep", "script": "pwm_sweep.py",
      "safety": "scope", "where": "board", "ported": True,

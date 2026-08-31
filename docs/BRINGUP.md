@@ -1219,16 +1219,26 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     bench-measure a filter is moot now that the HA* thresholds are known to be
     LIS2HH12 register values at a known full scale.
 
-    Owed for the detector: program the LIS2HH12 interrupt generator over
-    i2c-3 (per-axis threshold, duration, full scale) and poll IG_SRC1 for a
-    latched per-axis trip, on the factory's two-tier shape (an alert that
-    pauses, an abort that fails). The rail-contact signature in the facts
-    bank sets the first threshold in register units; a pause on contact is
-    the first use. ForgeFIRM already reads the head accel raw for liveness,
-    so this shares the bus, not new hardware; the one wrinkle is reaching the
-    interrupt-generator registers past the bound `st_accel` driver (IIO
-    events if the driver exposes them, else a direct-register path as the
-    retired homing spike used).
+    The detector arms the LIS2HH12 interrupt generator over i2c-3 (per-axis
+    threshold, duration) and polls IG_SRC1 for a latched per-axis trip, on
+    the factory's two-tier shape (an alert that pauses, an abort that fails).
+    The rail-contact signature in the facts bank sets the first threshold in
+    register units; a pause on contact is the first use. ForgeFIRM already
+    reads the head accel raw for liveness, so this shares the bus, not new
+    hardware. The open decision is where the IG programming lives, and it
+    turns on a bench fact: the IG registers (0x30 to 0x35) are ones
+    `st_accel` never touches, so if they can be reached over i2c-dev
+    (I2C_SLAVE_FORCE) while the driver stays bound, the detector is
+    forgectrl-only with the liveness path untouched; if the two collide, the
+    accel moves under `glowforge.ko`. The de-risk drill
+    (`scripts/bench/accel_crash_probe.py`, on the bench page) settles that
+    first: it arms IG1 in coexist mode, provokes a strike, confirms IG_SRC1
+    latches the expected axis at a factory-derived threshold, and checks that
+    `st_accel`'s raw reads keep working through the run. Keeping the factory
+    full scale (no CTRL4 write) is what keeps the coexistence clean. Owed
+    after the drill: the chosen readout path, per-state (idle/run) thresholds
+    seeded from a captured cut header's HA* values, and the two tiers wired
+    into the existing feed-hold and stop-plus-latch paths.
 
     Owed for the head IRQ, only if a coarse hardware interrupt is wanted
     instead of the poll: arm the accel bit in the head MCU (reg 0x03/0x04),
