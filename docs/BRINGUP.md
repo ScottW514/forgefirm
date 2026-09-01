@@ -348,10 +348,19 @@ factory 2.6.0-2228 session; measured numbers in the facts bank).
   `cloud_resume_lead_ticks` 1950), on a preloaded job and a live-fed one
   alike: the retrace is sized to `cnc/max_backtrack` and the lead follows it,
   so a pause with little history behind it shortens both rather than failing.
-  GRBL mode uses feed hold / cycle start, so a resumed GRBL cut picks up where
-  the deceleration ended (item 7). A pause is not a cancel: the latch
-  stays unlocked and the window open across it. There is no resume dwell: the
-  safing chain re-arms ~216 ms before the first step (facts bank).
+  GRBL mode uses feed hold / cycle start: the deceleration runs lit and
+  velocity-scaled, the dwell is dark, and the resume is lit from its first
+  step, so a pause is a sharp corner in time (facts bank "Feed hold and
+  resume in GRBL mode"). A pause is not a cancel: the latch stays unlocked
+  and the window open across it. There is no resume dwell: the safing chain
+  re-arms ~216 ms before the first step (facts bank). A pause that outlives
+  the disarm grace closes the window; the next cycle start (`~`, the button,
+  or the cooling client's auto-resume) then re-arms first: the button lights
+  and the press resumes the job.
+- **A sender change while a job runs** holds the job and closes the window
+  (the consent belonged to the displaced session), so the next sender finds
+  the cut in Hold where it stopped, with a short dark deceleration behind
+  it, and resumes it through the same re-arm, or resets it.
 - **`lid_policy = hold`** selects stock grblHAL door behavior instead (park in
   Door, cycle start after the lid closes resumes with position intact).
 
@@ -909,6 +918,28 @@ is committed.
   above it. Raw `hv_current` counts are a presence/absence witness only: the
   per-rung means are non-monotonic at the top of the ladder and the signal
   has no characterized transfer function.
+- **Feed hold and resume in GRBL mode** (stream-measured on the null-sink
+  build at the 28160 Hz tick: a 100 mm/s cut at S500, `laser_dose_curve = off`,
+  floor 10 %, `!` mid-line, `~` after `Hold:0`): the planned deceleration runs
+  lit in both modes. The core's `disable_laser_during_hold` acts in
+  `state_suspend_manager`, which runs only once the hold has completed, so the
+  beam goes off at the end of the deceleration, never at its start. Under
+  `M4` the density follows velocity down to the floor (fire per step 2.9 at
+  cruise, 5.4 in the last 25 ms at 13 mm/s), the stream between the last step
+  and the first step is dark, and the resume lights 9 ticks after the first
+  step with the deceleration's profile in reverse: **a pause under `M4` is a
+  sharp corner in time**, and the corner rolloff governs its mark. Under `M3`
+  the fire rate stays constant through the deceleration (fire per step rises
+  2.9 to 22, the `M3` corner dose) and the resume is lit from its first step
+  as well: the segments the core prepares while held carry the spindle
+  update (the core fork sets it at hold completion; without that the `M3`
+  resume ran dark for 2453 ticks, 87 ms, one segment buffer). A hold whose
+  window closed under the grace resumes through the resume gate: the
+  sender's `~`, the button, or the cooling client's auto-resume lights the
+  button and waits for the press from the poll, never inside the core's held
+  state (a blocking arm wait there pumps the core's suspend loop, which spins
+  until the hold ends, so the press is never read), and the cycle start is
+  issued once the press has re-armed.
 - **Factory power model** (three cloud cuts of one 1" square, same location,
   material and speed, only the UI power setting changed, pulse files captured
   from each): the **power byte is pinned at 127**
@@ -1229,54 +1260,7 @@ feature requests, enhancements) will eventually be tracked as GitHub issues.
     cheap opportunistic check during live fire still stands: log GPIO3_22
     edges plus `head/beam_detect_digital|_analog` while firing.
 
-7. **Gapless pause and resume in GRBL mode (planned).** A pause leaves a mark
-    in the cut. With laser mode on, the core stops the beam at the start of the
-    hold (`disable_laser_during_hold`, on by default), so the head travels the
-    whole deceleration dark, and the resume re-accelerates from a standstill at
-    the point the decel ended: an unburned length, then a restart that dwells
-    through the accel. At constant power (`M3`) that restart is a deeper spot
-    you can see; `M4` scales power with velocity and mostly hides it, but
-    neither closes the gap. GRBL mode should pause and resume with no
-    discontinuity in the cut, the way the factory does.
-
-    Cloud mode already does, on the kernel's waypoint resume
-    (`cloud_pause_backtrack_ticks` 2000, `cloud_resume_lead_ticks` 1950), and
-    the kernel offers the same mechanism to a live feed, bounded by the ring's
-    retained history (`cnc/max_backtrack`; the facts bank "SDMA pulse engine"
-    and [the pulse feeder contract](https://docs.forgefirm.org/technical/forgefirm/pulse-feeder-contract/)). What is not settled is the bookkeeping above it: a
-    backward run moves the head and the kernel's counters while grblHAL's
-    planner still holds a partly executed block, so borrowing the mechanism
-    means reconciling the two, and a GRBL cut runs a much shorter queue than a
-    cloud print does.
-
-    So the equivalent likely belongs above the ring, where grblHAL still holds
-    what the kernel does not: the planned path. Shape to evaluate: capture the
-    point where the beam went off at the hold; on the resume plan a laser-off
-    retrace back along the path and a laser-off accelerate-in, and unmask FIRE
-    only once the head is at feed and has passed the captured point. Open: how
-    far back is enough (2000/1950 ticks is a reference, not a transferable
-    number, since the tick rates differ), whether the retrace can reuse
-    planner blocks or needs a synthesized one, what a hold inside an arc or a
-    raster line does to it, and how it composes with the armed window's disarm
-    grace across a long hold.
-
-8. **A sender change while a job runs: discussion.** Today a sender that
-    disconnects mid-job leaves the motion running to the end of what the
-    controller holds, with the window closed and fire suppressed (the
-    consent belonged to the displaced session), so the job finishes dark
-    and the material is left with an unfinished cut. This is the stock
-    Grbl and grblHAL expectation for the motion (the core switches streams
-    with no hold and no alarm, and senders treat a lost connection as a
-    failed job); ForgeFIRM adds only the disarm on top. The open question
-    is whether the disarm should also
-    feed-hold the job, so a reconnecting sender can press and resume where
-    the cut stopped instead of finding the head at the end of a dark pass:
-    a hold parks the head over hot material with the assist air on the run
-    profile, and the grace then closes the window in Hold as it does today;
-    running on leaves a clean stop position but wastes the piece. Decide
-    with the gapless pause and resume item (7), which owns the resume
-    mechanics.
-9. **The flow check on a second machine.** The lit-tube flow check is in
+7. **The flow check on a second machine.** The lit-tube flow check is in
     place: the engine reads means, takes its baseline under the run
     profile, and takes the tube's share off (`cool_laser_heat_cw`,
     `cool_laser_heat_density`); `cooling.flow-under-load` is the catalog's
@@ -1286,7 +1270,7 @@ feature requests, enhancements) will eventually be tracked as GitHub issues.
     far): re-measure the two heat coefficients and the machine's
     air-assist offset; and if a lit check still trips, the
     void-on-emission design with the tube as its own flow tracer.
-10. **Laser power-good: what the line means.** `cnc/laser_pgood` and its
+8. **Laser power-good: what the line means.** `cnc/laser_pgood` and its
     sampled count are defined in the UAPI (active low, one sample every
     ~3.9 ms), the facts bank records that the sampled count reads 0 through
     real cutting, and the cooling engine warns
@@ -1298,7 +1282,7 @@ feature requests, enhancements) will eventually be tracked as GitHub issues.
     scope against `hv_current` through an armed cut, its meaning written
     into the facts bank and the UAPI, and then either a warning that means
     something or no warning.
-11. **Initial commissioning: measure and set the machine's own numbers
+9. **Initial commissioning: measure and set the machine's own numbers
     methodically.** Every tunable that was measured on the bench machine
     and shipped as a default varies from machine to machine: the flow
     check's bands and `cool_flow_rise`, the tube's heat coefficients

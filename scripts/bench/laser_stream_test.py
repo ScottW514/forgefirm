@@ -353,6 +353,19 @@ def wait_idle(sock, log):
     fail("controller never returned to Idle")
 
 
+def wait_state(sock, log, prefix, timeout=5.0):
+    """Poll '?' until the state word starts with prefix (e.g. 'Hold:0')."""
+    end = time.time() + timeout
+    while time.time() < end:
+        sock.sendall(b"?")
+        read_avail(sock, log, 0.3)
+        m = re.findall(r"<([A-Za-z]+(?::\d)?)", "".join(log[-3:]))
+        if m and m[-1].startswith(prefix):
+            return
+        time.sleep(0.1)
+    fail("controller never reached %s" % prefix)
+
+
 def publish_verdicts(path, stop):
     """Publish a fresh, clean cooling verdict every 0.5 s (the arm flow
     refuses without one; freshness window is 2 s). Same-host monotonic
@@ -418,6 +431,10 @@ def run_session(name, steps, conf=None, workdir=None, keep=False,
                 wait_idle(sock, log)
             elif isinstance(step, tuple) and step[0] == "sleep":
                 time.sleep(step[1])
+            elif isinstance(step, tuple) and step[0] == "rt":
+                sock.sendall(step[1])           # a realtime character: no ok follows
+            elif isinstance(step, tuple) and step[0] == "wait_state":
+                wait_state(sock, log, step[1])
             else:
                 send_line(sock, step, log)
 
@@ -928,6 +945,56 @@ def main():
     check_termination("curve", cur)
     print("PASS [curve]: S %s -> densities %s through the bench-default curve "
           "(floored at %.3f)" % (list(CURVE_S), [round(g, 3) for g in got], floor_frac))
+
+    # --- rule 21: a feed hold leaves no dark ground, in either mode -----
+    # One long line at 100 mm/s, held mid-move and resumed. The planned
+    # deceleration runs lit (M4 velocity-scaled, M3 constant), the
+    # stationary stretch is dark, and the acceleration out of the hold is
+    # lit from its first step: a pause is a sharp corner in time. The
+    # first-window check is what pins the M3 resume, which once ran dark
+    # for a segment buffer because the segments prepped while held
+    # carried no spindle update.
+    HOLD_WIN = 704                                  # 25 ms at 28160 Hz
+    HOLD_EDGE = 120                                 # one pulse straddles each edge
+    for mode, job in (("m4", ["G90", "G21", "M4 S0", "G1 X150 F6000 S500"]),
+                      ("m3", ["G90", "G21", "M3 S500", "G1 X150 F6000"])):
+        steps = job + [("sleep", 0.7), ("rt", b"!"), ("wait_state", "Hold:0"),
+                       ("sleep", 0.5), ("rt", b"~"), WAIT_IDLE, "M5"]
+        data = run_session("hold-" + mode, steps, conf=DENSITY_CONF_FLOORED)
+        check_fire_gaps("hold-" + mode, data)
+        ticks = tick_bytes(data)
+        step = [1 if t & 0x05 else 0 for t in ticks]
+        fire = [1 if t & 0x10 else 0 for t in ticks]
+        first = step.index(1)
+        last = len(step) - 1 - step[::-1].index(1)
+        best, run = (0, 0), 0
+        for i in range(first, last + 1):
+            if step[i]:
+                if run > best[0]:
+                    best = (run, i - run)
+                run = 0
+            else:
+                run += 1
+        dlen, dstart = best
+        dend = dstart + dlen
+        if dlen < 2000:
+            fail("[hold-%s] no hold in the stream (longest stepless run %d ticks)"
+                 % (mode, dlen))
+        decel = sum(fire[dstart - HOLD_WIN:dstart])
+        dwell = sum(fire[dstart + HOLD_EDGE:dend - HOLD_EDGE])
+        accel = sum(fire[dend:dend + HOLD_WIN])
+        if decel < 50:
+            fail("[hold-%s] the deceleration into the hold ran dark (%d fire ticks in "
+                 "its last 25 ms)" % (mode, decel))
+        if dwell:
+            fail("[hold-%s] FIRE while held: %d fire ticks in the stationary stretch"
+                 % (mode, dwell))
+        if accel < 50:
+            fail("[hold-%s] the resume ran dark (%d fire ticks in the 25 ms after the "
+                 "first step)" % (mode, accel))
+        print("PASS [hold-%s]: lit into the hold (%d fire ticks), dark while held "
+              "(%d ticks), lit from the first step out (%d fire ticks)"
+              % (mode, decel, dlen, accel))
 
     print("PASS: all stream emission rules hold")
 

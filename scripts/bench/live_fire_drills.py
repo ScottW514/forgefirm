@@ -147,11 +147,17 @@ Drills (pass a name):
             and fits rise against dose. JSON records like dpatch.
               flowload t1 | flowload t2 <secs> [pct] | flowload fit
   senderchg A sender change mid-job: a 20 mm line at F60 lit on the
-            press, the connection dropped five seconds in, a reconnect,
-            the move finishing dark, then a fresh M3 and a 5 mm line that
-            must prompt for the button again. PASS: two prompts, two arms,
-            no lit sample between the drop and the second press, the
-            second line marks. Two presses; JSON record.
+            press, the connection dropped five seconds in, the job held
+            where it stopped, a reconnect, then ~ from the new session,
+            which must light the button and wait. PASS: the hold, the
+            resume prompt, no lit sample between the drop and the second
+            press, the rest of the line marks. Two presses; JSON record.
+  holdres   Feed hold and resume, the pause as a corner in time: a 30 mm
+            M4 line held near 10 mm and resumed, then a 90 degree corner
+            to compare the marks; the same hold under M3 on the return
+            line (no dark lead on the resume); then a hold past the
+            disarm grace, resumed with ~ through the re-arm prompt. Two
+            presses: the arm, and the re-arm after the long hold.
   overrun   An RX overrun mid-job: a 20 mm line at F60 lit on the press,
             a 93-line fill written at once three seconds in (about 1270
             bytes against the 1023-byte ring). PASS: the controller
@@ -2389,7 +2395,6 @@ def drill_flowload(g):
 SENDERCHG_S = 400
 SENDERCHG_LINE1 = 'G1 X20 F60'            # 20 s of motion
 SENDERCHG_DROP_S = 5.0                    # lit seconds before the drop
-SENDERCHG_LINE2 = 'G1 X5 F600'
 
 
 def senderchg_wait_reply(g, needle, timeout):
@@ -2420,9 +2425,9 @@ def drill_senderchg(g):
     poller.start()
     arm_cue()
     print('>>> Scrap with 25 mm of free +X travel from the head. TWO presses: one')
-    print('>>> for the first line, and a second one after the reconnect, when the')
-    print('>>> prompt comes again. The line goes dark at the drop and the head')
-    print('>>> finishes the move without a sender; that is expected.\n')
+    print('>>> for the line, and a second one after the reconnect, when the button')
+    print('>>> lights again. The line goes dark at the drop and the head HOLDS')
+    print('>>> where it is; the new session resumes it with your second press.\n')
     print('G91/G21: %s / %s' % (g.cmd('G91'), g.cmd('G21')))
     t_m3 = time.time()
     for ln in ('M3 S%d' % SENDERCHG_S, SENDERCHG_LINE1, 'M5'):
@@ -2445,31 +2450,33 @@ def drill_senderchg(g):
     time.sleep(1.0)
     g2 = Grbl(HOST, PORT)                    # a new session
     t_reconnect = time.time()
-    st = g2.wait_state('Idle', 40)
-    t_idle1 = time.time()
-    print('  reconnected; the first move ended dark %.1f s after the drop (state %s)'
-          % (t_idle1 - t_drop, st))
+    st = g2.wait_state('Hold', 10)
+    print('  reconnected; the job is held %.1f s after the drop (state %s)'
+          % (time.time() - t_drop, st))
     cs = sample_forgectrl() or {}
     print('  engine after the drop: armed=%s verdict=%s' % (cs.get('armed'), cs.get('verdict')))
     outcome = 'done'
     t_run2 = None
     try:
-        for ln in ('M3 S%d' % SENDERCHG_S, SENDERCHG_LINE2, 'M5'):
-            g2.s.sendall(ln.encode() + b'\n')
-        prompt2 = senderchg_wait_reply(g2, 'press the button', 10)
-        print('  second prompt after the reconnect: %s' % prompt2)
-        if not prompt2:
-            outcome = 'no-prompt'
+        if not st.startswith('Hold'):
+            outcome = 'not-held'
             g2.rt(b'\x18')
         else:
-            st = g2.wait_state('Run', FLOWLOAD_PRESS_WAIT_S)
-            if not st.startswith('Run'):
-                outcome = 'no-run'
+            g2.rt(b'~')                      # the new sender resumes the held job
+            prompt2 = senderchg_wait_reply(g2, 'press the button to resume', 10)
+            print('  resume prompt after the reconnect: %s' % prompt2)
+            if not prompt2:
+                outcome = 'no-prompt'
                 g2.rt(b'\x18')
             else:
-                t_run2 = time.time()
-                g2.wait_state('Idle', 30)
-                print('  M2: %s' % g2.cmd('G90\nM2', timeout=10))
+                st = g2.wait_state('Run', FLOWLOAD_PRESS_WAIT_S)
+                if not st.startswith('Run'):
+                    outcome = 'no-run'
+                    g2.rt(b'\x18')
+                else:
+                    t_run2 = time.time()
+                    g2.wait_state('Idle', 60)
+                    print('  M2: %s' % g2.cmd('G90\nM2', timeout=10))
     finally:
         try:
             g2.cmd('M5', timeout=1)
@@ -2499,13 +2506,14 @@ def drill_senderchg(g):
             print('  %+7.1f s  armed=%s' % (p['t'] - t_m3, p['armed']))
             last = p['armed']
     print('--- emission (lit samples at 25 Hz) ---')
-    print('  first line, press to drop:  %d samples (%.1f s)' % (len(lit1), len(lit1) / 25.0))
+    print('  line, press to drop:        %d samples (%.1f s)' % (len(lit1), len(lit1) / 25.0))
     print('  drop to second press:       %d samples  <- must be 0' % len(lit_gap))
-    print('  second line:                %d samples (%.1f s)' % (len(lit2), len(lit2) / 25.0))
+    print('  the resumed rest of it:     %d samples (%.1f s)' % (len(lit2), len(lit2) / 25.0))
     ok = outcome == 'done' and prompt1 and len(lit1) > 25 and not lit_gap and len(lit2) > 5
     print('\n%s: %s' % ('PASS' if ok else 'FAIL',
-                        'the drop closed the window, nothing fired until the second press, '
-                        'and the second laser-on prompted and armed' if ok else outcome))
+                        'the drop held the job and closed the window, nothing fired until '
+                        'the second press, and ~ from the new session prompted, re-armed '
+                        'and finished the line' if ok else outcome))
     rec = {'drill': 'senderchg', 'date': time.strftime('%Y-%m-%dT%H:%M:%S'),
            't_m3': t_m3, 't_run1': t_run1, 't_drop': t_drop, 't_reconnect': t_reconnect,
            't_run2': t_run2, 'outcome': outcome, 'pass': bool(ok),
@@ -3092,6 +3100,129 @@ def drill_expstop(g):
     return trail
 
 
+# --- feed hold and resume: the pause is a corner in time ----------------------
+
+# One armed run on scrap, at F300 and S400. Under M4 a 30 mm line is held
+# about 2 s in and resumed a second later, then the path turns 90 degrees:
+# the pause mark near 10 mm and the corner at 30 mm sit on the same scrap
+# for the eye, and should match. Under M3 the same hold on the return
+# line: the resume must show no dark lead. Then a hold that outlives the
+# disarm grace: the window closes in Hold, the sender's ~ must light the
+# button and wait, the press re-arms, and the line finishes lit. Two
+# presses: the arm, and the re-arm after the long hold.
+HOLDRES_S = 400
+HOLDRES_F = 300
+
+
+def holdres_pause(g, label, wait_disarm=False):
+    """Hold the running move ~2 s in, then resume; with wait_disarm the hold
+    outlives the grace and the resume goes through the re-arm prompt."""
+    st = g.wait_state('Run', 20)
+    if not st.startswith('Run'):
+        return 'no-run (%s)' % st
+    time.sleep(2.0)
+    g.rt(b'!')
+    st = g.wait_state('Hold', 5)
+    if not st.startswith('Hold'):
+        return 'no-hold (%s)' % st
+    seen = len(g.log)
+    if wait_disarm:
+        t0 = time.time()
+        while time.time() - t0 < 120:
+            s = sample_forgectrl()
+            if s and not s['armed']:
+                break
+            time.sleep(1)
+        else:
+            return 'still armed after 120 s in Hold'
+        print('  %s: the window closed in Hold after %.0f s; sending ~' % (label, time.time() - t0))
+        g.rt(b'~')
+        if not senderchg_wait_reply(g, 'press the button to resume', 10):
+            return 'no resume prompt on ~'
+        print('  >>> PRESS the button to resume the job')
+        st = g.wait_state('Run', FLOWLOAD_PRESS_WAIT_S)
+        if not st.startswith('Run'):
+            return 'no-run after the press (%s)' % st
+        if not any('laser armed' in ln for _t, ln in g.log[seen:]):
+            return 'resumed without re-arming'
+    else:
+        time.sleep(1.0)
+        g.rt(b'~')
+        st = g.wait_state('Run', 5)
+        if not st.startswith('Run'):
+            return 'no-run on ~ (%s)' % st
+    st = g.wait_state('Idle', 60)
+    return 'ok' if st.startswith('Idle') else 'never idle (%s)' % st
+
+
+def drill_holdres(g):
+    print('=== feed hold and resume: the pause is a corner in time ===')
+    print('connect: %s' % prepare(g))
+    print('spindle off: %s' % g.cmd('M5'))
+    pre = sample_forgectrl()
+    if pre is None or pre.get('armed'):
+        print('REFUSED: the armed window is still open (or forgectrl is unreachable)')
+        return 2
+    arm_cue()
+    print('>>> Scrap with 35 mm of free +X and 25 mm of free +Y travel. TWO presses:')
+    print('>>> one to arm, one when the button lights again after the long hold.\n')
+    print('G91/G21: %s / %s' % (g.cmd('G91'), g.cmd('G21')))
+    results = []
+
+    def leg(lines):
+        for ln in lines:
+            g.s.sendall(ln.encode() + b'\n')
+
+    def plain(lines):
+        leg(lines)
+        g.wait_state('Run', 20)
+        g.wait_state('Idle', 60)
+
+    try:
+        # A: M4, a 30 mm line held near 10 mm, then the corner leg.
+        leg(('M4 S%d' % HOLDRES_S, 'G1 X30 F%d' % HOLDRES_F))
+        if not senderchg_wait_reply(g, 'press the button', 10):
+            print('ABORTED: no arm prompt')
+            return 1
+        r = holdres_pause(g, 'M4 pause')
+        results.append(('A  M4 pause beside the corner', r))
+        print('  A: %s' % r)
+        if r != 'ok':
+            return 1
+        plain(('G1 Y10 F%d' % HOLDRES_F,))
+        # B: M3 on the return line, the same hold.
+        leg(('M3 S%d' % HOLDRES_S, 'G1 X-30 F%d' % HOLDRES_F))
+        r = holdres_pause(g, 'M3 pause')
+        results.append(('B  M3 pause, no dark lead', r))
+        print('  B: %s' % r)
+        if r != 'ok':
+            return 1
+        # C: back under M4, a plain leg up, then the hold past the grace.
+        leg(('M4 S%d' % HOLDRES_S,))
+        plain(('G1 Y10 F%d' % HOLDRES_F,))
+        leg(('G1 X30 F%d' % HOLDRES_F,))
+        r = holdres_pause(g, 'grace', wait_disarm=True)
+        results.append(('C  hold past the grace, ~ re-arms', r))
+        print('  C: %s' % r)
+    finally:
+        try:
+            g.cmd('M5', timeout=1)
+        except Exception:
+            pass
+        if 'Hold' in g.status():
+            g.rt(b'\x18')
+    ok = bool(results) and all(r == 'ok' for _n, r in results)
+    print('\n--- results ---')
+    for name, r in results:
+        print('  %s: %s' % (name, r))
+    print('\n%s: %s' % ('PASS' if ok else 'FAIL',
+                        'held and resumed under M4 and M3, and the hold past the grace '
+                        're-armed on ~ and finished; now judge the marks: the M4 pause '
+                        'against the corner, the M3 pause for a dark lead' if ok
+                        else 'see above'))
+    return 0 if ok else 1
+
+
 def drill_ctrlstart(g):
     """Resume supervision after expstop: POST /controller/start, then
     report /mode. No motion, no laser."""
@@ -3114,6 +3245,7 @@ def main():
               'dpatch': drill_dpatch, 'flowload': drill_flowload,
               'm4corner': drill_m4corner, 'm4feeds': drill_m4feeds,
               'senderchg': drill_senderchg, 'overrun': drill_overrun,
+              'holdres': drill_holdres,
               'expstop': drill_expstop, 'ctrlstart': drill_ctrlstart}
     if drill not in drills:
         print(__doc__)

@@ -754,14 +754,14 @@ def arm_wait_lid(ctx):
              "Press the physical button when it lights white (arm). Once the cut is under way the "
              "test asks for a press (pause), then another (resume), then for the lid: open it and "
              "leave it open until the head has come back, then close it.",
-             "Keep the pause short: the armed window's idle grace closes it after about a minute in "
-             "a hold, and a job that disarms cannot resume its emission."],
+             "A pause longer than the armed window's idle grace (about a minute) closes the window; "
+             "the resume then lights the button again and waits for a press."],
       description="The machine's own controls during one armed burn, in the order the factory uses "
                   "them. Press: the job feed-holds, emission stops, and the latch stays UNLOCKED "
                   "with the armed window open - a pause is not a cancel. Press again: the cut "
-                  "resumes from where it stopped (GRBL has no backtrack; the kernel refuses one on "
-                  "a live-streamed ring), and the cut is M3 so the restart leaves a mark to "
-                  "look at rather than one M4 hides. Lid: emission stops in hardware, the job is cancelled "
+                  "resumes from where it stopped, lit from the first step (a pause is a sharp corner "
+                  "in time; the cut is M3 so the corner dose is there to look at). Lid: emission "
+                  "stops in hardware, the job is cancelled "
                   "with the reason reported, the controller resets with the position kept and no "
                   "alarm, the armed window closes and the kernel latch relocks, the hardware button "
                   "latch reads SET, and the head returns to the job start with the lid still open.")

@@ -66,6 +66,7 @@ ARMED = "laser armed"
 DISARMED = "laser disarmed - latch locked"
 BLOCKED = "laser fire blocked"
 PROMPT = "press the button to start the laser job"
+RESUME_PROMPT = "press the button to resume the laser job"
 LID_CANCEL = "lid opened during arm - job cancelled"
 LOOP_CANCEL = "interlock open during arm - job cancelled"
 
@@ -363,12 +364,11 @@ def test_job_window():
 
 def test_sender_change_mid_job():
     """Rule 3, the hard case: the sender changes while the job is still
-    running with the spindle on, so the core never turns the spindle off
-    between the two sessions. The next laser-on from the new sender must
-    still prompt: the arm decision reads the window, not the spindle-state
-    record (a job whose M5 was lost leaves that record on the same way).
-    M3 after M4 is a state change the core always pushes through
-    set_state, planner-synced, so it lands once the first job's move ends."""
+    running with the spindle on. The window closes and the job is HELD
+    where the cut stopped, so the next sender finds it in Hold rather than
+    at the end of a dark pass. Its cycle start goes through the resume
+    gate, which re-arms first: with no button on a host build that is
+    immediate, and the job then runs to its end lit."""
     s = Session("sender-change-mid-job", disarm_s=60)
     try:
         send_line(s.sock, "M4 S100", s.log)
@@ -378,22 +378,144 @@ def test_sender_change_mid_job():
         time.sleep(1.0)
         s.sock.close()                                     # mid-move, spindle on
         time.sleep(0.5)
-        # The disarm message is written while no client is connected, and
-        # output with no client is discarded, so the new session cannot
-        # see it; the re-arm below is the evidence the window closed.
+        # The disarm and hold messages are written while no client is
+        # connected, and output with no client is discarded, so the new
+        # session cannot see them; the Hold state and the re-arm below are
+        # the evidence.
         s.sock = s.connect()
+        st = s.wait_state("Hold", 5)
+        if st is None:
+            fail("[sender-change-mid-job] the job was not held on the sender change "
+                 "(state %r)" % s.state())
+        x_held = s.mpos_x()
+        if x_held is None or not 0.5 < x_held < 4.5:
+            fail("[sender-change-mid-job] held outside the move (MPos X %s)" % x_held)
         before = s.armed_count()
-        s.send_raw("M3 S100")                              # laser-on against a closed window
+        s.sock.sendall(b"~")                               # the new sender resumes
         end = time.time() + 15
         while time.time() < end and s.armed_count() != before + 1:
             read_avail(s.sock, s.log, 0.2)
         if s.armed_count() != before + 1:
-            fail("[sender-change-mid-job] a laser-on after a mid-job sender change did not "
-                 "re-arm: the arm read the stale spindle state instead of the window")
-        send_line(s.sock, "M5", s.log)
+            fail("[sender-change-mid-job] the resume after a mid-job sender change did "
+                 "not re-arm")
         wait_idle(s.sock, s.log)
-        print("PASS [sender-change-mid-job]: a laser-on against a window closed mid-job "
-              "prompted and re-armed")
+        x_end = s.mpos_x()
+        if x_end is None or abs(x_end - 5.0) > 0.01:
+            fail("[sender-change-mid-job] the resumed job did not finish the move "
+                 "(MPos X %s)" % x_end)
+        send_line(s.sock, "M5", s.log)
+        print("PASS [sender-change-mid-job]: the job held at X=%.3f on the sender change, "
+              "re-armed on the resume and finished at X=%.3f" % (x_held, x_end))
+    finally:
+        s.close()
+
+
+def test_sender_change_holds_and_rearms():
+    """Rule 3 on a machine with a button: the held job's resume from the
+    new sender prompts for the press (collected from the poll, never
+    inside the core's held state), and the press re-arms and resumes."""
+    s = Session("sender-change-rearm", disarm_s=60, switches=SW_CLOSED)
+    try:
+        s.send_raw("M4 S100")
+        if not wait_for(s.log, PROMPT, 5, s.sock):
+            fail("[sender-change-rearm] no arm prompt")
+        s.press_button()
+        if not wait_for(s.log, ARMED, 5, s.sock):
+            fail("[sender-change-rearm] the press did not arm")
+        send_line(s.sock, "G1 X5 F60", s.log)             # 5 s of motion
+        time.sleep(1.0)
+        s.sock.close()                                     # mid-move, spindle on
+        time.sleep(0.5)
+        s.sock = s.connect()
+        if s.wait_state("Hold", 5) is None:
+            fail("[sender-change-rearm] the job was not held on the sender change")
+        before = s.armed_count()
+        s.sock.sendall(b"~")
+        if not wait_for(s.log, RESUME_PROMPT, 5, s.sock):
+            fail("[sender-change-rearm] the resume did not prompt for the button")
+        if s.wait_state("Hold", 2) is None:
+            fail("[sender-change-rearm] the job left Hold before the press")
+        s.press_button()
+        end = time.time() + 10
+        while time.time() < end and s.armed_count() != before + 1:
+            read_avail(s.sock, s.log, 0.2)
+        if s.armed_count() != before + 1:
+            fail("[sender-change-rearm] the press did not re-arm the held job")
+        wait_idle(s.sock, s.log)
+        x_end = s.mpos_x()
+        if x_end is None or abs(x_end - 5.0) > 0.01:
+            fail("[sender-change-rearm] the resumed job did not finish the move "
+                 "(MPos X %s)" % x_end)
+        send_line(s.sock, "M5", s.log)
+        print("PASS [sender-change-rearm]: the held job prompted on ~, the press re-armed "
+              "it, and it finished at X=%.3f" % x_end)
+    finally:
+        s.close()
+
+
+def test_sender_change_then_reset():
+    """A new sender that does not want the held job resets it: a soft
+    reset from the hold ends the job with the position kept and no alarm."""
+    s = Session("sender-change-reset", disarm_s=60)
+    try:
+        send_line(s.sock, "M4 S100", s.log)
+        send_line(s.sock, "G1 X5 F60", s.log)
+        if not wait_for(s.log, ARMED, 5, s.sock):
+            fail("[sender-change-reset] first laser-on did not arm")
+        time.sleep(1.0)
+        s.sock.close()
+        time.sleep(0.5)
+        s.sock = s.connect()
+        if s.wait_state("Hold", 5) is None:
+            fail("[sender-change-reset] the job was not held on the sender change")
+        s.sock.sendall(b"\x18")
+        st = s.wait_state("Idle", 5)
+        if st is None:
+            fail("[sender-change-reset] a reset from the held job did not end in Idle "
+                 "(state %r)" % s.state())
+        print("PASS [sender-change-reset]: a reset from the held job ends in Idle, no alarm")
+    finally:
+        s.close()
+
+
+def test_resume_after_grace():
+    """Rule 4, the other half: a job whose window closed while it sat in
+    Hold can still be resumed. The sender's ~ prompts for the button, the
+    press re-arms, and the cut finishes lit (the controller must not sit
+    in the arm wait inside the held state, where a press is never read)."""
+    s = Session("resume-after-grace", disarm_s=2, switches=SW_CLOSED)
+    try:
+        s.send_raw("M4 S100")
+        if not wait_for(s.log, PROMPT, 5, s.sock):
+            fail("[resume-after-grace] no arm prompt")
+        s.press_button()
+        if not wait_for(s.log, ARMED, 5, s.sock):
+            fail("[resume-after-grace] the press did not arm")
+        send_line(s.sock, "G1 X5 F60", s.log)             # 5 s of motion
+        time.sleep(1.0)
+        s.sock.sendall(b"!")                                # feed hold
+        if not wait_for(s.log, DISARMED, 10, s.sock):
+            fail("[resume-after-grace] the window did not close in the hold")
+        before = s.armed_count()
+        s.sock.sendall(b"~")
+        if not wait_for(s.log, RESUME_PROMPT, 5, s.sock):
+            fail("[resume-after-grace] the resume did not prompt for the button")
+        if s.wait_state("Hold", 2) is None:
+            fail("[resume-after-grace] the job left Hold before the press")
+        s.press_button()
+        end = time.time() + 10
+        while time.time() < end and s.armed_count() != before + 1:
+            read_avail(s.sock, s.log, 0.2)
+        if s.armed_count() != before + 1:
+            fail("[resume-after-grace] the press did not re-arm the held job")
+        wait_idle(s.sock, s.log)
+        x_end = s.mpos_x()
+        if x_end is None or abs(x_end - 5.0) > 0.01:
+            fail("[resume-after-grace] the resumed job did not finish the move "
+                 "(MPos X %s)" % x_end)
+        send_line(s.sock, "M5", s.log)
+        print("PASS [resume-after-grace]: ~ prompted, the press re-armed the held job, "
+              "and it finished at X=%.3f" % x_end)
     finally:
         s.close()
 
@@ -797,8 +919,11 @@ def main():
     test_status_files()
     test_sender_change()
     test_sender_change_mid_job()
+    test_sender_change_holds_and_rearms()
+    test_sender_change_then_reset()
     test_rx_overrun_aborts()
     test_hold_grace()
+    test_resume_after_grace()
     test_button_wait_arms()
     test_lid_open_in_wait()
     test_button_pause_resume()

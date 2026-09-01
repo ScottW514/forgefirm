@@ -6858,6 +6858,125 @@ drill's threshold 40 is 0.31 g, not 0.62 g).
   Normal commanded motion reads under 0.2 g and a rail strike 1.8 g
   and up, so the factory band sits where the bench says it should.
 
+## 2026-09-01: feed hold and resume in GRBL mode, measured on the null-sink stream
+
+Prompted by the "gapless pause" item, which said the head travels the
+hold's deceleration dark. A scratch harness ran the native null-sink
+controller (`GFSINK_DUMP`, the stream harness's launch pattern) built from
+grblHAL 575ff97: `G1 X150 F6000` at S500 (`laser_dose_curve = off`, floor
+10 %), `!` 0.7 s in, `~` after `Hold:0`, under `M4` and then `M3`; then the
+same job with `laser_disarm_s = 2` and a switch file, held past the grace
+and resumed by `~` and by the button. The dump was read in 25 ms windows
+(704 ticks) on both sides of the stop.
+
+- **The deceleration is lit, in both modes.** The item's claim was wrong:
+  the core's `disable_laser_during_hold` acts in `state_suspend_manager`,
+  which runs only once the handler is `state_await_resume`, so the beam
+  goes off when the hold completes, not when it starts. `M4`: fire per
+  step 2.89 at 100 mm/s, 2.86 at 82, 3.02 at 64, 3.27 at 47, 3.74 at 29,
+  5.41 at 13 (the 10 % floor). `M3`: 381 to 385 fire ticks in every
+  window, so fire per step rises from 2.9 to 22.4.
+- **The dwell is dark.** Between the last step and the first step: 10 fire
+  ticks under `M4` (the tail of the last pulse, far inside the stepless
+  FIRE limit), 0 under `M3`.
+- **`M4` resumes lit from its first step.** First fire 9 ticks after the
+  first step; fire per step 7.60 at 11 mm/s, 4.51 at 28, 3.67 at 46, 3.32
+  at 63, 3.08 at 81, 2.94 at 96, 2.84 at 100: the deceleration's profile
+  in reverse. A pause under `M4` is a sharp corner in time.
+- **`M3` resumes dark for 87 ms.** First fire 2453 ticks after the first
+  step; the first three windows (113 steps, 2.1 mm) carry no fire, the
+  fourth 198 ticks, then 384. The cause is not isolated; the restore's
+  laser-on reaches the stream about one segment buffer late.
+- **Resume after the grace closed the window.** `~`: `[MSG:Restoring
+  spindle]`, then the arm prompt, then nothing: presses of 0.15 s and
+  0.5 s were not honored, `?` kept answering `Hold:0` at the pause
+  position, `M5` got no ok. The controller sits in the arm wait until its
+  timeout (not waited out). Button: the press that resumes is still down
+  when the arm wait starts, so it is taken as the consent (`button
+  pressed - job resumed`, `Restoring spindle`, the prompt, `laser armed`,
+  all in one press) and the job continued lit with the plain `M4` profile.
+
+Disposition: item 7 is re-scoped to the `M3` resume lead plus a harness
+rule; the `~` wedge is recorded under item 8, whose hold option depends on
+it; the measurements are in the facts bank. Nothing changed in code.
+
+## 2026-09-01: the M3 resume lead and the held-job resume fixed, host-proven
+
+Both findings of the entry above, fixed the same day and proven on the
+null-sink harnesses. Items 7 and 8 close.
+
+- **The `M3` resume lead, root cause.** A laser-push trace in the stream
+  engine showed the core issuing the `M3` relight 2451 producer ticks
+  after the first resume step: the segments a resume executes first are
+  prepared while the job is still held (`state_await_hold` clears the
+  step-control flags at hold completion and prepping proceeds from there),
+  and with `update_spindle_rpm` cleared an `M3` block prepares them
+  without a spindle update, so the level the restore sets reaches the
+  stream only with the first segment prepared after the buffer drains.
+  `M4` never showed it because a dynamic block updates every segment.
+  Fix, core fork (`state_machine.c`, hold completion): in laser mode reset
+  the stepper's rpm cache to 0 and set `update_spindle_rpm`, so the first
+  segment prepared while held re-asserts the programmed power. Proof: the
+  same drill, `M3` first fire 0 ticks after the first resume step (was
+  2453), the relight landing at the segment load about 90 ticks before
+  the step, exactly as at a job start; `M4` unchanged (9 ticks).
+- **The `~` wedge, root cause.** The resume's spindle restore runs inside
+  the held state; the blocking arm wait it reaches pumps
+  `protocol_execute_realtime`, which enters the core's suspend loop
+  (`while(sys.suspend)`) and spins there until the hold ends, so the arm
+  loop's switch read never runs again. The button path escaped only
+  because the resuming press was still down at the wait's first read.
+  Fix, driver: a resume gate (`gflaser_resume_gate`) that every cycle
+  start passes on its way to the core: the sender's `~` in `serial.c`,
+  the button toggle in Hold, and the cooling client's auto-resume. A held
+  laser job whose window has closed re-arms first, with the press
+  collected from the poll (`rearm_poll`, never inside the held state) and
+  the cycle start issued once the window is open; the blocking wait is
+  refused inside a held state as a belt-and-braces (dark, reported). The
+  arm flow is split into `arm_gates` and `arm_complete`, shared by both.
+  Proof: the same drill, `~` after the grace: the prompt, the press,
+  `laser armed`, the job finished at X=150 with the plain `M4` profile.
+- **A sender change now holds the job.** `gflaser_poll` feed-holds a
+  running job before it disarms on a sender change, so the next sender
+  finds the cut in Hold where it stopped (the deceleration behind it runs
+  dark, since the consent belonged to the displaced session) and resumes
+  it through the gate, or resets it.
+- **Harness coverage.** Stream harness rule 21 (`hold-m4`, `hold-m3`):
+  lit into the hold, dark while held, lit from the first step out, with
+  the realtime `!`/`~` steps and a `wait_state` helper added to the
+  session runner. Lifecycle harness: `sender-change-mid-job` now asserts
+  the hold and the `~` re-arm; new `sender-change-rearm` (button build:
+  the prompt on `~`, the press, the finish), `sender-change-reset` (a
+  reset from the held job ends in Idle, no alarm), `resume-after-grace`
+  (the window closes in Hold, `~` prompts, the press re-arms, the cut
+  finishes). Unit tests: `serial_test` and `laser_arm_test` stub the new
+  calls.
+
+**Bench, the same day, on dev image 20260831225403 with the controller
+hot-deployed from the working tree** (cross-built with the recipe's own
+toolchain and flags from the Yocto work directory; md5 c8494aac, the image
+binary saved as `/tmp/grblHAL_glowforge.prev`). Two armed runs, driven
+from the LAN by `live_fire_drills.py`, the operator on the button:
+
+- **`holdres`** (new drill): a 30 mm `M4` line at F300 S400 held about 2 s
+  in and resumed, then the 90 degree corner; the same hold under `M3` on
+  the return line; then a hold that outlived the grace. All three legs
+  held and resumed; the window closed in Hold after 61 s, `~` lit the
+  button with `press the button to resume the laser job`, the press
+  re-armed, the line finished. The operator judged the marks good: the
+  `M4` pause against the corner, and no dark lead after the `M3` pause.
+- **`senderchg`** (rewritten for the hold): a 20 mm `M3` line at F60, the
+  connection dropped 5.0 s in. The job was held 1.9 s after the drop with
+  the window closed (`hv_current` dark 0.03 s after the drop), the new
+  session's `~` prompted at +9.7 s, the press re-armed at +15.2 s
+  (`laser armed`, then the core's `Restoring spindle`), and the rest of
+  the line marked: 44 lit samples before the drop, 0 between the drop and
+  the press, 106 after. Record `senderchg_20260901-180135.json` on the
+  driving host.
+
+Items 7 and 8 are bench-proven. The board runs the hot-deployed binary
+until the next flash.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis
