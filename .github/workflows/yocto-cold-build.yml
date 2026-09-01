@@ -38,7 +38,7 @@ jobs:
       - name: Checkout meta-openglow (sibling)
         uses: actions/checkout@v4
         with:
-          repository: ScottW514/meta-openglow
+          repository: openglow-org/meta-openglow
           ref: scarthgap
           path: meta-openglow
 

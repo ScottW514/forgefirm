@@ -229,14 +229,14 @@ Pre-publish checklist (docs.forgefirm.org, Developers, "Release flow"):
 
 Publish (from a directory with an authenticated gh):
   cd "$STAGE"
-  gh release create "v$VERSION" --repo ScottW514/forgefirm \\
+  gh release create "v$VERSION" --repo openglow-org/forgefirm \\
     --title "ForgeFIRM v$VERSION" --generate-notes \\
     $ASSETS
 EOF
 
 if [ "$PUBLISH" = "1" ]; then
   command -v gh >/dev/null || die "--publish requested but gh is not on PATH"
-  ( cd "$STAGE" && gh release create "v$VERSION" --repo ScottW514/forgefirm \
+  ( cd "$STAGE" && gh release create "v$VERSION" --repo openglow-org/forgefirm \
       --title "ForgeFIRM v$VERSION" --generate-notes \
       $ASSETS ) \
     || die "gh release create failed"

@@ -12,7 +12,7 @@ cloud-dependent factory software on the **stock control board** — no hardware
 modification — and gives the machine a local controller, a local web control
 panel, and a standard Grbl interface.
 
-* [Latest Release](https://github.com/ScottW514/forgefirm/releases)
+* [Latest Release](https://github.com/openglow-org/forgefirm/releases)
 * [Installation Instructions](https://docs.forgefirm.org/install/)
 * [Build Instructions](https://docs.forgefirm.org/developers/building/)
 * [Connecting LightBurn](https://docs.forgefirm.org/usage/lightburn/)

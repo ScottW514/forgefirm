@@ -1,12 +1,12 @@
 DESCRIPTION = "System Control Daemon for ForgeFIRM powered Glowforge"
-HOMEPAGE = "https://github.com/ScottW514/forgectrl"
+HOMEPAGE = "https://github.com/openglow-org/forgectrl"
 
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://LICENSE;md5=19ed4e3e8c28a4311c16b0b2b91357ec"
 
 PE = "1"
 
-SRC_URI = "git://github.com/ScottW514/forgectrl.git;protocol=https;branch=main"
+SRC_URI = "git://github.com/openglow-org/forgectrl.git;protocol=https;branch=main"
 # SRCREV and PV live in the pin file (forgefirm-image-manifest.bbclass).
 require forgectrl-pin.inc
 

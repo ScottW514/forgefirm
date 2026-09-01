@@ -1,13 +1,13 @@
 DESCRIPTION = "grblHAL motion controller for the Glowforge factory board"
-HOMEPAGE = "https://github.com/ScottW514/grblHAL-glowforge"
+HOMEPAGE = "https://github.com/openglow-org/grblHAL-glowforge"
 
 LICENSE = "GPL-3.0-or-later"
 LIC_FILES_CHKSUM = "file://COPYING;md5=3237e48bcef3455c7bea5c0ce16206f6"
 
-# gitsm: the grblHAL core rides as a submodule (ScottW514/core, branch
+# gitsm: the grblHAL core rides as a submodule (openglow-org/grblHAL-core, branch
 # forgefirm = upstream master + the step_us_min buffer fix pending
 # upstream).
-SRC_URI = "gitsm://github.com/ScottW514/grblHAL-glowforge.git;protocol=https;branch=main"
+SRC_URI = "gitsm://github.com/openglow-org/grblHAL-glowforge.git;protocol=https;branch=main"
 # SRCREV and PV live in the pin file (forgefirm-image-manifest.bbclass).
 require grblhal-glowforge-pin.inc
 

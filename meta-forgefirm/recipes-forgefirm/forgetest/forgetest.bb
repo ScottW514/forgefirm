@@ -3,7 +3,7 @@ DESCRIPTION = "Runs the release acceptance catalog against the machine from a \
 self-contained web page (HTTP :8090), keeps the append-only result log under \
 /data/forgetest, exports the release artifact the release gate reads, and \
 carries the bench diagnostics page. Installed only on the dev image."
-HOMEPAGE = "https://github.com/ScottW514/forgefirm"
+HOMEPAGE = "https://github.com/openglow-org/forgefirm"
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
 

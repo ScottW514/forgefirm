@@ -87,7 +87,7 @@ repos:
   # Pinned-remote alternative for a fully self-contained clone (see the site,
   # Developers, "Release flow"):
   #   meta-openglow:
-  #     url: https://github.com/ScottW514/meta-openglow.git
+  #     url: https://github.com/openglow-org/meta-openglow.git
   #     branch: scarthgap          # pin via kas lock / a tag at release
   #     path: layers/meta-openglow
   #     layers:

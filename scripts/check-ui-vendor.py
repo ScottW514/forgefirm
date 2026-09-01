@@ -24,7 +24,7 @@ SHARED = ("theme.css", "vendor/bootstrap.min.css", "vendor/bootstrap.bundle.min.
           "vendor/LICENSE")
 FORGETEST_UI = os.path.join(REPO, "forgetest", "forgetest", "ui")
 PIN = os.path.join(REPO, "meta-forgefirm", "recipes-forgefirm", "forgectrl", "forgectrl-pin.inc")
-RAW = "https://raw.githubusercontent.com/ScottW514/forgectrl/%s/src/ui/%s"
+RAW = "https://raw.githubusercontent.com/openglow-org/forgectrl/%s/src/ui/%s"
 
 
 def pinned_rev():

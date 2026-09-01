@@ -1,7 +1,7 @@
 # Shared fetch for the ForgeFIRM web-service apps (gfhome, python3-ffmachine,
 # gfcloud). Their sources live in the forgefirm-app/ directory of the
 # python3-gfhardware repository.
-HOMEPAGE = "https://github.com/ScottW514/python3-gfhardware"
+HOMEPAGE = "https://github.com/openglow-org/python3-gfhardware"
 
 # These packages ship only the Python apps under forgefirm-app/, all MIT. The
 # repository's LGPL component (the Bayer decoder compiled into
@@ -9,7 +9,7 @@ HOMEPAGE = "https://github.com/ScottW514/python3-gfhardware"
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://LICENSE;md5=62f8bb455fcc4bf177ecab380f71cd5d"
 
-SRC_URI = "git://github.com/ScottW514/python3-gfhardware.git;protocol=https;branch=master"
+SRC_URI = "git://github.com/openglow-org/python3-gfhardware.git;protocol=https;branch=master"
 # SRCREV and PV live in the pin file (forgefirm-image-manifest.bbclass).
 require forgefirm-app-pin.inc
 

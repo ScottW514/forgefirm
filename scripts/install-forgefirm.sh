@@ -16,7 +16,7 @@
 # Usage: install-forgefirm.sh [local-forgefirm.fw]
 #   With no argument the latest release .fw is downloaded from GitHub.
 
-RELEASE_FW_URL="https://github.com/ScottW514/forgefirm/releases/latest/download/forgefirm.fw"
+RELEASE_FW_URL="https://github.com/openglow-org/forgefirm/releases/latest/download/forgefirm.fw"
 ARCHIVE_DIR="/data/forgefirm/archive"
 FW_FILE="/data/forgefirm/forgefirm.fw"
 MIN_DATA_FREE_KB=300000

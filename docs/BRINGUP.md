@@ -116,8 +116,8 @@ dev image (eMMC slot 1 = factory 2024, slot 2 = ForgeFIRM v0.1.0, archives in
 ## Running the controller (grblHAL-glowforge on the board)
 
 Source: the `grblHAL-glowforge` sibling repo — the **canonical grblHAL driver
-repo** (github.com/ScottW514/grblHAL-glowforge, branch `main`): core as a
-submodule at `src/grbl` (→ ScottW514/core fork, branch `forgefirm` = upstream
+repo** (github.com/openglow-org/grblHAL-glowforge, branch `main`): core as a
+submodule at `src/grbl` (→ openglow-org/grblHAL-core fork, branch `forgefirm` = upstream
 master plus one local commit, the `step_us_min` buffer sizing that keeps a
 fortified build from aborting in `settings_init`; the settings-write crash fix
 merged upstream 2026-08-04 as grblHAL/core PR #999). `driver.c` implements the
@@ -414,7 +414,7 @@ counters-only and painted red until anchored.
 
 ## The machine-services daemon (forgectrl, port 8080)
 
-Source: the `forgectrl` sibling repo (github.com/ScottW514/forgectrl, branch
+Source: the `forgectrl` sibling repo (github.com/openglow-org/forgectrl, branch
 `main`, MIT). It is the ForgeFIRM machine-services daemon: **controller-mode
 supervision**, the **pulse-device broker**, the **motion-liveness gate**, the
 **cooling engine** (single owner of fans/pump/TEC/heater for both modes), plus
