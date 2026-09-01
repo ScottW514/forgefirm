@@ -7054,6 +7054,17 @@ new URLs (`forgectrl`, `grblhal-glowforge`, `kernel-module-glowforge`,
 `openglow-org` source URLs. Owed: the operator flashes the dev image, takes a
 fresh-boot baseline, and runs the campaign that authorizes v0.0.1.
 
+## 2026-09-01: correction, raw.githubusercontent.com does follow a transfer
+
+The entry above says raw content URLs do not follow a repository transfer.
+Measured after the move, they do. The old owner's path returns 200 and serves
+live post-move content, including a commit made after the transfer:
+`raw.githubusercontent.com/<old owner>/forgefirm/master/scripts/install-forgefirm.sh`
+carries the rewritten release URL, and a request for a commit created after
+the move also returns 200. The old release path answers 301 to the
+organization, as expected. The redirect still lasts only while no repository
+reclaims the old name, so the published links were rewritten anyway.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis
