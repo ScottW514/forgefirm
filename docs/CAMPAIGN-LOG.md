@@ -6977,6 +6977,48 @@ from the LAN by `live_fire_drills.py`, the operator on the button:
 Items 7 and 8 are bench-proven. The board runs the hot-deployed binary
 until the next flash.
 
+## 2026-09-01: the laser supply's power-good line, characterized without a scope
+
+The "laser power-good" item asked what J1_14 reports. No scope on the
+bench, so the line was read through the kernel's own readbacks with a
+new probe (`scripts/bench/pgood_probe.py`, fed to the board over ssh
+stdin) at 770 to 790 Hz, against LASER_ON, FIRE, the charge-pump
+watchdog, HV_ENABLE and the doors from the switch device, and
+`hv_current` at 20 Hz. Image 20260901220626 (dev), fresh boot.
+
+- **Dry run, 75 s.** Four jogs; `charge_pump_alive` and HV_ENABLE rose
+  and fell together within 5 ms at every run start and end. The pin
+  stayed high for every one of 59,518 samples.
+- **Armed run, 150 s**: the `witness` drill, a 20 mm square at S400 F600.
+  714 LASER_ON pulses over 8.0 s, `hv_current` 0 to 1023, HV_ENABLE up
+  for the run. The pin stayed high for every one of 115,872 samples.
+- **Driven, not floating.** With a cross-built register tool the pad's
+  internal pull was switched to 100 kΩ pull-down (IOMUXC `0x020E03C4`,
+  `0x100b0` to `0x130b0`), then pull-up, then restored; the pin read
+  high under all three and the pinctrl view confirmed the restore.
+- **What the supply has.** The reverse-engineering archive holds the
+  supply's datasheets and board photos: the supervisor board carries a
+  Weltrend WT7525 (PC-supply supervisor: open-drain PGO high once every
+  DC output is within spec, low on an over/under-voltage or over-current
+  fault, 300 ms delay), LM2901 comparators and four PC817 optocouplers.
+  The pinout and test-point sheets label J1_14 `HV_PFC_STOP` (TP_A2C).
+  The factory app reports the line as the `HVpg`/`HVps` header tags and
+  its logs show 0 at idle under the same inverted convention the module
+  inherited.
+
+Disposition: J1_14 is the supply's power-good, active high, static across
+HV enable and emission, and driven. The module now reads it active high
+(`laser_pgood` 1, `laser_pgood_sampled` counts good samples, 255 on a
+healthy supply); the cooling engine's once-per-session warning keeps its
+threshold and now means a supply fault; the catalog's kernel-drill
+precheck, which read the old value as "HV not good", moves to the chain's
+own witnesses. The line has never been seen low; a supply fault is the
+only thing that would take it there. Owed: the change rides the next image
+(kernel module), and the dev image regains `python3-mmap` and
+`python3-ctypes`, which the python trim removed and which
+`resume_dark_lead.py`, `cp_watchdog_timing.py` and the accelerometer
+probes need.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis

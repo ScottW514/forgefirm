@@ -12,8 +12,15 @@ IMAGE_INSTALL += " \
   forgectrl \
   forgetest \
   python3-gfutilities-emulator \
+  python3-mmap \
+  python3-ctypes \
   htop \
 "
+
+# python3-mmap and python3-ctypes serve the bench scripts that read the SoC
+# pads through /dev/mem (resume_dark_lead.py, cp_watchdog_timing.py, the
+# accelerometer probes). They are bench tooling: the release image carries
+# neither, and forgetest itself imports neither.
 
 # The release recipe trims nano from the shared base list (bench
 # convenience, 8.7 MB with libmagic); the dev image keeps it. Removal specs

@@ -228,6 +228,13 @@ TOOLS = [
              "a pause, how fast the chain re-arms, and - on a live run - the dark lead between FIRE and "
              "LASER_ON that a resumed cut loses. Dry by default; --run live needs the arm press, eye "
              "protection, fire watch, extinguisher, exhaust."},
+    {"id": "pgood-probe", "title": "Supply power-good line against the chain", "script": "pgood_probe.py",
+     "safety": "dry", "where": "board", "ported": True,
+     "args": [_arg("secs", "float", 90.0, "sampling window", flag="--secs")],
+     "desc": "Watches the supply's power-good line (cnc/laser_pgood, reported as the raw pin level) beside "
+             "LASER_ON, FIRE, the charge-pump watchdog, HV_ENABLE and the doors through the kernel readbacks at a "
+             "few hundred hertz, with hv_current at 20 Hz, and prints every transition. It only watches: drive "
+             "the machine meanwhile (a jog, an armed cut, a pause, a lid open). Needs no pad mapping."},
     # -- host-side harnesses (CI) ------------------------------------------------------
     {"id": "laser-stream-test", "title": "Laser pulse-stream emission harness", "script": "laser_stream_test.py",
      "safety": "dry", "where": "host", "ported": False, "args": [],

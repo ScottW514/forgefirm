@@ -9,9 +9,10 @@ laser_on_sampled (the gated LASER_ON output), interlock_circuit bit 3
 (the commanded latch), faults and underruns. Every drill forces duty to
 zero before any FIRE bit, keeps motor_lock=15 (no axis moves), and
 re-locks the latch on every exit path. K3 and fire B/U unlock the latch
-for their run and therefore refuse to proceed while laser_pgood reports
-the HV supply good (the operator opens the lid: the safety chain holds
-HV off).
+for their run and therefore refuse to proceed unless the safety chain
+holds HV off: the charge-pump watchdog dead and the pulse engine idle
+(HV_ENABLE follows the pump; laser_pgood is the supply's power-good and
+says nothing about HV).
 """
 import errno
 import os
@@ -130,33 +131,46 @@ class PulseDevice:
         return False
 
 
-def hv_not_good():
-    """Precheck for the drills that unlock the latch with a zero-duty
-    stream: they run only while the HV supply does NOT report good. At
-    idle the chain holds HV_ENABLE low, so this refuses a start only on a
-    machine that is not idle the way it should be; the cure is the lid
-    (the safety chain holds HV off with it open)."""
-    pgood = rd("cnc/laser_pgood")
-    if pgood is None:
-        return "cnc/laser_pgood unreadable"
-    if pgood != "0":
-        return ("laser_pgood=%s: the HV supply reports good; this drill unlocks the latch with a "
-                "zero-duty stream and needs HV not good (open the lid, then start again)" % pgood)
+def hv_off_reason():
+    """Why the safety chain is NOT holding HV off right now, or None. The
+    chain asserts HV_ENABLE only while a run feeds the charge-pump
+    watchdog, so a dead watchdog and an idle pulse engine mean HV off.
+    laser_pgood is the supply's power-good, high whenever the supply is
+    healthy, and says nothing about HV, so it plays no part here."""
+    alive = rd("cnc/charge_pump_alive")
+    state = rd("cnc/state")
+    if alive is None or state is None:
+        return "cnc/charge_pump_alive or cnc/state unreadable"
+    if alive != "0" or state != "idle":
+        return ("charge_pump_alive=%s state=%s: the chain may be holding HV_ENABLE up" % (alive, state))
     return None
 
 
-def require_hv_not_good(ctx):
+def hv_off():
+    """Precheck for the drills that unlock the latch with a zero-duty
+    stream: they run only while the chain holds HV off. At idle nothing
+    feeds the watchdog, so this refuses a start only on a machine that is
+    not idle the way it should be."""
+    why = hv_off_reason()
+    if why:
+        return ("%s; this drill unlocks the latch with a zero-duty stream and needs HV off "
+                "(let the machine go idle, then start again)" % why)
+    return None
+
+
+def require_hv_off(ctx):
     """The same rule at the start of the run (the precheck ran a moment
     earlier; the machine must still agree)."""
-    pgood = rd("cnc/laser_pgood")
-    ctx.evidence["laser_pgood"] = pgood
-    ctx.check(pgood == "0", "laser_pgood=%s (HV supply reports good) - refusing the latch unlock", pgood)
+    why = hv_off_reason()
+    ctx.evidence["charge_pump_alive"] = rd("cnc/charge_pump_alive")
+    ctx.evidence["kernel_state"] = rd("cnc/state")
+    ctx.check(why is None, "%s - refusing the latch unlock", why)
 
 
-def check_hv_not_good(ctx):
+def check_hv_off(ctx):
     """The hard check right before an unlock (no prompt: forgectrl is down)."""
-    pgood = rd("cnc/laser_pgood")
-    ctx.check(pgood == "0", "laser_pgood=%s (HV supply reports good) - refusing the latch unlock", pgood)
+    why = hv_off_reason()
+    ctx.check(why is None, "%s - refusing the latch unlock", why)
 
 
 # ---------------------------------------------------------------- readbacks
@@ -389,7 +403,7 @@ def _k3_phase(ctx):
     """K3: the latch unlocked during the accel ramp must not restore the FIRE
     drive while the run is in flight. Runs inside the caller's takeover."""
     ev = ctx.evidence
-    check_hv_not_good(ctx)
+    check_hv_off(ctx)
     stream = POWER0 + FIRE * (3 * TICK_HZ) + PAD * (TICK_HZ // 2)
     ctx.log("K3: %d bytes = %.1f s of FIRE bits; ramp_rate 10000 Hz/s (~0.9 s accel "
             "window); unlock at t=+0.15 s", len(stream), len(stream) / TICK_HZ)
@@ -442,7 +456,7 @@ def _fire_phase(ctx, mode):
     stream = _fire_stream()
     ctx.log("fire %s: stream %d bytes = %.3f s", mode, len(stream), len(stream) / TICK_HZ)
     if unlock:
-        check_hv_not_good(ctx)
+        check_hv_off(ctx)
     snap(ctx, "fire %s pre" % mode)
     wr("cnc/motor_lock", 15)
     wr("cnc/step_freq", TICK_HZ)
@@ -518,7 +532,7 @@ def _fire_phase(ctx, mode):
                                "mid-run unlock",
       subsystem="kernel", kind="auto", hardware="takeover", always=True, est_min=4,
       covers=_KERNEL_COVERS,
-      requires=["kernel.k1-k2"], precheck=hv_not_good,
+      requires=["kernel.k1-k2"], precheck=hv_off,
       steps=["Phases B, U and K3 unlock the latch with a zero-duty stream, so the drill starts only "
              "while the HV supply does not report good (true at idle; if it is refused, open the "
              "lid - the safety chain holds HV off - and start it again)."],
@@ -532,7 +546,7 @@ def _fire_phase(ctx, mode):
                   "flight - laser_enable stays 0 for the whole run.")
 def fire_line(ctx):
     ev = ctx.evidence
-    require_hv_not_good(ctx)
+    require_hv_off(ctx)
     with ctx.takeover():
         try:
             a = _fire_phase(ctx, "A")

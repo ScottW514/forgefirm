@@ -324,8 +324,10 @@ from the kernel counters. Contract: [forgectrl](https://docs.forgefirm.org/techn
 **Emission evidence.** `cnc/laser_on_sampled` (surfaced as `/status`
 `laser.emission_samples`) is the reliable live-emission witness; emission
 sensed with no armed window relocks the latch and stops motion. `pic/hv_current`
-is the only live HV telemetry on this PSU. `cnc/laser_pgood_sampled` is **not**
-a usable witness here — it reads 0 through real cutting.
+is the only live HV telemetry on this PSU. `cnc/laser_pgood` is the supply's
+power-good, driven high the whole time the supply is healthy (it follows
+neither HV_ENABLE nor emission): a supply-fault witness, never an emission
+witness (facts bank "Emission and HV witnesses").
 
 ## Lid, interlock and button policy
 
@@ -1031,8 +1033,22 @@ is committed.
   count on a commanded fire window and returns to 0 at Idle — the reliable
   witness. `pic/hv_current` tracks the cut (0 idle → hundreds/1023 raw while
   firing) and is the only live HV telemetry on this PSU (`hv_voltage` is
-  grounded). `cnc/laser_pgood_sampled` stays 0 through real cutting: not usable
-  here.
+  grounded). **`cnc/laser_pgood` (J1_14, GPIO4_21) is the supply's power-good,
+  active high**, measured 2026-09-01 through the kernel readbacks at ~780 Hz:
+  the pin is high at idle, through four HV_ENABLE cycles of a dry run, and
+  through an armed S400 cut (714 laser pulses, `hv_current` to 1023), with
+  zero transitions in 225 s, and it stays high against a 100 kΩ pull-down
+  switched in at the pad (IOMUXC `0x020E03C4`, restored to `0x100b0`), so the
+  supply drives it. The supply's supervisor is a Weltrend WT7525 (PC-supply
+  supervisor; open-drain PGO reports every DC output within spec, drops on an
+  over/under-voltage or over-current fault, 300 ms delay after good), and the
+  reverse-engineering pinout sheets label J1_14 `HV_PFC_STOP` (TP_A2C). The
+  factory app reports the line as the `HVpg`/`HVps` tags and read it the same
+  way (0 at idle under the old inverted convention). The kernel now reads it
+  active high: `laser_pgood` 1 and `laser_pgood_sampled` 255 on a healthy
+  supply; a drop during an armed window is the cooling engine's supply
+  power-good warning, and it means a supply fault. The line has never been
+  seen low on this machine.
 - **The head MCU flag register and HEAD_IRQ.** The head MCU (a KL17 at
   i2c-3 @0x47, I²C-slave-only to the SoC) samples four head-local GPIO input
   levels once per main loop into the read-only flag register 0x05: b0
@@ -1270,19 +1286,7 @@ feature requests, enhancements) will eventually be tracked as GitHub issues.
     far): re-measure the two heat coefficients and the machine's
     air-assist offset; and if a lit check still trips, the
     void-on-emission design with the tube as its own flow tracer.
-8. **Laser power-good: what the line means.** `cnc/laser_pgood` and its
-    sampled count are defined in the UAPI (active low, one sample every
-    ~3.9 ms), the facts bank records that the sampled count reads 0 through
-    real cutting, and the cooling engine warns
-    `laser power-good degraded during the armed window` whenever fewer
-    than half the samples read low, so the warning fires at every session
-    open and carries no information. Nobody knows what the line reports
-    on this PSU: whether it is the supply's own power-good, an HV-present
-    flag, a polarity we have inverted, or unconnected. Owed: the line on a
-    scope against `hv_current` through an armed cut, its meaning written
-    into the facts bank and the UAPI, and then either a warning that means
-    something or no warning.
-9. **Initial commissioning: measure and set the machine's own numbers
+8. **Initial commissioning: measure and set the machine's own numbers
     methodically.** Every tunable that was measured on the bench machine
     and shipped as a default varies from machine to machine: the flow
     check's bands and `cool_flow_rise`, the tube's heat coefficients
