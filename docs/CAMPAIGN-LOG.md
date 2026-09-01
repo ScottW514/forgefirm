@@ -7019,6 +7019,41 @@ only thing that would take it there. Owed: the change rides the next image
 `resume_dark_lead.py`, `cp_watchdog_timing.py` and the accelerometer
 probes need.
 
+## 2026-09-01: the repositories move to the openglow-org organization
+
+All eleven ForgeFIRM repositories moved from the personal account to the
+GitHub organization `openglow-org`. The grblHAL core fork was renamed from
+`core` to `grblHAL-core` in the same step. Stars, watchers, issues and both
+fork parents survived the move, and the old URLs redirect. Three things do
+not follow a transfer and are handled separately: the Pages custom domain
+with its DNS record, the PyPI trusted publisher for `gfutilities`, and every
+`raw.githubusercontent.com` URL. The documentation site kept serving through
+the move.
+
+The rewrite that followed named the organization in the recipe `SRC_URI` and
+`HOMEPAGE` values, the release and install URLs, the vendor check, the CI
+checkouts, the driver URL, the core submodule, the package metadata and every
+documentation link. The campaign log keeps its original URLs, as an
+append-only record.
+
+Acceptance consequence, measured rather than assumed: the recipe edits sit
+inside the three content layers, so all three layer content hashes moved
+(`meta-forgefirm` db0a7b58 to 25bf2d4d, `meta-glowforge-bsp` 20e77834 to
+444eccc7, `meta-openglow-core` 18634ebd to 0a299582). Every test fingerprint
+folds the platform block in, so the whole catalog re-runs. Two behavioral
+files outside the layers changed as well: `forgectrl/src/update.c`, which the
+update suite covers, and `grblHAL-glowforge/src/driver.c`, which three tests
+cover. The move was timed before the first release so that one campaign
+serves both.
+
+Build p28 on the moved sources: fetch-verify green for every component at the
+new URLs (`forgectrl`, `grblhal-glowforge`, `kernel-module-glowforge`,
+`gfcloud`, `gfhome`, `python3-ffmachine`, `python3-gfhardware`,
+`python3-gfutilities`), then both images built clean, release
+`20260901234804` and dev `20260901234900`. The dev image manifest records the
+`openglow-org` source URLs. Owed: the operator flashes the dev image, takes a
+fresh-boot baseline, and runs the campaign that authorizes v0.0.1.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis
