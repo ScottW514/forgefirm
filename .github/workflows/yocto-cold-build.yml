@@ -1,7 +1,8 @@
 # Cold-build reproducibility probe: proves a fresh clone still builds the
 # release image, and publishes the artifact checksums for comparison
 # against locally built releases. Dispatch-only - releases are built and
-# signed on the maintainer's build host (see docs/UPDATE-SYSTEM.md); this
+# signed on the maintainer's build host (see
+# https://docs.forgefirm.org/technical/forgefirm/install-and-update/); this
 # workflow never produces release artifacts.
 #
 # A cold Yocto build on a 4-core hosted runner takes hours and lives

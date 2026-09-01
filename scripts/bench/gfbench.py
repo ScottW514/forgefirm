@@ -14,7 +14,7 @@ board(cmd)     run a shell command on the machine and return its stdout
                (local: sh -c; host: ssh, or the client named by GF_SSH,
                e.g. GF_SSH='wsl -d <distro> -- ssh').
 degc(raw)      the factory B-equation coolant conversion
-               (kernel-module-glowforge/UAPI.md).
+               (docs.forgefirm.org, the sensors page).
 data_path(f)   where a tool keeps its data files: FORGETEST_BENCH_DATA
                when set (the bench page passes <data>/bench/), else next
                to the tool.

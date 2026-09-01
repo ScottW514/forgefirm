@@ -2,7 +2,7 @@
 """Coolant temperature spot-check helper (runs on the board or from a
 host; gfbench: GF_HOST).
 
-The raw->Celsius conversion in UAPI.md is the factory B-equation (10k
+The documented raw->Celsius conversion (docs.forgefirm.org, sensors) is the factory B-equation (10k
 B3380 NTC in a 10k divider behind a 1.3x gain stage, 10-bit ADC). This
 tool collects reference points - a measured real temperature paired with
 the machine's raw ADC readings - and fits a per-machine line to
@@ -17,7 +17,7 @@ Usage:
   temp_calibrate.py supply-watch [seconds]     the same for the power supply
   temp_calibrate.py supply-point <C> [note]    sensor (pic/pwr_temp, raw):
   temp_calibrate.py supply-fit                 thermometer on the heatsink vs
-                                               the raw count; UAPI.md's guess
+                                               the raw count; the documented guess
                                                raw * 0.08715 - 21 is shown
                                                beside it. Points go to
                                                supply_calibration.json.
@@ -40,7 +40,7 @@ SUPPLY_STORE = data_path('supply_calibration.json')
 
 
 def supply_guess_c(raw):
-    """UAPI.md's unverified guess for pic/pwr_temp."""
+    """The documented unverified guess for pic/pwr_temp."""
     return raw * 0.08715 - 21
 
 
@@ -55,7 +55,7 @@ def supply_raw(samples=5, delay=1.0):
 
 
 def uapi_c(raw):
-    """The UAPI.md factory conversion (B-equation NTC behind divider + gain)."""
+    """The documented factory conversion (B-equation NTC behind divider + gain)."""
     return degc(raw)
 
 
@@ -149,7 +149,7 @@ def supply_main(mode):
         if slope is None:
             print('points share one raw value; no fit')
             return 1
-        print('fit: degC = %.5f * raw + %.2f   (UAPI.md guess: 0.08715 * raw - 21)' % (slope, offset))
+        print('fit: degC = %.5f * raw + %.2f   (documented guess: 0.08715 * raw - 21)' % (slope, offset))
         worst = max(abs(p['measured_c'] - supply_guess_c(p['raw'])) for p in pts)
         print('the guess is off by at most %.1f C at these points' % worst)
         return 0

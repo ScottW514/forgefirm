@@ -27,7 +27,7 @@ from ..catalog import test
 from .. import hw
 from ..runner import Failed
 
-# interlock_circuit bits (UAPI.md): bit 3 = the driven latch line, set = locked.
+# interlock_circuit bits (docs.forgefirm.org, the kernel module page): bit 3 = the driven latch line, set = locked.
 LATCH_BIT = 1 << 3
 
 TICK_HZ = 10000

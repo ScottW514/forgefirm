@@ -2,9 +2,9 @@
 # ForgeFIRM — kas build configuration  (factory Glowforge control board)
 # ============================================================================
 # The forgefirm repo is the BASE: it controls the build, the output firmware
-# images land here (build/tmp/deploy/images/glowforge/), and the install docs
-# live here (INSTALL.md, SERIAL.md). The build and release procedure is on the
-# documentation site: https://docs.forgefirm.org/developers/
+# images land here (build/tmp/deploy/images/glowforge/), and the status docs
+# live here (docs/BRINGUP.md, docs/CAMPAIGN-LOG.md). The install, build and
+# release procedures are on the documentation site: https://docs.forgefirm.org/
 #
 # Target : Yocto Scarthgap (5.0 LTS) + linux-fslc 6.12 (mainline LTS)
 # Machine: glowforge  (i.MX6 Solo SOM inside Basic/Plus/Pro)

@@ -1,12 +1,11 @@
 # OpenGlow/ForgeFIRM Firmware for Glowforge
 
-> # ⚠️ IN DEVELOPMENT — NOT YET RELEASED
+> # ⚠️ BETA
 >
-> **ForgeFIRM has no public release, yet.**  Nothing here
-> is installable.  
-> The documentation describes the firmware as it is being built 
-> and validated on the bench. It is here to be read, not followed.  
-> The first public release is expected in September 2026. If you are interested in being an early tester, please reach out to the developer.  
+> **ForgeFIRM is in beta.** Every release below 0.1.0 is a beta release.
+> Expect problems, and expect frequent updates. Upgrade whenever a newer
+> release is available, and report what you find on the
+> [community forum](https://community.openglow.org).
 
 Open-source firmware for Glowforge brand CNC lasers. ForgeFIRM replaces the
 cloud-dependent factory software on the **stock control board** — no hardware
@@ -14,13 +13,13 @@ modification — and gives the machine a local controller, a local web control
 panel, and a standard Grbl interface.
 
 * [Latest Release](https://github.com/ScottW514/forgefirm/releases)
-* [Installation Instructions](https://github.com/ScottW514/forgefirm/blob/master/INSTALL.md)
+* [Installation Instructions](https://docs.forgefirm.org/install/)
 * [Build Instructions](https://docs.forgefirm.org/developers/building/)
-* [Connecting LightBurn](https://github.com/ScottW514/forgefirm/blob/master/docs/LIGHTBURN.md)
-* [How motion and the laser are driven](https://github.com/ScottW514/forgefirm/blob/master/docs/MOTION.md)
-* [How cooling and airflow work](https://github.com/ScottW514/forgefirm/blob/master/docs/COOLING.md)
-* [The cameras and the video stream](https://github.com/ScottW514/forgefirm/blob/master/docs/VIDEO.md)
-* [How the laser safing works](https://github.com/ScottW514/forgefirm/blob/master/docs/SAFETY.md)
+* [Connecting LightBurn](https://docs.forgefirm.org/usage/lightburn/)
+* [How motion and the laser are driven](https://docs.forgefirm.org/technical/forgefirm/)
+* [How cooling and airflow work](https://docs.forgefirm.org/technical/forgefirm/cooling-engine/)
+* [The cameras and the video stream](https://docs.forgefirm.org/usage/cameras/)
+* [How the laser safing works](https://docs.forgefirm.org/safety/)
 * [How a release is tested before being accepted](https://docs.forgefirm.org/developers/acceptance/)
 * [Community Support](https://community.openglow.org)
 
@@ -76,8 +75,8 @@ you get to read what you're running.
 
 **These machines contain a CO₂ laser: it burns, blinds, and starts
 fires.** Never defeat the lid switches or interlock. Never leave a
-running job unattended. Keep a fire extinguisher within reach. Read [this](docs/LIGHTBURN.md#before-you-cut--safety-read-this-first) before you cut
-your first job, and read this [regulatory and legal](INSTALL.md#regulatory-and-legal) section before installing. [This](docs/SAFETY.md) document describes the hardware safety chain and the software gates ForgeFIRM stacks on it.
+running job unattended. Keep a fire extinguisher within reach. Read [this](https://docs.forgefirm.org/safety/) before you cut
+your first job, and read this [regulatory and legal](https://docs.forgefirm.org/install/#regulatory-and-legal) section before installing. [This](https://docs.forgefirm.org/technical/machine/safing-chain/) page describes the hardware safety chain and the software gates ForgeFIRM stacks on it.
 
 **THIS IS EXPERIMENTAL SOFTWARE  
 Use of this software

@@ -12,7 +12,7 @@ full download with the GF1 header (magic at [1:4], total header length at
 [4:8], then 8-byte key/value records). Header settings (STfr, XSmm) override
 the --rate/--mode defaults when present.
 
-Byte layout (kernel-module-glowforge/UAPI.md, hardware-verified):
+Byte layout (docs.forgefirm.org, the step engine page; hardware-verified):
   bit7 set        -> laser power byte (low 7 bits = power, no steps this tick)
   bit0 X_STEP, bit1 X_DIR (set = -X)
   bit2 Y_STEP, bit3 Y_DIR (set = +Y)

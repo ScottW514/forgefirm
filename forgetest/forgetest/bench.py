@@ -189,8 +189,8 @@ TOOLS = [
                    ["watch", "point", "fit", "supply-watch", "supply-point", "supply-fit"]),
               _arg("value", "str", None, "point: the thermometer reading in C; watch: seconds (default 60)")],
      "desc": "Pairs a measured temperature with averaged raw readings; fits a per-machine line. The coolant "
-             "sensors, or the power supply's (thermometer on its heatsink, against the unverified guess in "
-             "UAPI.md). Points accumulate in the bench data directory."},
+             "sensors, or the power supply's (thermometer on its heatsink, against the documented unverified "
+             "guess). Points accumulate in the bench data directory."},
     {"id": "fan-test", "title": "Fan/coolant bench", "script": "fan_test.py",
      "safety": "dry", "where": "board", "ported": True, "args": [],
      "desc": "Snapshots fan PWMs/tachs/temps, drives M8 -> cut fans, M9 -> cooldown -> idle; the tach "

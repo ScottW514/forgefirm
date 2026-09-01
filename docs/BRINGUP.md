@@ -12,13 +12,7 @@ Read together with:
 
 | Document | What it settles |
 |---|---|
-| `kernel-module-glowforge/UAPI.md` | the pulse-stream feeder contract, sysfs attributes, sensor conversions |
-| `forgectrl/docs/SERVICES.md` | the machine-services contract: switch map, hardware ownership, cooling channels, mode supervision, pulse-device ownership, logging |
-| `docs/SAFETY.md` | the hardware safing chain, decoded |
-| `docs/VIDEO.md` | the cameras as users meet them: endpoints, delivered geometry, and what the sensors can do that ForgeFIRM does not send |
-| `docs/LIGHTBURN.md`, `docs/UPDATE-SYSTEM.md`, `INSTALL.md` | sender setup, A/B update system, install |
-| [docs.forgefirm.org/developers](https://docs.forgefirm.org/developers/) | build, release flow, tests, the bench runbook |
-| `python3-gfhardware/forgefirm-app/docs/CLOUD.md` | cloud mode, including its own open items |
+| [docs.forgefirm.org](https://docs.forgefirm.org/) | the documentation site: safety, install, usage, the machine as built, how ForgeFIRM works (the kernel module and the pulse feeder contract, the forgectrl machine-services contract, the cooling engine, the video pipeline, cloud mode), and the developer pages: build, release flow, acceptance, tests, the bench runbook |
 
 ## Where the project stands
 
@@ -263,7 +257,7 @@ the dose-curve recorder streams the ladder job itself from one Record
 press (absolute from X0 Y0, refused while a sender is connected; the
 operator's button press starts the fire with every arm gate standing),
 records the tube current and the head thermopile, fits the rungs, and
-Apply writes the result (`forgectrl/docs/SERVICES.md`). Rasters hold their tonality down
+Apply writes the result ([forgectrl](https://docs.forgefirm.org/technical/forgefirm/forgectrl/)). Rasters hold their tonality down
 to ~14 pulse slots per pixel (508 DPI at 6000 mm/min): the dither
 accumulator's cross-pixel averaging recovers the levels, with no
 visible dither pattern.
@@ -325,7 +319,7 @@ report, overrides, driver version, `ts_mono` for age; on change plus a
 `grbl` block only while it supervises a live GRBL controller, serves
 the settings file at `GET /grbl/settings`, and the panel's GRBL card
 renders it. Position stays out: it changes per segment and is served
-from the kernel counters. Contract: `forgectrl/docs/SERVICES.md`.
+from the kernel counters. Contract: [forgectrl](https://docs.forgefirm.org/technical/forgefirm/forgectrl/).
 
 **Emission evidence.** `cnc/laser_on_sampled` (surfaced as `/status`
 `laser.emission_samples`) is the reliable live-emission witness; emission
@@ -423,7 +417,7 @@ sysvinit script from the repo's `init/`; bench builds cross-compile with
 `forgefirm/scripts/bench/build-forgectrl.sh`. The **machine-services
 contract** — EV_SW switch map, sensor conversions, hardware single-writer
 ownership, cooling channels, mode supervision, pulse-device ownership, logging
-— is `forgectrl/docs/SERVICES.md`.
+— is [forgectrl](https://docs.forgefirm.org/technical/forgefirm/forgectrl/) on the documentation site.
 
 Every state-changing endpoint requires the first-boot bearer token in `/data`
 (embedded in the panel), a Host address-literal check, and
@@ -487,7 +481,7 @@ One ulfius daemon serves it all:
   snapshot answer 409 while the lid is open.
 - `GET /slots`, `POST /boot`, `POST /update/check|download|apply|upload`,
   `GET /update/status`, `POST /restore/factory`, `POST /system/reboot` — the
-  A/B update manager (`docs/UPDATE-SYSTEM.md`). Upload is auth + idle + job
+  A/B update manager ([install and update](https://docs.forgefirm.org/technical/forgefirm/install-and-update/)). Upload is auth + idle + job
   gated; a booted-slot write is refused under any `root=` spelling.
 - `GET /logs`, `GET /logs/tail`, `POST /logs/export` — the logging tree
   (below).
@@ -511,7 +505,7 @@ open lid refuses stream and snapshot with HTTP 409 and a lid opened mid-capture
 tears the pipeline down; `gfhardware.cam.capture()` enforces the same rule for
 the cloud client's direct-V4L2 fallback and raises `LidOpen`. No setting
 disables it, and the factory's lid-open focus hunt now fails as a result
-(`docs/VIDEO.md` §2, `forgectrl/docs/SERVICES.md`). Geometry, Bayer depth and
+([the video pipeline](https://docs.forgefirm.org/technical/forgefirm/video-pipeline/)). Geometry, Bayer depth and
 the manual control set come from a **sensor profile** chosen by whichever
 driver bound on that camera's I2C bus, so one image serves both the 5 MP
 OV5648 (2592×1944) and the 8 MP OV8856 (3264×2448) — both 8-bit BGGR, so the
@@ -623,8 +617,8 @@ settings **applied at reboot** — the panel's Logs tab shows configured vs.
 effective and offers the reboot, plus a live viewer and a sanitized `tar.gz`
 export for issue reports (`POST /logs/export`; `src/sanitize.c` replaces
 serial, hostname, cloud credentials, panel token, SSID/PSK, IPs, MACs and
-e-mails with stable placeholders). Design and contract: `SERVICES.md`
-"Logging".
+e-mails with stable placeholders). Design and contract:
+[logging](https://docs.forgefirm.org/technical/forgefirm/logging/).
 
 ## Release acceptance (forgetest, port 8090)
 
@@ -710,7 +704,7 @@ is committed.
   GPIO 7 to GND. The lid contact (NC) goes in series with the lid-switch
   loop at J4.12/13; the button contact (NO) across the front button input
   at J5 (BTN and its 12 V); the interlock contact (NC) in the remote
-  interlock loop at J8 (SAFETY.md; J6 is the speaker). The machine's 3.3 V
+  interlock loop at J8 ([the safing chain](https://docs.forgefirm.org/technical/machine/safing-chain/); J6 is the speaker). The machine's 3.3 V
   rail carries the three coils with room to spare. The DevKit and the
   machine share a ground through the modules, so the DevKit is powered from
   a USB wall adapter. The interposer harness itself is bench-local and is
@@ -744,7 +738,7 @@ is committed.
   every fan held to a measured floor with a fault, not a pause, for the
   session; a coolant critical line above the ceiling's pause; the board
   temperatures watched per job; and the rest of the envelope declared, tag by
-  tag, in `CLOUD.md` "The pulse header".
+  tag, on [the factory firmware](https://docs.forgefirm.org/technical/machine/factory-firmware/) under "The pulse header".
 - **Board temperatures at idle** (room ~22 C, machine on for hours): the
   chassis LM75 reads **29.0 C**, `pic/pwr_temp` reads **589 raw** (the
   unverified guess `raw * 0.08715 - 21` would make that 30.3 C), the SoC die
@@ -879,7 +873,7 @@ is committed.
   magnitude to spare. Bounded queue depth plus `SCHED_FIFO` for the feeder is
   the design; RT is worth revisiting only if the underrun bench ever
   contradicts this arithmetic.
-- Byte layout and stream rules: see the UAPI.md feeder contract
+- Byte layout and stream rules: see [the pulse feeder contract](https://docs.forgefirm.org/technical/forgefirm/pulse-feeder-contract/)
   (authoritative).
 - **Z**: bit 6 SET = lens UP = +Z (hardware-verified). Home = hall trigger at
   TOP; usable travel ≈ 30 half-steps ≈ 10.6 mm ≈ 0.417"; 0.3534 mm/half-step.
@@ -964,7 +958,7 @@ is committed.
   33 °C, resume 31 °C (factory job-header CMrx/…); the factory's low side
   (floors ≈1.0/4.0 °C, ~16 °C warm-up gate) is not implemented yet. The
   coolant thermistor conversion is the factory B-equation recovered from the
-  v2.6.0 binary — derivation in `kernel-module-glowforge/UAPI.md`; the old
+  v2.6.0 binary — derivation on [sensors](https://docs.forgefirm.org/technical/machine/sensors/); the old
   UAPI "best guess" linear formula was 3–5 °C high and everything derived from
   it had to be re-derived. The flow check's bands hold from 19 to 27 C, the
   loop heater's ceiling in a 20 C room, with the margin widening warm; above
@@ -1104,7 +1098,7 @@ is committed.
   LOW through a run — the same physical behavior, inverted). The DTS now
   declares it active-low, and the former `estop_halts_motion` /
   `MOTION.ESTOP_HALTS_MOTION` opt-in is gone: a real e-stop belongs in the
-  lid-switch chain (`docs/SAFETY.md`). Doors/door1/door2 stay stable during
+  lid-switch chain ([the safing chain](https://docs.forgefirm.org/technical/machine/safing-chain/)). Doors/door1/door2 stay stable during
   motion.
 - **Factory job behavior on the lid and the button, measured on 2.6.0-2228**
   (bench session 2026-08-16; this is what ForgeFIRM's parity policy
@@ -1118,7 +1112,7 @@ is committed.
   hunt is not lid-gated.
 - **The hardware button latch is what makes the armed window honest.** A lid
   open SETs it (set-dominant), and it stays SET until the lid is closed, the SoC
-  lock is released **and the button is pressed** (`docs/SAFETY.md`). So a policy
+  lock is released **and the button is pressed** ([the safing chain](https://docs.forgefirm.org/technical/machine/safing-chain/)). So a policy
   that cancels the job on a lid open and re-arms only through a fresh button
   press keeps software and hardware in agreement by construction; one that
   resumes a job after a lid open leaves the beam blocked in hardware while
@@ -1190,7 +1184,8 @@ is committed.
 
 ## Next work
 
-Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
+Open items only. Anything closed is in `CAMPAIGN-LOG.md`. Open items (bugs,
+feature requests, enhancements) will eventually be tracked as GitHub issues.
 
 1. **Limit-switch homing.** The planned second homing method (`$22` stays 0
    until it lands).
@@ -1222,9 +1217,8 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     first GitHub release, per the site (Developers, "Release flow"), once
     ready to publish. Repoint the core submodule to
     upstream if the `step_us_min` sizing fix merges.
-5. **Update system Phase 5 — recovery refresh.** The remaining phase of
-    `docs/UPDATE-SYSTEM.md` (a refreshed recovery image in boot0); Phases 0–4
-    are done.
+5. **Update system — recovery refresh.** A refreshed recovery image in
+    boot0; the design is on [install and update](https://docs.forgefirm.org/technical/forgefirm/install-and-update/).
 6. **Head IRQ (exploratory).**
     Owed for the head IRQ, only if a coarse hardware interrupt is wanted
     instead of the poll: arm the accel bit in the head MCU (reg 0x03/0x04),
@@ -1249,7 +1243,7 @@ Open items only. Anything closed is in `CAMPAIGN-LOG.md`.
     (`cloud_pause_backtrack_ticks` 2000, `cloud_resume_lead_ticks` 1950), and
     the kernel offers the same mechanism to a live feed, bounded by the ring's
     retained history (`cnc/max_backtrack`; the facts bank "SDMA pulse engine"
-    and `UAPI.md`). What is not settled is the bookkeeping above it: a
+    and [the pulse feeder contract](https://docs.forgefirm.org/technical/forgefirm/pulse-feeder-contract/)). What is not settled is the bookkeeping above it: a
     backward run moves the head and the kernel's counters while grblHAL's
     planner still holds a partly executed block, so borrowing the mechanism
     means reconciling the two, and a GRBL cut runs a much shorter queue than a
