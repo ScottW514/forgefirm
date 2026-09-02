@@ -501,8 +501,10 @@ def _return_x(ctx, delta_mm):
       description="SIGKILL of the controller mid-move: the supervisor reaps it, safes (cnc/stop, "
                   "latch relocked - it never unlocked), and respawns within seconds. SIGSTOP (a "
                   "hang) mid-move: the ring drains into a kernel underrun (fast halt, latch "
-                  "locked); the process resumed from the hang recovers on $X and moves again "
-                  "without a restart. forgectrl "
+                  "locked); the process resumed from the hang recovers on a soft reset and an unlock "
+                  "(the alarm is critical, so $X alone is refused; the reset acknowledges the "
+                  "fault to the stream and clears the stale ring) and moves again without a "
+                  "restart. forgectrl "
                   "restart mid-move: the busy controller finishes the move unmanaged and the new "
                   "daemon retakes supervision at idle. After each drill the head is jogged back "
                   "by the kernel-measured distance.")
@@ -566,6 +568,7 @@ def deadman(ctx):
     pid1 = m1["pid"]
     x0 = _kernel_x_mm(ctx)
     underruns0 = hw.sysfs_int("cnc/underruns", 0)
+    ring_free_idle = hw.sysfs_int("cnc/free")
     with ctx.grbl() as g:
         clean_slate(ctx, g)
         g.command("G91")
@@ -586,21 +589,45 @@ def deadman(ctx):
         ctx.log("after SIGSTOP: kernel %s in %s s, latch locked %s, underruns %s -> %s",
                 kstate, halt_s, latch_locked(), underruns0, ev["sigstop"]["underruns"])
         # The controller comes back from the hang to find its stream
-        # faulted and the core alarmed. An unlock ($X) is the operator's
-        # acknowledgment: it must restore a controller that moves again,
-        # without a restart (the position is not trusted until a re-home,
-        # so the move is a jog).
+        # faulted and the core in a critical alarm (17, motor fault). The
+        # core refuses an unlock until a soft reset (error 79), and the
+        # reset is what the stream takes as the operator's acknowledgment:
+        # the kernel is stopped and re-armed, the stale ring cleared, the
+        # producer armed again. Reset, unlock, and the controller moves
+        # again without a restart (the position is not trusted until a
+        # re-home, so the move is a jog).
         _os.kill(pid1, _signal.SIGCONT)
         ctx.sleep(1.0)
         st = g.status_report()["state"]
         ev["sigstop"]["state_after_cont"] = st
         ctx.log("controller resumed: state %s", st)
-        g.command("$X")
+        ctx.check(st.startswith("Alarm"), "the resumed controller is %s, expected Alarm", st)
+        early = g.command("$X")
+        ev["sigstop"]["unlock_before_reset"] = early
+        ctx.log("$X before the reset: %s", early)
+        ctx.check(any(l.startswith("error:79") for l in early),
+                  "$X before the reset should be refused as a critical event, got %s", early)
+        g.realtime(0x18)
+        ctx.sleep(2)
+        g.drain()
+        st = g.status_report()["state"]
+        ctx.log("after the soft reset: %s", st)
+        unlock = g.command("$X")
+        ev["sigstop"]["unlock_after_reset"] = unlock
+        ctx.log("$X after the reset: %s", unlock)
+        ctx.check(unlock and unlock[-1] == "ok", "$X after the reset was refused (%s)", unlock)
+        st = g.status_report()["state"]
+        ctx.check(st.startswith("Idle"), "controller is %s after the reset and unlock, expected Idle", st)
+        free = hw.sysfs_int("cnc/free")
+        ev["sigstop"]["ring_free_after_reset"] = free
+        ctx.log("ring after the reset: free %s (idle %s)", free, ring_free_idle)
+        ctx.check(free == ring_free_idle, "the reset did not clear the stale ring (free %s, idle %s)",
+                  free, ring_free_idle)
         g.command("$J=G91X-5F1200")
         peak, states, st = wait_idle(ctx, g, 15)
         ev["sigstop"]["recovery_states"] = states
-        ctx.check("TIMEOUT" not in states and not st.startswith("Alarm"),
-                  "the controller did not move again after $X (states %s)", states)
+        ctx.check("TIMEOUT" not in states and not str((st or {}).get("state", "")).startswith("Alarm"),
+                  "the controller did not move again after the reset and unlock (states %s)", states)
     ctx.check(kstate == "underrun", "the ring did not drain into a kernel underrun (state %s)", kstate)
     ctx.check(latch_locked(), "latch unlocked after the underrun")
     m2 = wait_running(10)
