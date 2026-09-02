@@ -83,6 +83,7 @@ SAMPLE_S = 5                # tach sampling period (the big exhaust fan coasts f
 STABLE_SAMPLES = 3          # consecutive agreeing samples that make an idle reference
 IDLE_REF_TIMEOUT_S = 180    # a previous test's cooldown + spin-down
 COOLDOWN_TIMEOUT_S = 240    # the engine's smoke phase + idle drop + spin-down
+RESTART_IDLE_TIMEOUT_S = 90  # a daemon restart: the controller's start, its liveness probe, the engine's tick
 
 
 @test("cooling.flow-verify", title="Coolant flow check separates flow from no-flow",
@@ -156,15 +157,19 @@ def _tach_stable(a, b):
     return all(abs(a.get(k, 0) - b.get(k, 0)) <= max(100, 0.10 * max(a.get(k, 0), 1)) for k in TACH_KEYS)
 
 
-@test("cooling.fans-quiet-after-motion", title="Fan profile returns to idle after motion and after M8/M9",
-      subsystem="cooling", kind="auto", mode="grbl", est_min=3,
+@test("cooling.fans-quiet-after-motion", title="Fan profile returns to idle after motion, after M8/M9, "
+                                                  "and after a daemon restart on a busy machine",
+      subsystem="cooling", kind="auto", mode="grbl", est_min=5,
       covers=_COOL_COVERS + [("forgectrl", "src/super.c")], requires=["motion.pacing"],
       steps=["Bed clear; the head needs 20 mm of free +X travel."],
       description="A dry jog and an M8/M9 cycle must not leave the run fan profile on: within "
                   "the cooldown the engine is back at its idle duty and the exhaust/intake tachs "
                   "are back at (or below) the idle level they held before the test. The idle "
                   "reference is taken only once the engine is idle and the tachs have stopped "
-                  "changing, so a previous test's spin-down cannot be mistaken for idle.")
+                  "changing, so a previous test's spin-down cannot be mistaken for idle. Then a "
+                  "forgectrl restart with the kernel not idle (a takeover's safe state): the "
+                  "engine starts in its cooldown posture and must take the idle duties back once "
+                  "the machine is idle, not keep the exhaust at cooldown duty for good.")
 def fans_quiet(ctx):
     fc = ctx.forgectrl
     ev = ctx.evidence
@@ -237,6 +242,35 @@ def fans_quiet(ctx):
     ctx.log("fans after: %s duty %s (settled in %s s)", ev["after"], ev["duty_after"], ev["settle_s"])
     ctx.check(settle is not None, "fans did not return to the idle profile within %d s: %s, duty %s, "
               "phase %s (idle reference %s)", COOLDOWN_TIMEOUT_S, ev["after"], ev["duty_after"], phase(), before)
+
+    # A daemon restart while the kernel is not idle: forgectrl stopped, the
+    # kernel put in the takeover's safe state (disabled), forgectrl started.
+    # The engine judges the machine busy and takes the cooldown airflow; the
+    # controller's start enables the kernel and the machine is idle again,
+    # and the engine must follow it to the idle duties.
+    rc, out = hw.initd("forgectrl", "stop")
+    ctx.log("forgectrl stop -> rc %s", rc)
+    ctx.check(rc == 0, "forgectrl stop failed: %s", (out or "").strip()[:200])
+    hw.sysfs_write("cnc/disable", "1")
+    ev["kstate_at_restart"] = hw.sysfs_read("cnc/state")
+    rc, out = hw.initd("forgectrl", "start")
+    ctx.log("forgectrl start with cnc/state=%s -> rc %s", ev["kstate_at_restart"], rc)
+    ctx.check(rc == 0, "forgectrl start failed: %s", (out or "").strip()[:200])
+    back = None
+    t0 = time.time()
+    while time.time() - t0 < RESTART_IDLE_TIMEOUT_S:
+        ctx.sleep(SAMPLE_S)
+        st, m = fc.get("/mode")
+        d = _duties()
+        ctrl = m.get("controller") if isinstance(m, dict) else st
+        ctx.log("  after the restart +%3.0f s: controller %s duty %s", time.time() - t0, ctrl, d)
+        if ctrl == "running" and d == IDLE_DUTY:
+            back = time.time() - t0
+            break
+    ev["restart_idle_s"] = round(back, 1) if back is not None else None
+    ev["duty_after_restart"] = _duties()
+    ctx.check(back is not None, "the engine kept the busy-start airflow after the restart (duty %s "
+              "after %d s)", ev["duty_after_restart"], RESTART_IDLE_TIMEOUT_S)
 
 
 GATE_KEYS = ("cool_temp_max", "cool_temp_resume")

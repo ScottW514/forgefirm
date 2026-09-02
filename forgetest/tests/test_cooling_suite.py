@@ -89,19 +89,38 @@ class FansQuietTests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="forgetest-cool-")
         self.sysfs = os.path.join(self.tmp, "sysfs") + os.sep
         os.makedirs(self.sysfs + "thermal")
+        os.makedirs(self.sysfs + "cnc")
+        with open(self.sysfs + "cnc/state", "w") as f:
+            f.write("idle")
         os.environ["GF_SYSFS_ROOT"] = self.sysfs
         self.fc = helpers.FakeForgectrl().start()
         self.grbl = FakeGrbl()
-        self.saved = (cooling.SAMPLE_S, cooling.IDLE_REF_TIMEOUT_S, cooling.COOLDOWN_TIMEOUT_S)
+        self.saved = (cooling.SAMPLE_S, cooling.IDLE_REF_TIMEOUT_S, cooling.COOLDOWN_TIMEOUT_S,
+                      cooling.RESTART_IDLE_TIMEOUT_S, cooling.hw.initd)
         cooling.SAMPLE_S = 0.1
         cooling.IDLE_REF_TIMEOUT_S = 3
         cooling.COOLDOWN_TIMEOUT_S = 4
+        cooling.RESTART_IDLE_TIMEOUT_S = 1
+        # The daemon restart of the last phase, scripted: the init script
+        # is a stub, and the engine that comes up applies `after_start`
+        # (the idle duties by default; a daemon that keeps the busy-start
+        # cooldown airflow applies those instead).
+        self.initd_calls = []
+        self.after_start = (0, 0)
+
+        def initd(service, action, timeout=60):
+            self.initd_calls.append((service, action))
+            if action == "start":
+                self.duty(*self.after_start)
+            return 0, ""
+        cooling.hw.initd = initd
         self.fc.state["cool"] = {"phase": "idle", "armed": False, "hold": False}
         self.duty(0, 0)
         self.fans(0, 736, 733)
 
     def tearDown(self):
-        cooling.SAMPLE_S, cooling.IDLE_REF_TIMEOUT_S, cooling.COOLDOWN_TIMEOUT_S = self.saved
+        (cooling.SAMPLE_S, cooling.IDLE_REF_TIMEOUT_S, cooling.COOLDOWN_TIMEOUT_S,
+         cooling.RESTART_IDLE_TIMEOUT_S, cooling.hw.initd) = self.saved
         self.grbl.close()
         self.fc.stop()
         os.environ.pop("GF_SYSFS_ROOT", None)
@@ -173,6 +192,26 @@ class FansQuietTests(unittest.TestCase):
         self.assertGreater(run.evidence["idle_ref_s"], 0.3)
         self.assertIsNotNone(run.evidence["settle_s"])
         self.assertTrue(any("idle ref:" in ln for ln in run.lines))
+
+    def test_the_restart_phase_stops_disables_starts_and_sees_idle_duty(self):
+        self.run_engine()
+        run = self.run_test()
+        self.assertEqual(run.finished, None)
+        self.assertEqual(self.initd_calls, [("forgectrl", "stop"), ("forgectrl", "start")])
+        with open(self.sysfs + "cnc/disable") as f:
+            self.assertEqual(f.read(), "1")
+        self.assertEqual(run.evidence["duty_after_restart"], cooling.IDLE_DUTY)
+        self.assertIsNotNone(run.evidence["restart_idle_s"])
+
+    def test_a_daemon_that_keeps_the_busy_start_airflow_fails(self):
+        # The bench case: after a takeover's restart the exhaust ran at
+        # cooldown duty on an idle machine for good.
+        self.run_engine()
+        self.after_start = (32768, 21639)
+        with self.assertRaises(Failed) as cm:
+            self.run_test()
+        self.assertIn("kept the busy-start airflow", str(cm.exception))
+        self.assertIn("32768", str(cm.exception))
 
     def test_fans_left_running_fail_with_the_reference_in_the_message(self):
         def on_command(line):
