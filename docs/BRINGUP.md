@@ -1409,3 +1409,32 @@ pump flag. Beam detect stays with item 6.
     a bench sampler, sees the same value whatever the others do. A module
     change: it rides the next image flash, with the coolant-reading tests
     (`cooling.aa-offset-calibrate`, `cooling.flow-verify`) as its proof.
+
+11. **The audit's deferred findings.** Six findings of the 2026-09-01 audit were
+    deferred with a reason and are owed here. Four are one kernel batch, since
+    each edits the SDMA script, the module, or a kernel patch file, and a
+    kernel change rides one image flash: **K-4** (end-of-data reached before
+    an armed waypoint is decoded as the waypoint; the script clears its
+    scratch at `alldone` and publishes an end-of-data flag the host decodes on;
+    proof: a cloud pause within the last bytes of a job, a `cloud.pause-resume`
+    case), **K-8** (the FIRE restore at the resume waypoint writes the whole
+    GPIO2 data register from gpiolib's shadow while the script may be
+    mid-byte; move the restore into the script on a scratch flag; a scope on
+    DIR at the resume point first, since the failure is plausible, not seen),
+    **P-13** (the SDMA glue patch hands out a channel without claiming it from
+    dmaengine and re-initializes a tasklet that may be scheduled; claim the
+    channel in `sdma_get_channel()`, release it in the put, `tasklet_kill()`
+    before clearing; latent today, no other client reaches the channel), and
+    **P-14** (the SPI patch takes its inter-word wait states from
+    `spi_transfer.delay`, which the core also applies after the transfer;
+    read `word_delay` and have `pic.c` set it; batch with item 10, since the
+    PIC read pattern measured on 2026-09-02 may turn on these wait states).
+    The patch-file edits are regenerated with `devtool modify linux-fslc` on
+    the pinned tree. Two are host-only: **B-16** (the forgetest recipe fetches
+    the package directory whole, so a host `__pycache__` moves the task hash
+    without a source change; drop it in `do_unpack` or name the files), which
+    goes in with the pin bumps because a recipe change moves the layer hash
+    anyway; and **FA-20** (the panel's devserver mock diverged from the daemon:
+    mode values, `/cool/status`, the gate table, the settings keys, the diag
+    routes; regenerate its tables from `gates.c` and the settings table), dev
+    tooling with no image consequence.
