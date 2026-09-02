@@ -176,12 +176,38 @@ def module_parts(path):
     return parts
 
 
+def sibling_imports(path, seen=None):
+    """The suite modules a module imports with `from .x import ...`, as
+    paths, transitively, in a stable order. A helper a test calls from
+    a sibling module is part of the judge, so its text belongs in the
+    test's fingerprint."""
+    if seen is None:
+        seen = []
+    with open(path, "rb") as f:
+        text = f.read().replace(b"\r\n", b"\n").decode("utf-8")
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return seen
+    here = os.path.dirname(path)
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.level == 1 and node.module:
+            sib = os.path.join(here, node.module.replace(".", os.sep) + ".py")
+            if os.path.isfile(sib) and sib not in seen and sib != path:
+                seen.append(sib)
+                sibling_imports(sib, seen)
+    return seen
+
+
 def implementation_sha(path, test_id):
-    """The implementation hash of one test (see Test.source_sha)."""
+    """The implementation hash of one test (see Test.source_sha): the
+    test's own text, the shared text of its module, and the shared text
+    of every sibling suite module the module imports."""
     shared, own = module_parts(path)
     if test_id not in own:
         return source_file_sha(path)
-    return _manifest.sha256_text("%s:%s" % (shared, own[test_id]))
+    helpers = [module_parts(p)[0] for p in sorted(sibling_imports(path))]
+    return _manifest.sha256_text("%s:%s" % (":".join([shared] + helpers), own[test_id]))
 
 
 def test(id, *, title, subsystem, kind="auto", hardware="api", mode=None, covers=(),

@@ -242,6 +242,28 @@ def two(ctx):
         self.assertNotEqual(a1, a2)
         self.assertNotEqual(b1, b2)
 
+    def test_a_helper_edit_in_an_imported_sibling_moves_the_tests(self):
+        # laser.py imports its judges from motion.py: an edit to such a
+        # helper changes the judge, so it has to move the fingerprints of
+        # the tests that import it, transitively.
+        sib = os.path.join(self.tmp, "judge.py")
+        with open(sib, "w", newline="\n") as f:
+            f.write("def judge(x):\n    return x > 1\n")
+        catalog._PARTS.pop(sib, None)
+        self.write("from .judge import judge\n" + self.MODULE)
+        a1, b1 = self.shas()
+        with open(sib, "w", newline="\n") as f:
+            f.write("def judge(x):\n    return x > 2\n")
+        catalog._PARTS.pop(sib, None)
+        a2, b2 = self.shas()
+        self.assertNotEqual(a1, a2)
+        self.assertNotEqual(b1, b2)
+        # a module that is not imported changes nothing
+        other = os.path.join(self.tmp, "other.py")
+        with open(other, "w", newline="\n") as f:
+            f.write("def o():\n    return 1\n")
+        self.assertEqual((a2, b2), self.shas())
+
     def test_line_endings_do_not_count(self):
         a1, b1 = self.shas()
         catalog._PARTS.pop(self.path, None)
