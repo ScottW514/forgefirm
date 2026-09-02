@@ -69,7 +69,7 @@ IMAGE_ROOTFS_MAXSIZE = "204800"
 # Release images carry the release version; the dev image overrides the
 # string with the build timestamp (the same DATETIME as the artifact
 # name) plus a dev tag.
-FORGEFIRM_RELEASE ?= "0.1.0"
+FORGEFIRM_RELEASE ?= "0.0.1"
 FORGEFIRM_VERSION_STRING ?= "v${FORGEFIRM_RELEASE}"
 
 write_forgefirm_version() {

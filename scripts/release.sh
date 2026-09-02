@@ -123,6 +123,17 @@ BB_REL=$(sed -n 's/^FORGEFIRM_RELEASE ?= "\(.*\)"/\1/p' "$IMAGE_BB")
 [ "$BB_REL" = "$VERSION" ] \
   || die "FORGEFIRM_RELEASE in forgefirm-image.bb is '$BB_REL', not '$VERSION'"
 
+# The beta rule: every release below 0.1.0 is a beta, and 0.1.0 is the
+# first release that is not. While the README carries the beta banner, a
+# version at or above 0.1.0 is a mistake, not a release.
+if grep -q 'ForgeFIRM is in beta' "$REPO/README.md"; then
+  MAJOR=${VERSION%%.*}; REST=${VERSION#*.}; MINOR=${REST%%.*}
+  case "$MAJOR.$MINOR" in
+    0.0) ;;
+    *) die "version $VERSION is not a beta number, and the README says ForgeFIRM is in beta (0.0.x only)" ;;
+  esac
+fi
+
 # The installer must embed the pubkey matching the signing key, or every
 # install will refuse the published archive.
 INST_HEX=$(sed -n "s/^PUBKEY='\(.*\)'$/\1/p" "$INSTALLER" | tr -d '\\x')
