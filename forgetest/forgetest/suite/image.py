@@ -107,6 +107,17 @@ def image_health(ctx):
         ev[opt] = val
         ctx.log("%s=%s", opt, val)
         ctx.check(val in want, "%s=%s, expected one of %s", opt, val, want)
+    # The boot-armed hardware watchdog, as the kernel's core sees it: U-Boot
+    # arms WDOG1 at 60 s and the core keeps it fed (no userspace opens it).
+    # The sysfs view needs CONFIG_WATCHDOG_SYSFS; bootstatus carries the
+    # last reset's cause (32 = the watchdog's timeout).
+    wd = {k: (_read("/sys/class/watchdog/watchdog0/" + k) or "").strip()
+          for k in ("identity", "state", "timeout", "bootstatus")}
+    ev["watchdog"] = wd
+    ctx.log("watchdog0: %s", wd)
+    ctx.check(wd["state"] == "active", "watchdog0 is %r, expected active (armed by the bootloader, "
+              "fed by the kernel core)", wd["state"] or None)
+    ctx.check(wd["timeout"] == "60", "watchdog0 timeout %r, expected 60 s", wd["timeout"] or None)
     rel = _read("/proc/sys/kernel/osrelease", "").strip()
     ev["kernel_release"] = rel
     mods = manifest.platform.get("kernel_modules") or []
