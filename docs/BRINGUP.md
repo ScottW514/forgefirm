@@ -1351,21 +1351,6 @@ feature requests, enhancements) will eventually be tracked as GitHub issues.
     shipped default of 2 is a starting point, not a truth), and the same
     shape fits any by-eye tunable the commissioning flow meets.
 
-**Deliberately not gated:** an armed GRBL job after an underrun cuts at the
-stale origin unless homing is required (GRBL mode permits unhomed cutting; the
-underrun itself alarms and unlinks the anchor). Not in the acceptance catalog
-by design, for the same reason. From the pulse-header envelope, each by
-decision and each declared in the cloud client so every job's log counts it
-as decided rather than missed: the warm-up fan profile (the run profile
-covers the warm-up hold), the supply temperature window (the service sends
-the whole ADC range and the factory binds it to nothing; the supply is
-watched per job instead), the head, lid, interconnect and fused temperature
-ceilings (no sensor at those locations; the chassis is watched per job), the
-head accelerometer thresholds (the crash watch, on local knobs), the lid IR thresholds (the fire
-watch runs on local knobs; the header values stay ignored), the
-HV current caps (the sampled emission witness covers the idle case, and HV
-current is ranged per job), the thermal report upload conditions and the
-pump flag. Beam detect stays with item 6.
 9. **Audit remediation follow-through.** The 2026-09-01 audit's fixes are
     committed locally in every repository and host-tested, none pushed. Owed,
     in order: one pooled bench session on a locally built dev image (kernel
@@ -1438,3 +1423,19 @@ pump flag. Beam detect stays with item 6.
     mode values, `/cool/status`, the gate table, the settings keys, the diag
     routes; regenerate its tables from `gates.c` and the settings table), dev
     tooling with no image consequence.
+
+**Deliberately not gated:** an armed GRBL job after an underrun cuts at the
+stale origin unless homing is required (GRBL mode permits unhomed cutting; the
+underrun itself alarms and unlinks the anchor). Not in the acceptance catalog
+by design, for the same reason. From the pulse-header envelope, each by
+decision and each declared in the cloud client so every job's log counts it
+as decided rather than missed: the warm-up fan profile (the run profile
+covers the warm-up hold), the supply temperature window (the service sends
+the whole ADC range and the factory binds it to nothing; the supply is
+watched per job instead), the head, lid, interconnect and fused temperature
+ceilings (no sensor at those locations; the chassis is watched per job), the
+head accelerometer thresholds (the crash watch, on local knobs), the lid IR thresholds (the fire
+watch runs on local knobs; the header values stay ignored), the
+HV current caps (the sampled emission witness covers the idle case, and HV
+current is ranged per job), the thermal report upload conditions and the
+pump flag. Beam detect stays with item 6.
