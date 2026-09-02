@@ -893,7 +893,11 @@ class CloudSuiteTests(unittest.TestCase):
         self.in_offline()
         lines = fixture("buttonwait")
         pre, rest = cut(lines, "waiting for button")
-        pre, rest = pre + [rest[0]], rest[1:]
+        # The bench excerpt is a print that fit the ring; the test now wants
+        # one that did not, so the feeder is alive through the wait.
+        long_job = ("2026-08-17T09:44:14.100000+00:00 gfcloud[1927] INFO machine:_feed_and_run "
+                    "job is longer than the ring: 33554432 bytes enqueued, feeding the rest as it plays")
+        pre, rest = pre + [long_job, rest[0]], rest[1:]
         self.offline_print_hooks(pre)
         hooks = {"do NOT press it": lambda: (self.lid(False), self.append(rest, delay=0.05)),
                  "Close the lid.": lambda: self.lid(True)}
@@ -903,6 +907,8 @@ class CloudSuiteTests(unittest.TestCase):
         self.assertEqual(ev["runs_started_after_wait"], 0)
         self.assertIn(":cancelled", ev["log"]["print finished"])
         self.assertTrue(ev["latch_locked"])
+        self.assertEqual(ev["program_total_after"], {"first": 0, "later": 0})
+        self.assertEqual(ev["streaming_after"], 0)
         self.assertEqual(self.fc.posts, [])
         self.assertTrue(any("PASS: lid open at the button prompt" in l for l in run.lines))
 

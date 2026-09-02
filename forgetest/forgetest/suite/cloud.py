@@ -1209,18 +1209,23 @@ def lid_interlock_abort_body(ctx, ev, off, job, offset):
 
 
 @test("cloud.lid-during-button-wait", title="Lid open at the cloud button prompt cancels the print",
-      subsystem="cloud", kind="operator", est_min=6,
+      subsystem="cloud", kind="operator", est_min=8,
       covers=_MACHINE_RUN, requires=[], actions=["lid"],
       steps=[OFFLINE_STEP, LID_STEP,
-             "When the button lights white, do NOT press it - open the lid, and close it when told. "
-             "Nothing moves and nothing fires."],
+             "The job is longer than the ring holds, so the ring is filled before the button "
+             "lights; that takes a minute. When the button lights white, do NOT press it - open "
+             "the lid, and close it when told. Nothing moves and nothing fires."],
       description="A cloud print waiting for the button is cancelled by the lid: the wait ends "
                   "with the lid named as the reason, the laser latch relocks, the armed window "
-                  "closes, no run starts, and the job ends ':cancelled'.")
+                  "closes, no run starts, and the job ends ':cancelled'. The job is longer than "
+                  "the ring, so its feeder is alive through the wait with the rest of the print "
+                  "in hand: the cancel has to stop that feeder before the park clears the ring, "
+                  "and the ring has to stay empty afterward. A feeder left alive would refill "
+                  "it and the park, which ignores the lid, would play the print's path.")
 def lid_during_button_wait(ctx):
     ev = ctx.evidence
     offset = enter_offline(ctx)
-    job = offline_job(ctx, "wait.puls", seconds=20)
+    job = offline_job(ctx, "wait.puls", seconds=3500)
     off = Offline().__enter__()
     try:
         lid_during_button_wait_body(ctx, ev, off, job, offset)
@@ -1231,7 +1236,9 @@ def lid_during_button_wait(ctx):
 
 def lid_during_button_wait_body(ctx, ev, off, job, offset):
     off.print_ready(9003, job)
-    got = wait_log(ctx, offset, ["waiting for button"], 120)
+    got = wait_log(ctx, offset, ["job is longer than the ring", "waiting for button"], 180)
+    ctx.check(got["job is longer than the ring"],
+              "the job fit the ring: this test needs a job the ring cannot hold")
     ctx.check(got["waiting for button"], "the print never reached the button wait")
     ctx.act("lid", "open", text="The button is lit: do NOT press it.", timeout=120)
     relock = "button wait lid opened - relocking the laser"
@@ -1261,11 +1268,25 @@ def lid_during_button_wait_body(ctx, ev, off, job, offset):
     ctx.check(ev["latch_locked"], "kernel latch not locked after the cancel")
     ev["button_dark"] = hw.button_lit()
     ctx.check(ev["button_dark"] is False, "the button is still lit after the cancel (%s)", ev["button_dark"])
+    # The park cleared the ring and nothing refilled it: the feeder is gone,
+    # the device is out of live-feed mode, and the program total stands at
+    # zero and stays there. A feeder left alive shows here as a total that
+    # comes back within its retry period.
+    total = read_program_total()
+    ctx.sleep(2)
+    later = read_program_total()
+    streaming = hw.sysfs_int("cnc/streaming", 0)
+    ev["program_total_after"] = {"first": total, "later": later}
+    ev["streaming_after"] = streaming
+    ctx.check(total == 0 and later == 0,
+              "the ring is not empty after the cancel (program total %s, then %s): the feeder "
+              "outlived the job", total, later)
+    ctx.check(streaming == 0, "cnc/streaming is %s after the cancel", streaming)
     ctx.act("lid", "close")
     settle_cloud(ctx, offset)
     ev["events"] = offline_events(off)
     ctx.log("PASS: lid open at the button prompt cancelled the print; latch locked, armed=false, "
-            "button dark")
+            "button dark, ring empty with the feed stopped")
 
 
 @test("cloud.pause-resume", title="Button pauses and resumes a cloud print (factory backtrack + lead)",
