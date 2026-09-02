@@ -58,6 +58,12 @@ over TCP, then checks the dumps against the kernel feeder contract:
      the M3 that opens the next job is the only thing that can light its
      first move - set_state must push the whole state, fire included,
      never the duty alone
+ 22. a jog never fires, whatever the modal spindle says: M3 S1000 with
+     the window open and then jogs from Idle (a sender's Fire button plus
+     its Move panel) ship every jog tick dark, and the cut after them lit
+ 23. the corner rolloff shapes against the executing block's own S: two
+     cuts at S300 and S1000 queued together render the S300 cruise at the
+     S300 density however far ahead the parser has read
  18. the floor is derived, never typed: $35 is loaded from the floor
      key at every precompute, so a $35 typed by the sender is
      overwritten - the ladder renders through the key's floor, and the
@@ -995,6 +1001,69 @@ def main():
         print("PASS [hold-%s]: lit into the hold (%d fire ticks), dark while held "
               "(%d ticks), lit from the first step out (%d fire ticks)"
               % (mode, decel, dlen, accel))
+
+    # --- rule 22: a jog never fires, whatever the modal spindle says ----
+    # The arm flow runs on the M3 (window open), the modal spindle is on
+    # at S1000, and the jogs come from Idle: exactly what a sender's Fire
+    # button plus its Move panel sends. Every jog tick ships dark, and the
+    # cut after them is lit, from a stream state the jogs did not disturb.
+    JOB_JOG = ["G91", "G21", "M3 S1000", WAIT_IDLE,
+               "$J=G91X10F1200", WAIT_IDLE, "$J=G91X-10F1200", WAIT_IDLE,
+               "G1 X10 F1200", WAIT_IDLE, "M5"]
+    data = run_session("jog-dark", JOB_JOG)
+    ticks = tick_bytes(data)
+    # Runs sit back to back in the dump, so the three moves are told
+    # apart by their steps: each is 10 mm, and the cut is the last third.
+    total = sum(1 for t in ticks if t & 0x01)
+    if abs(total - 3 * 533) > 12:
+        fail("[jog-dark] %d X steps, expected about %d (three 10 mm moves)" % (total, 3 * 533))
+    cut_from = 2 * (total // 3) - 2              # a fire tick may lead the cut's first step
+    jog_fire = cut_fire = steps = 0
+    for t in ticks:
+        if t & 0x01:
+            steps += 1
+        if t & 0x10:
+            if steps < cut_from:
+                jog_fire += 1
+            else:
+                cut_fire += 1
+    if jog_fire:
+        fail("[jog-dark] %d FIRE ticks inside the jogs: a jog fired at the modal S" % jog_fire)
+    if cut_fire < 100:
+        fail("[jog-dark] the cut after the jogs ran dark (%d fire ticks)" % cut_fire)
+    print("PASS [jog-dark]: two jogs under M3 S1000 shipped dark (%d fire ticks), the "
+          "cut after them lit (%d)" % (jog_fire, cut_fire))
+
+    # --- rule 23: the rolloff shapes against the block's own S ----------
+    # Under the default gamma 2, a second cut at S1000 queued behind the
+    # S300 cut must not change what the S300 cruise renders: the ratio the
+    # rolloff bends is the segment's own velocity ratio, never the newest
+    # S over the executing one.
+    ref = run_session("rolloff-ref", ["G91", "G21", "M4 S300", "G1 X30 F6000", "M5"],
+                      conf=DENSITY_CONF_CURVED)
+    two = run_session("rolloff-two", ["G91", "G21", "M4 S300", "G1 X30 F6000",
+                                      "G1 X30 F6000 S1000", "M5"],
+                      conf=DENSITY_CONF_CURVED)
+    rt = tick_bytes(ref)
+    rs = fire_spans(rt)
+    if len(rs) != 1:
+        fail("[rolloff-two] reference: %d fire spans, expected 1" % len(rs))
+    a, b = rs[0]
+    mid = rt[(a + b) // 2 - 1000:(a + b) // 2 + 1000]
+    dens_ref = sum(1 for t in mid if t & 0x10) / float(len(mid))
+    tt = tick_bytes(two)
+    ts = fire_spans(tt)
+    if len(ts) != 1:
+        fail("[rolloff-two] %d fire spans, expected 1 (the two cuts join)" % len(ts))
+    a, b = ts[0]
+    q = a + (b - a) // 4                                  # the first cut's cruise
+    first = tt[q - 1000:q + 1000]
+    dens_first = sum(1 for t in first if t & 0x10) / float(len(first))
+    if abs(dens_first - dens_ref) > 0.02:
+        fail("[rolloff-two] the S300 cruise renders %.3f with S1000 queued behind it, "
+             "%.3f alone: the rolloff shaped it against the parser's S" % (dens_first, dens_ref))
+    print("PASS [rolloff-two]: the S300 cruise renders %.3f with S1000 queued behind it, "
+          "%.3f alone" % (dens_first, dens_ref))
 
     print("PASS: all stream emission rules hold")
 
