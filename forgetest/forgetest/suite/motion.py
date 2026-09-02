@@ -501,7 +501,8 @@ def _return_x(ctx, delta_mm):
       description="SIGKILL of the controller mid-move: the supervisor reaps it, safes (cnc/stop, "
                   "latch relocked - it never unlocked), and respawns within seconds. SIGSTOP (a "
                   "hang) mid-move: the ring drains into a kernel underrun (fast halt, latch "
-                  "locked); the hung process is killed and the supervisor respawns. forgectrl "
+                  "locked); the process resumed from the hang recovers on $X and moves again "
+                  "without a restart. forgectrl "
                   "restart mid-move: the busy controller finishes the move unmanaged and the new "
                   "daemon retakes supervision at idle. After each drill the head is jogged back "
                   "by the kernel-measured distance.")
@@ -584,12 +585,27 @@ def deadman(ctx):
                          "underruns": hw.sysfs_int("cnc/underruns", 0)}
         ctx.log("after SIGSTOP: kernel %s in %s s, latch locked %s, underruns %s -> %s",
                 kstate, halt_s, latch_locked(), underruns0, ev["sigstop"]["underruns"])
-        _os.kill(pid1, _signal.SIGKILL)       # the hung controller cannot recover itself
+        # The controller comes back from the hang to find its stream
+        # faulted and the core alarmed. An unlock ($X) is the operator's
+        # acknowledgment: it must restore a controller that moves again,
+        # without a restart (the position is not trusted until a re-home,
+        # so the move is a jog).
+        _os.kill(pid1, _signal.SIGCONT)
+        ctx.sleep(1.0)
+        st = g.status_report()["state"]
+        ev["sigstop"]["state_after_cont"] = st
+        ctx.log("controller resumed: state %s", st)
+        g.command("$X")
+        g.command("$J=G91X-5F1200")
+        peak, states, st = wait_idle(ctx, g, 15)
+        ev["sigstop"]["recovery_states"] = states
+        ctx.check("TIMEOUT" not in states and not st.startswith("Alarm"),
+                  "the controller did not move again after $X (states %s)", states)
     ctx.check(kstate == "underrun", "the ring did not drain into a kernel underrun (state %s)", kstate)
     ctx.check(latch_locked(), "latch unlocked after the underrun")
-    m2 = wait_running(30, not_pid=pid1)
-    ev["sigstop"]["respawn"] = m2
-    ctx.check(m2 and m2.get("pid") != pid1, "supervisor did not respawn after the hang")
+    m2 = wait_running(10)
+    ev["sigstop"]["after"] = m2
+    ctx.check(m2 and m2.get("pid") == pid1, "the recovered controller was replaced (%s)", m2)
     ctx.sleep(3)
     x1 = _kernel_x_mm(ctx)
     _return_x(ctx, (x1 - x0) if (x0 is not None and x1 is not None) else None)

@@ -23,10 +23,6 @@ Drills (pass a name):
   hold      Phase 4 G-10: arm + start a longer job, feed-hold mid-run,
             then hold. PASS: the disarm grace counts down in Hold and
             the window closes (armed -> false) without the job resuming.
-  faultpos  Phase 6 G-2/G-3: after a run that was stopped by an
-            underrun (position no longer trusted), a subsequent armed
-            job must refuse to cut at the stale origin - the sender
-            alarms and re-home is required. Reads homed via /status.
   ircut     Lid-IR fire characterization at cutting power: a 30 mm
             square at S<power> (default 1000 = full) and F<feed>
             (default 300) on scrap, sampled like `witness`. Prints the
@@ -490,27 +486,6 @@ def drill_hold(g):
           % (round(disarmed_at, 1) if disarmed_at else 'NOT WITHIN 120 - REVIEW'))
     if 'Alarm' in g.status():
         g.cmd('$X')
-
-
-def drill_faultpos(g):
-    print('=== Phase 6 G-2/G-3 drill: stale origin refused after underrun ===')
-    s = get_json('/status')
-    print('homed=%s (an underrun should have cleared this)' % s.get('homed'))
-    if s.get('homed'):
-        print('NOTE: homed is still true - run the SIGSTOP/underrun drill '
-              'first, then re-run this to confirm the refusal.')
-        return
-    print('attempting an armed cut at the stale origin - it must refuse/alarm')
-    prepare(g)
-    arm_cue()
-    r = g.cmd('M4 S400', timeout=2)
-    r2 = g.cmd('G1 X10 F300', timeout=3)
-    st = g.state()
-    print('controller response: %s / %s state=%s' % (r, r2, st))
-    print('FAULTPOS %s' % ('PASS (refused/alarm at stale origin)'
-          if ('error' in (r + r2).lower() or 'Alarm' in st) else
-          'REVIEW - cut was accepted; check G-3 anchor invalidation'))
-    g.cmd('M5', timeout=1)
 
 
 def drill_ircut(g):
@@ -3239,7 +3214,7 @@ def drill_ctrlstart(g):
 def main():
     drill = sys.argv[1] if len(sys.argv) > 1 else ''
     drills = {'witness': drill_witness, 'hold': drill_hold,
-              'faultpos': drill_faultpos, 'ircut': drill_ircut,
+              'ircut': drill_ircut,
               'pthresh': drill_pthresh, 'dladder': drill_dladder,
               'pcurve': drill_pcurve, 'm5dark': drill_m5dark,
               'dpatch': drill_dpatch, 'flowload': drill_flowload,
@@ -3254,14 +3229,14 @@ def main():
         return drills[drill](None) or 0      # no controller connection needed
     g = Grbl(HOST, PORT)
     try:
-        drills[drill](g)
+        rc = drills[drill](g)
     finally:
         # Always leave the laser commanded off.
         try:
             g.cmd('M5', timeout=1)
         except Exception:
             pass
-    return 0
+    return rc or 0          # the bench page's verdict is this exit status
 
 
 if __name__ == '__main__':

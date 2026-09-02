@@ -54,6 +54,17 @@ def rd(attr):
         return f.read().strip()
 
 
+# The safety chain asserts HV_ENABLE only while a run feeds the charge-pump
+# watchdog: a dead watchdog and an idle pulse engine mean HV off. That is
+# the gate for a latch unlock; laser_pgood is the supply's power-good,
+# high on every healthy machine, and says nothing about HV.
+def hv_off_reason():
+    alive = rd('cnc/charge_pump_alive')
+    state = rd('cnc/state')
+    if alive != '0' or state != 'idle':
+        return 'charge_pump_alive=%s state=%s' % (alive, state)
+    return None
+
 def rd_pos():
     with open('/sys/glowforge/cnc/position', 'rb') as f:
         raw = f.read(32)
@@ -209,9 +220,9 @@ def drill_k2():
 
 
 def drill_k3():
-    pgood = rd('cnc/laser_pgood')
-    if pgood != '0':
-        print('ABORT: laser_pgood=%s (HV supply reports good) - refusing latch unlock' % pgood)
+    why = hv_off_reason()
+    if why is not None:
+        print('ABORT: the safety chain is not holding HV off (%s) - refusing latch unlock' % why)
         return 1
     stream = POWER0 + FIRE * (3 * TICK_HZ) + PAD * (TICK_HZ // 2)
     print('K3: %d bytes = %.1f s of FIRE bits; ramp_rate 10000 Hz/s '

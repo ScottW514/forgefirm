@@ -12,9 +12,9 @@ against what the chain and the supply were doing: idle, a dry run
 hv_current), a pause and a resume, a lid open. hv_current comes from the
 PIC at a lower rate and rides along as a range.
 
-PGOOD is reported as the RAW PIN LEVEL (the kernel's laser_pgood attribute
-is the logical, inverted value: 1 = pin low). Everything else is the
-kernel's logical value.
+PGOOD is the raw pin level as the kernel publishes it (laser_pgood is the
+supply's power-good: 1 = the supply reports its outputs within spec).
+Everything else is the kernel's logical value.
 
 The loop must not hog the CPU: single core, the protocol thread is
 SCHED_OTHER, so the sampler sleeps between passes and reports its worst gap.
@@ -33,7 +33,7 @@ import time
 
 CNC = '/sys/glowforge/cnc/'
 ATTRS = [                                   # name, attribute, invert-to-raw
-    ('PGOOD',     CNC + 'laser_pgood',       True),
+    ('PGOOD',     CNC + 'laser_pgood',       False),
     ('LASER_ON',  CNC + 'laser_on',          False),
     ('FIRE',      CNC + 'laser_enable',      False),
     ('CP_ALIVE',  CNC + 'charge_pump_alive', False),

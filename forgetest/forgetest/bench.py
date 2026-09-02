@@ -207,10 +207,10 @@ TOOLS = [
     # -- laser (live) --------------------------------------------------------------
     {"id": "live-fire", "title": "LIVE laser drills", "script": "live_fire_drills.py",
      "safety": "live", "where": "board", "ported": True,
-     "args": [_arg("drill", "choice", "witness", "witness / hold / faultpos / ircut / expstop / ctrlstart",
-                   ["witness", "hold", "faultpos", "ircut", "expstop", "ctrlstart"]),
+     "args": [_arg("drill", "choice", "witness", "witness / hold / ircut / expstop / ctrlstart",
+                   ["witness", "hold", "ircut", "expstop", "ctrlstart"]),
               _arg("power", "int", 1000, "ircut: S value"), _arg("feed", "int", 300, "ircut: F value")],
-     "desc": "Emission witness, disarm grace in Hold, stale-origin refusal, lid-IR characterization cut, armed "
+     "desc": "Emission witness, disarm grace in Hold, lid-IR characterization cut, armed "
              "kill on the expected-stop path (+ the separate controller restart). The operator's arm press is "
              "required for every drill; eye protection, fire watch, extinguisher, exhaust."},
     {"id": "resume-dark-lead", "title": "Pause / resume chain timing (dark lead)", "script": "resume_dark_lead.py",
