@@ -35,7 +35,7 @@ reported messages:
      sender connection and the armed window, and carry a fresh
      ts_mono
  10. the job start survives a pause: a job paused and resumed by the
-     button, then cancelled by the lid, returns to where the job began,
+     button, then canceled by the lid, returns to where the job began,
      not to where it was paused (the core restarts a held cycle through
      Idle); a job abandoned in a hold and reset ends there, so the next
      job's start is captured afresh where it begins
@@ -67,8 +67,8 @@ DISARMED = "laser disarmed - latch locked"
 BLOCKED = "laser fire blocked"
 PROMPT = "press the button to start the laser job"
 RESUME_PROMPT = "press the button to resume the laser job"
-LID_CANCEL = "lid opened during arm - job cancelled"
-LOOP_CANCEL = "interlock open during arm - job cancelled"
+LID_CANCEL = "lid opened during arm - job canceled"
+LOOP_CANCEL = "interlock open during arm - job canceled"
 
 # EV_SW words for the file-backed switch source: bit 2 button, bit 3 doors
 # (set = closed), bit 5 interlock loop (set = OPEN).
@@ -727,7 +727,7 @@ def test_lid_open_in_wait():
         if ARMED in "".join(s.log):
             fail("[loop-in-wait] armed despite the open interlock loop")
         print("PASS [lid-in-wait]: lid or interlock open during the arm wait "
-              "cancelled the job and never armed")
+              "canceled the job and never armed")
     finally:
         s.close()
 
@@ -784,7 +784,7 @@ def test_lid_cancels_and_returns():
         time.sleep(0.5)
         x_mid = s.mpos_x()
         s.set_switches(SW_LID_OPEN)
-        if not wait_for(s.log, "lid opened - job cancelled", 5, s.sock):
+        if not wait_for(s.log, "lid opened - job canceled", 5, s.sock):
             fail("[lid-cancel] the lid open did not cancel the job")
         if not wait_for(s.log, DISARMED, 5, s.sock):
             fail("[lid-cancel] the cancel did not close the armed window")
@@ -800,7 +800,7 @@ def test_lid_cancels_and_returns():
         x_end = s.mpos_x()
         if x_end is None or abs(x_end) > 0.05:
             fail("[lid-cancel] head not back at the job start: MPos X=%s (was %s mid-job)" % (x_end, x_mid))
-        print("PASS [lid-cancel]: lid open mid-job -> cancelled, disarmed, reset banner, "
+        print("PASS [lid-cancel]: lid open mid-job -> canceled, disarmed, reset banner, "
               "returned to X=%.3f (mid-job X=%.3f), Idle, no alarm" % (x_end, x_mid))
         s.close()
         # Interlock variant.
@@ -808,11 +808,11 @@ def test_lid_cancels_and_returns():
         start_armed_move(s, "loop-cancel", gcode="G1 X20 F600")
         time.sleep(0.5)
         s.set_switches(SW_LOOP_OPEN)
-        if not wait_for(s.log, "interlock open - job cancelled", 5, s.sock):
+        if not wait_for(s.log, "interlock open - job canceled", 5, s.sock):
             fail("[loop-cancel] the interlock open did not cancel the job")
         if not wait_for(s.log, "returned to the job start", 15, s.sock):
             fail("[loop-cancel] no return to the job start after the interlock cancel")
-        print("PASS [loop-cancel]: interlock open mid-job -> cancelled and returned")
+        print("PASS [loop-cancel]: interlock open mid-job -> canceled and returned")
     finally:
         s.close()
 
@@ -839,7 +839,7 @@ def test_pause_then_lid_cancel_returns_to_the_job_start():
             fail("[pause-lid-cancel] the second press did not resume (state %s)" % s.state())
         time.sleep(0.4)
         s.set_switches(SW_LID_OPEN)
-        if not wait_for(s.log, "lid opened - job cancelled", 5, s.sock):
+        if not wait_for(s.log, "lid opened - job canceled", 5, s.sock):
             fail("[pause-lid-cancel] the lid open did not cancel the job")
         if not wait_for(s.log, "returned to the job start", 15, s.sock):
             fail("[pause-lid-cancel] the head did not report returning to the job start")
@@ -899,8 +899,8 @@ def test_lid_policy_hold():
         if not s.wait_state("Door", 3):
             fail("[lid-hold] the lid open did not park the job in Door (state %s)" % s.state())
         read_avail(s.sock, s.log, 1.0)
-        if "job cancelled" in "".join(s.log):
-            fail("[lid-hold] the hold policy cancelled the job")
+        if "job canceled" in "".join(s.log):
+            fail("[lid-hold] the hold policy canceled the job")
         s.set_switches(SW_CLOSED)
         time.sleep(0.5)
         s.sock.sendall(b"~")

@@ -682,7 +682,7 @@ def armed_kill(ctx):
              "when told."],
       description="Start a laser job so the controller unlocks the latch and lights the button, "
                   "then open the lid while it waits. The wait must abort with the lid named as the "
-                  "reason, cancelled with a soft reset (no alarm - nothing to unlock), the armed "
+                  "reason, canceled with a soft reset (no alarm - nothing to unlock), the armed "
                   "window closed (armed -> false), the kernel latch back to locked, and no emission; "
                   "the controller ends Idle. No press is given, so nothing can fire.")
 def arm_wait_lid(ctx):
@@ -709,12 +709,12 @@ def arm_wait_lid(ctx):
         while time.time() - t1 < 15:
             ctx.checkpoint()
             text += g.drain()
-            if "job cancelled" in text and "help]" in text:
+            if "job canceled" in text and "help]" in text:
                 break
             time.sleep(0.1)
         ev["messages"] = [ln for ln in text.splitlines() if ln.startswith("[MSG:") or ln.startswith("ALARM")]
         ctx.log("controller: %s", ev["messages"])
-        ctx.check("lid opened during arm - job cancelled" in text,
+        ctx.check("lid opened during arm - job canceled" in text,
                   "the lid open was not reported as cancelling the arm")
         ctx.check("help]" in text, "no reset banner after the lid-open cancel (it must be a clean cancel)")
         ctx.check("ALARM" not in text, "an alarm was raised on the lid-open cancel")
@@ -740,7 +740,7 @@ def arm_wait_lid(ctx):
         st = g.status_report()["state"]
         ev["state_after"] = st
         ctx.check(st.startswith("Idle"), "controller is %s after the cancel, expected Idle (no unlock needed)", st)
-    ctx.log("PASS: lid open during the arm wait cancelled the job (clean reset, no alarm), armed=false, latch locked")
+    ctx.log("PASS: lid open during the arm wait canceled the job (clean reset, no alarm), armed=false, latch locked")
 
 
 @test("laser.pause-resume-lid-cancel", title="One live cut: the button pauses and resumes it, the lid "
@@ -761,7 +761,7 @@ def arm_wait_lid(ctx):
                   "with the armed window open - a pause is not a cancel. Press again: the cut "
                   "resumes from where it stopped, lit from the first step (a pause is a sharp corner "
                   "in time; the cut is M3 so the corner dose is there to look at). Lid: emission "
-                  "stops in hardware, the job is cancelled "
+                  "stops in hardware, the job is canceled "
                   "with the reason reported, the controller resets with the position kept and no "
                   "alarm, the armed window closes and the kernel latch relocks, the hardware button "
                   "latch reads SET, and the head returns to the job start with the lid still open.")
@@ -869,7 +869,7 @@ def pause_resume_lid_cancel(ctx):
         ctx.check(zero_at is not None and zero_at < 3.0,
                   "emission did not stop after the lid opened (first 0 at %s)", zero_at)
         ctx.check(tail_zero, "emission returned after the lid opened")
-        ctx.check("lid opened - job cancelled" in text, "the lid open was not reported as cancelling the job")
+        ctx.check("lid opened - job canceled" in text, "the lid open was not reported as cancelling the job")
         ctx.check("help]" in text, "no reset banner after the cancel")
         ctx.check("ALARM" not in text, "an alarm was raised on the cancel (position should be kept)")
         t3 = time.time()
@@ -904,5 +904,5 @@ def pause_resume_lid_cancel(ctx):
         ctx.act("lid", "close")
         ctx.sleep(1)
     ctx.log("PASS: button paused the burn (emission 0, armed kept, latch unlocked) and resumed it; "
-            "the lid then cancelled it - emission 0 at +%s s, reset without alarm, returned (drift "
+            "the lid then canceled it - emission 0 at +%s s, reset without alarm, returned (drift "
             "%.3f mm), button latch SET", zero_at, drift)

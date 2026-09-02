@@ -1272,12 +1272,12 @@ def drill_pcurve(g):
                 aborted = 'rung %d did not finish (state=%s)' % (idx + 1, st)
                 break
             if t_run1 - t_run0 < line_s - 1.5:
-                # A line that ended early was cancelled by the operator or
+                # A line that ended early was canceled by the operator or
                 # the controller, and a cancel may have moved the head
                 # (the controller returns to machine zero). From here every
                 # relative move is aimed from a position this drill no
                 # longer knows, so send nothing more.
-                aborted = ('rung %d ran %.1f s of %.1f: cancelled; no further '
+                aborted = ('rung %d ran %.1f s of %.1f: canceled; no further '
                            'moves sent' % (idx + 1, t_run1 - t_run0, line_s))
                 break
             rungs.append({'rung': idx + 1, 'repeat': repeat, 'pct': pct,
@@ -1486,9 +1486,9 @@ def drill_dpatch(g):
                            % (i + 1, st, cs.get('verdict'), cs.get('reason')))
                 break
             if t_run1 - t_run0 < 0.5 * est_s:
-                # Cut short: cancelled, and a cancel may have moved the
+                # Cut short: canceled, and a cancel may have moved the
                 # head, so every relative move from here is aimed blind.
-                aborted = ('patch %d ran %.1f s of ~%.0f: cancelled; no further '
+                aborted = ('patch %d ran %.1f s of ~%.0f: canceled; no further '
                            'moves sent' % (i + 1, t_run1 - t_run0, est_s))
                 break
             p.update({'t_m3': t_m3, 't_run0': t_run0, 't_run1': t_run1})

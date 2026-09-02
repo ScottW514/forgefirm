@@ -736,8 +736,8 @@ def expect_cancel_and_return(ctx, g, ev, start, k0, why, tag):
             if ln.startswith("[MSG:") or "help]" in ln or ln.startswith("ALARM")]
     ev[tag + "_messages"] = msgs
     ctx.log("[%s] controller: %s", tag, msgs)
-    cancel_msg = "%s - job cancelled" % why
-    ctx.check(cancel_msg in text, "[%s] the job was not cancelled with %r as the reason", tag, why)
+    cancel_msg = "%s - job canceled" % why
+    ctx.check(cancel_msg in text, "[%s] the job was not canceled with %r as the reason", tag, why)
     ctx.check("help]" in text, "[%s] no reset banner after the cancel (the sender must see the job end)", tag)
     ctx.check("ALARM" not in text, "[%s] an alarm was raised on the cancel (position should be kept)", tag)
     t0 = time.time()
@@ -906,7 +906,7 @@ def lid_cancel_home(ctx):
                 "back.", timeout=60)
         hold_drift = expect_cancel_and_return(ctx, g, ev, start2, k1, "lid opened", "hold")
         ctx.check(not g.status_report()["state"].startswith("Hold"),
-                  "the controller is still holding after the lid cancelled the paused job")
+                  "the controller is still holding after the lid canceled the paused job")
         ctx.act("lid", "close")
         ctx.sleep(1)
         r = g.command("$J=G91X5F1200")
@@ -916,7 +916,7 @@ def lid_cancel_home(ctx):
         wait_idle(ctx, g, 15)
         g.command("G90")
     machine_idle(ctx)
-    ctx.log("PASS: lid open cancelled the job from Run (drift %.3f mm) and from the hold (drift %.3f mm), "
+    ctx.log("PASS: lid open canceled the job from Run (drift %.3f mm) and from the hold (drift %.3f mm), "
             "reset without alarm, head returned to the start both times", drift, hold_drift)
 
 
@@ -980,7 +980,7 @@ def interlock_cancel_home(ctx):
         wait_idle(ctx, g, 15)
         g.command("G90")
     machine_idle(ctx)
-    ctx.log("PASS: interlock open cancelled the job with its own reason and the head returned to the "
+    ctx.log("PASS: interlock open canceled the job with its own reason and the head returned to the "
             "start (drift %.3f mm) with the loop still open", drift)
 
 
@@ -1020,7 +1020,7 @@ def lid_policy_hold(ctx):
             ev["door_state"] = st["state"] if st else g.status_report()["state"]
             ctx.check(st is not None, "the lid did not park the job in Door (state %s)", ev["door_state"])
             ev["messages"] = [ln for ln in text.splitlines() if ln.startswith("[MSG:")]
-            ctx.check("job cancelled" not in text, "the job was cancelled under lid_policy=hold: %s", ev["messages"])
+            ctx.check("job canceled" not in text, "the job was canceled under lid_policy=hold: %s", ev["messages"])
             ctx.check("returned to the job start" not in text,
                       "the head returned to the job start under lid_policy=hold")
             held = g.status_report()["MPos"]
