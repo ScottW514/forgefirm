@@ -1334,3 +1334,19 @@ watch runs on local knobs; the header values stay ignored), the
 HV current caps (the sampled emission witness covers the idle case, and HV
 current is ranged per job), the thermal report upload conditions and the
 pump flag. Beam detect stays with item 6.
+9. **Audit remediation follow-through.** The 2026-09-01 audit's fixes are
+    committed locally in every repository and host-tested, none pushed. Owed,
+    in order: one pooled bench session on a locally built dev image (kernel
+    module, forgectrl, grblHAL, gfhardware, gfutilities all moved, so the
+    campaign is a full one; the drills that prove the safety fixes directly are
+    `kernel.deadman-close` (new), `cloud.lid-during-button-wait` (now a job
+    longer than the ring), `cloud.verdict-hold` (new, about twelve minutes with
+    the loop heater), `motion.deadman` (the hang case now recovers on `$X`),
+    and the `cooling.*` set); then the push in CI order and the pin bumps.
+    Decisions taken in the remediation that the operator confirms or reverses:
+    the release image has no shell login (the install page now says so); the
+    cloud client holds and resumes on the cooling verdict with a 30-minute
+    bound (`cloud_hold_max_s`); `FORGEFIRM_RELEASE` is 0.0.1, so the bench slot
+    at v0.1.0 will meet the installer's downgrade prompt; the `faultpos`
+    live-fire drill is gone; a coolant sensor unreadable for two ticks is the
+    SENSOR verdict.
