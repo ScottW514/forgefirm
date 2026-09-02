@@ -50,24 +50,45 @@ stop_gf_services () {
 # archive_dev <src-device> <out.img.gz>: dd|gzip with a live progress
 # line (compressed MB so far - old busybox dd has no status=progress).
 # dd's exit status is captured via a file so a read failure is not
-# masked by gzip succeeding on truncated input.
+# masked by gzip succeeding on truncated input. The archive is written
+# as <out>.part and renamed only when both ends succeeded: a run that
+# dies mid-archive (power, a dropped SSH session) leaves nothing under
+# the final name for a rerun to mistake for a complete archive.
 archive_dev () {
   RC_FILE=$(mktemp /tmp/ffinstall.rc.XXXXXX) || return 1
   rm -f "$RC_FILE"
-  ( dd if="$1" bs=1M 2>/dev/null; echo $? > "$RC_FILE" ) | gzip -1 > "$2" &
+  PART="$2.part"
+  rm -f "$PART"
+  ( dd if="$1" bs=1M 2>/dev/null; echo $? > "$RC_FILE" ) | gzip -1 > "$PART" &
   GZPID=$!
   while kill -0 "$GZPID" 2>/dev/null; do
     sleep 3
-    SZ=$(wc -c < "$2" 2>/dev/null)
+    SZ=$(wc -c < "$PART" 2>/dev/null)
     printf '\r    %s MB compressed...' "$((${SZ:-0} / 1048576))"
   done
   wait "$GZPID"
   GZRC=$?
   DDRC=$(cat "$RC_FILE" 2>/dev/null)
   rm -f "$RC_FILE"
-  printf '\r    %s MB compressed.    \n' "$(($(wc -c < "$2") / 1048576))"
-  [ "$GZRC" = "0" ] && [ "$DDRC" = "0" ]
+  printf '\r    %s MB compressed.    \n' "$(($(wc -c < "$PART") / 1048576))"
+  if [ "$GZRC" = "0" ] && [ "$DDRC" = "0" ]; then
+    mv "$PART" "$2"
+  else
+    rm -f "$PART"
+    return 1
+  fi
 }
+
+# archived_ok <out.img.gz>: an existing archive counts only when the
+# manifest records it and the gzip stream is whole. Anything else (a file
+# left by an older installer's interrupted run, a manifest line that
+# never got written) is archived again.
+archived_ok () {
+  [ -s "$1" ] || return 1
+  grep -q " $(basename "$1") md5=" "$ARCHIVE_DIR/manifest" 2>/dev/null || return 1
+  gzip -t "$1" 2>/dev/null
+}
+
 
 # slot_probe <1|2>: sets S_TYPE (factory|forgefirm|empty|unknown),
 # S_VER (the build datetime, used for archive naming), and S_FWVER (the
@@ -245,10 +266,11 @@ for N in 1 2; do
   slot_probe $N
   [ "$S_TYPE" = "factory" ] || continue
   ARC="$ARCHIVE_DIR/factory-rootfs-$S_VER.img.gz"
-  if [ -s "$ARC" ]; then
+  if archived_ok "$ARC"; then
     echo -e "${ASTERISK}Slot $N (factory $S_VER) already archived."
     continue
   fi
+  [ -e "$ARC" ] && echo -e "${ASTERISK}Slot $N: the archive on disk is incomplete; archiving again."
   echo -e "${ASTERISK}Archiving slot $N ($(slot_desc)) - takes a few minutes:"
   archive_dev /dev/mmcblk2p$N "$ARC" \
     || { rm -f "$ARC"; die "archiving slot $N failed"; }
@@ -256,7 +278,7 @@ for N in 1 2; do
 done
 for B in 0 1; do
   ARC="$ARCHIVE_DIR/recovery-boot$B.img.gz"
-  [ -s "$ARC" ] && continue
+  archived_ok "$ARC" && continue
   echo -e "${ASTERISK}Archiving recovery boot$B:"
   archive_dev /dev/mmcblk2boot$B "$ARC" \
     || { rm -f "$ARC"; die "archiving boot$B failed"; }
