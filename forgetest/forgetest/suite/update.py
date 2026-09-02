@@ -5,7 +5,8 @@ import tempfile
 from ..catalog import test
 from .. import hw
 
-_UPDATE_COVERS = [("forgectrl", "src/update.c"), ("forgectrl", "src/update.h")]
+_UPDATE_COVERS = [("forgectrl", "src/update.c"), ("forgectrl", "src/update.h"),
+                  ("ffboot", "**")]
 
 
 @test("update.slots-and-signature", title="Boot slots readable, unsigned/tampered archives refused",

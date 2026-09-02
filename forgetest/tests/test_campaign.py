@@ -65,6 +65,39 @@ class CampaignTests(unittest.TestCase):
         self.assertEqual(st["tests"][self.cool.id]["status"], "fail")
         self.assertEqual(st["tests"][self.cool.id]["reason"], "never-passed")
 
+    def test_a_fail_after_a_pass_blocks_inheritance(self):
+        # The ui test passes in c1, then fails on the same image (an
+        # intermittent gate): the FAIL closes c1. In c2 the older PASS must
+        # not be inherited over the newer FAIL: the test is required again.
+        recs = [rec_campaign("c1", self.man, self.chash, "2026-08-20T10:00:00Z"),
+                rec_result("c1", self.ui, self.man, "PASS", "2026-08-20T10:01:00Z"),
+                rec_result("c1", self.ui, self.man, "FAIL", "2026-08-20T10:02:00Z"),
+                rec_campaign("c2", self.man, self.chash, "2026-08-20T11:00:00Z")]
+        st = self.compute(recs)
+        t = st["tests"][self.ui.id]
+        self.assertEqual(t["status"], "fail")
+        self.assertEqual(t["reason"], "failed-since")
+        self.assertTrue(t["required"])
+        self.assertFalse(t["satisfied"])
+        self.assertFalse(st["authorized"])
+
+    def test_an_abort_after_a_pass_does_not_block_inheritance(self):
+        recs = [rec_campaign("c1", self.man, self.chash, "2026-08-20T10:00:00Z"),
+                rec_result("c1", self.ui, self.man, "PASS", "2026-08-20T10:01:00Z"),
+                rec_result("c1", self.ui, self.man, "ABORTED", "2026-08-20T10:02:00Z"),
+                rec_campaign("c2", self.man, self.chash, "2026-08-20T11:00:00Z")]
+        st = self.compute(recs)
+        self.assertEqual(st["tests"][self.ui.id]["status"], "inherited")
+
+    def test_a_pass_after_a_fail_is_inherited(self):
+        recs = [rec_campaign("c1", self.man, self.chash, "2026-08-20T10:00:00Z"),
+                rec_result("c1", self.ui, self.man, "FAIL", "2026-08-20T10:01:00Z"),
+                rec_campaign("c2", self.man, self.chash, "2026-08-20T11:00:00Z"),
+                rec_result("c2", self.ui, self.man, "PASS", "2026-08-20T11:01:00Z"),
+                rec_campaign("c3", self.man, self.chash, "2026-08-20T12:00:00Z")]
+        st = self.compute(recs)
+        self.assertEqual(st["tests"][self.ui.id]["status"], "inherited")
+
     def test_error_closes_aborted_does_not(self):
         recs = [rec_campaign("c1", self.man, self.chash, "2026-08-20T10:00:00Z"),
                 rec_result("c1", self.ui, self.man, "ABORTED", "2026-08-20T10:01:00Z")]

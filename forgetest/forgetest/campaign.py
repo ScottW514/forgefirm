@@ -96,16 +96,29 @@ def compute(records, tests, manifest, catalog_hash, running=None):
         elif t.always:
             reason = "always"
         else:
+            # The newest record on the current fingerprint decides: a PASS
+            # is inherited, a FAIL or ERROR after it blocks the inheritance
+            # (the test has to be run again), an ABORTED run says nothing.
             inh = None
+            blocked = None
             for r in reversed(hist):
-                if r.get("result") != PASS or r.get("fingerprint") != fp:
+                if r.get("fingerprint") != fp:
                     continue
                 if epoch and (r.get("ts") or "") <= epoch:
                     continue
-                inh = r
-                break
+                res = r.get("result")
+                if res == PASS:
+                    inh = r
+                    break
+                if res in (FAIL, ERROR):
+                    blocked = r
+                    break
             if inh is not None:
                 status, satisfied, origin, reason = "inherited", True, inh, "inherited"
+            elif blocked is not None and any(r.get("result") == PASS and r.get("fingerprint") == fp
+                                             and (r.get("ts") or "") < (blocked.get("ts") or "")
+                                             for r in hist):
+                reason = "failed-since"
             else:
                 reason = "domain-changed" if any(r.get("result") == PASS for r in hist) else "never-passed"
         if not satisfied and last_r is not None:

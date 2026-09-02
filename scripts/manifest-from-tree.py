@@ -43,6 +43,11 @@ RECIPES = [
     ("python3-gfhardware", "meta-glowforge-bsp/recipes-devtools/python/python3-gfhardware.bb", "meta-openglow"),
     ("python3-gfutilities", "meta-openglow-core/recipes-devtools/python/python3-gfutilities_git.bb", "meta-openglow"),
 ]
+# Components built from files in a layer (FORGEFIRM_MANIFEST_SRC in the
+# recipe): (component, directory relative to the repo, layer, recipe).
+FILE_COMPONENTS = [
+    ("ffboot", "meta-forgefirm/recipes-forgefirm/ffboot/files", "forgefirm", "ffboot.bb"),
+]
 CONTENT_LAYERS = {"meta-forgefirm": ("forgefirm", "meta-forgefirm"),
                   "meta-glowforge-bsp": ("meta-openglow", "meta-glowforge-bsp"),
                   "meta-openglow-core": ("meta-openglow", "meta-openglow-core")}
@@ -138,6 +143,29 @@ def ls_tree(repo, rev, url, cache, prefix, files):
                 ls_tree(sub_repo, obj, sub_url, cache, prefix + path + "/", files)
 
 
+def dir_files(path):
+    """[path, blob-id] per regular file under path, relative paths, the
+    same walk and hashing as forgefirm-manifest.bbclass (hash-object, so
+    the ids compare with tree ids)."""
+    paths = []
+    for root, dirs, fns in os.walk(path):
+        dirs[:] = sorted(x for x in dirs if x not in (".git", "__pycache__"))
+        for fn in fns:
+            if fn.endswith((".pyc", ".pyo")):
+                continue
+            p = os.path.join(root, fn)
+            if os.path.isfile(p) and not os.path.islink(p):
+                paths.append(os.path.relpath(p, path).replace(os.sep, "/"))
+    paths.sort()
+    if not paths:
+        return []
+    # absolute paths: hash-object --stdin-paths resolves relative ones against
+    # the enclosing repository's top level, not the cwd
+    ids = git(["hash-object", "--stdin-paths"], cwd=path,
+              input=(chr(10).join(os.path.join(path, p) for p in paths) + chr(10)).encode()).decode().split()
+    return [[p, i] for p, i in zip(paths, ids)]
+
+
 def layer_content(path):
     out = git(["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."], cwd=path)
     paths = sorted(set(p.decode("utf-8", "replace") for p in out.split(b"\0") if p))
@@ -176,6 +204,11 @@ def main(argv=None):
         files.sort()
         components[name] = {"srcrev": rev, "source": url, "files": files, "recipes": [os.path.basename(rel)]}
         print("%s: %s (%d files)" % (name, rev[:12], len(files)), file=sys.stderr)
+    for name, rel, layer, recipe in FILE_COMPONENTS:
+        base = REPO if layer == "forgefirm" else args.meta_openglow
+        files = dir_files(os.path.join(base, rel))
+        components[name] = {"srcrev": None, "source": "files", "files": files, "recipes": [recipe]}
+        print("%s: files (%d files)" % (name, len(files)), file=sys.stderr)
 
     ksrc = args.kernel_srcrev
     if not ksrc:

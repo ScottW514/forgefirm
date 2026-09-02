@@ -165,7 +165,7 @@ def settings_bounds(ctx):
             key = k
             break
     if key is None:
-        key, val = "ui_units", "mm"
+        key, val = "ui_units", "metric"
         ctx.log("no settable key is present; writing %s=%s (recorded in evidence)", key, val)
     else:
         val = before[key]

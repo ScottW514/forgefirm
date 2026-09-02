@@ -6,9 +6,13 @@ layout."
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
 
-# ffboot's canonical home is scripts/ffboot in this repo (the factory-side
-# installer downloads it from there); the recipe packages that same file.
-FILESEXTRAPATHS:prepend := "${THISDIR}/../../../scripts:"
+# ffboot rewrites the boot environment on every install and slot switch,
+# so it is a fingerprinted component like the daemons: the manifest entry
+# records the two files, and the acceptance tests that cover ffboot are
+# invalidated when either moves (the installer copies the tool out of the
+# rootfs it just wrote).
+inherit forgefirm-manifest
+FORGEFIRM_MANIFEST_SRC = "${THISDIR}/files"
 
 SRC_URI = " \
     file://ffboot \
