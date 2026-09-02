@@ -1415,11 +1415,13 @@ feature requests, enhancements) will eventually be tracked as GitHub issues.
     read `word_delay` and have `pic.c` set it; batch with item 10, since the
     PIC read pattern measured on 2026-09-02 may turn on these wait states).
     The patch-file edits are regenerated with `devtool modify linux-fslc` on
-    the pinned tree. Two are host-only: **B-16** (the forgetest recipe fetches
-    the package directory whole, so a host `__pycache__` moves the task hash
-    without a source change; drop it in `do_unpack` or name the files), which
-    goes in with the pin bumps because a recipe change moves the layer hash
-    anyway; and **FA-20** (the panel's devserver mock diverged from the daemon:
+    the pinned tree. Two are host-only: **B-16** (a host `__pycache__` under the
+    forgetest package directory moves the recipe's task hash without a source
+    change; the remediation named the package directory and drops the caches
+    in `do_unpack`, but the fetch checksum is taken before that, so the
+    residual stays: run the host tests with `PYTHONDONTWRITEBYTECODE=1` or
+    clear the caches before a build, since the file fetcher has no exclude);
+    and **FA-20** (the panel's devserver mock diverged from the daemon:
     mode values, `/cool/status`, the gate table, the settings keys, the diag
     routes; regenerate its tables from `gates.c` and the settings table), dev
     tooling with no image consequence.
