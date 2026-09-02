@@ -7320,6 +7320,32 @@ So the documented path holds: a hard hang ends in the factory recovery
 after the 60 s watchdog, and a power cycle returns. The recovery page and
 the storage page say now what the console does not show.
 
+## 2026-09-02: the push, the pins, and build p29
+
+With the pooled session green and the measurements closed, the remediation
+went public in CI order: Glowforge-Utilities dbf80b8, python3-gfhardware
+1511336, kernel-module-glowforge 8315fd8, forgectrl 522cdb2, forgefirm-docs
+824f8c4, the grblHAL core fork f32d17e, meta-openglow 6a450f5 (the pins for
+the kernel module at 0.0.2, gfhardware, and gfutilities at 0.9.14+git),
+forgefirm 05cf734 (the pins for forgectrl at 0.1.1, grblhal-glowforge at
+0.1.1, and forgefirm-app at 0.1.22+git), then grblHAL-glowforge b951f3a.
+Every CI run on those heads is green.
+
+Build p29 on the pushed pins: `bitbake -c fetch` verified every bumped pin
+against GitHub; linux-fslc and the module were cleaned together (the kernel
+configuration gained `CONFIG_WATCHDOG_SYSFS`, and the module's package name
+carries the kernel's build hash); then both images built clean, release and
+dev `20260902230436`. The built-image checks: the kernel and the module both
+name `6.12.20-fslc-fslc-g3dc18b0dc67b`; the dev manifest records every pushed
+commit at the planned versions; `WATCHDOG_SYSFS`, `IMX2_WDT` and
+`STRICT_DEVMEM` are set; forgectrl carries the one-line settings dump and the
+busy-start exit; the logging init sets the datagram queue; the suite carries
+the corrected drills; no package list names gfui-client; the factory slots
+mount `nofail`; the release image has no mmap or ctypes; no QA warnings.
+Owed: the operator flashes the dev image, takes a fresh-boot baseline, and
+runs the full campaign (all three layer hashes moved), the campaign the
+release gate asks for.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis

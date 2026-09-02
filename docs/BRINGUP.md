@@ -1352,39 +1352,34 @@ feature requests, enhancements) will eventually be tracked as GitHub issues.
     shape fits any by-eye tunable the commissioning flow meets.
 
 9. **Audit remediation follow-through.** The 2026-09-01 audit's fixes are
-    committed locally in every repository and host-tested, none pushed. Owed,
-    in order: one pooled bench session on a locally built dev image (kernel
-    module, forgectrl, grblHAL, gfhardware, gfutilities all moved, so the
-    campaign is a full one; the drills that prove the safety fixes directly are
+    pushed in every repository, pinned, and built (2026-09-02). The pooled
+    bench session came first, on a locally built dev image (kernel module,
+    forgectrl, grblHAL, gfhardware, gfutilities all moved, so the campaign is
+    a full one; the drills that prove the safety fixes directly are
     `kernel.deadman-close` (new), `cloud.lid-during-button-wait` (now a job
     longer than the ring), `cloud.verdict-hold` (new, about twelve minutes with
     the loop heater), `motion.deadman` (the hang case recovers on a soft
     reset and `$X`: the stream fault is a critical alarm, which the core
     unlocks only after a reset, and the reset is what re-arms the stream),
-    and the `cooling.*` set); then the push in CI order and the pin bumps.
-    The session's queues are green on image 20260902144848, the unattended
-    set and the attended set both (2026-09-02); the harness and diagnostic
-    defects they found are fixed in local commits (the dated record is in
-    CAMPAIGN-LOG). The two bench measurements are closed: the connector pads
-    were not measured (the device tree carries the factory's pad configuration
-    and the factory machine shows no trouble there, the operator's decision),
-    and the forced kernel hang ended in the factory recovery after the 60 s
-    watchdog with a power cycle returning, as documented. Owed now: the pushes
-    in CI order, the pin bumps, one image build, and the campaign on that
-    image, which the release gate asks for.
+    and the `cooling.*` set). The session's queues are green on image
+    20260902144848, the unattended set and the attended set both; the harness
+    and diagnostic defects they found are fixed and pushed with the rest (the
+    dated record is in CAMPAIGN-LOG). The two bench measurements are closed:
+    the connector pads were not measured (the device tree carries the
+    factory's pad configuration and the factory machine shows no trouble
+    there, the operator's decision), and the forced kernel hang ended in the
+    factory recovery after the 60 s watchdog with a power cycle returning, as
+    documented. Image 20260902230436 (release and dev) is built on the pushed
+    pins, the kernel and the module rebuilt together for the watchdog sysfs
+    change. Owed now: flash the dev image, take a fresh-boot baseline, and run
+    the full campaign on it, the campaign the release gate asks for.
     Decisions taken in the remediation that the operator confirms or reverses:
     the release image has no shell login (the install page now says so); the
     cloud client holds and resumes on the cooling verdict with a 30-minute
     bound (`cloud_hold_max_s`); `FORGEFIRM_RELEASE` is 0.0.1, so the bench slot
     at v0.1.0 will meet the installer's downgrade prompt; the `faultpos`
     live-fire drill is gone; a coolant sensor unreadable for two ticks is the
-    SENSOR verdict. Bench measurements the audit asks for, pooled into the
-    same session: the reset-to-probe state of the 40 V enable, the heater
-    enable, the TEC enable and the laser-enable nets at the connector during
-    a cold boot (the pads are 100 k pull-ups until a driver probes; a net
-    that floats high gets a pull-down pad in the device tree); one forced
-    kernel hard hang to confirm that the bootloader's watchdog-timeout path
-    boots the factory recovery and that a power cycle returns from it.
+    SENSOR verdict.
 
 10. **PIC read pacing.** A PIC read within a fraction of a millisecond of
     the previous one returns a disturbed value (facts bank, "Coolant-ADC
