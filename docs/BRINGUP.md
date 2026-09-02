@@ -1004,6 +1004,19 @@ is committed.
   share off. With the pump on, a heater slug reaches the upstream sensor
   within seconds and inflates the instant reading by a degree; the warm-up
   release therefore judges a one-minute rolling minimum of that reading.
+- **Coolant-ADC readings depend on the read pattern.** What the PIC returns
+  for a thermistor depends on how soon the read follows the previous PIC read
+  (measured 2026-09-02 on the two coolant channels): the second of a pair
+  issued within 0.1 ms comes back 6 to 8 counts high with a wide spread,
+  either sensor, either order; a pair 0.5 to 10 ms apart reads tight and a
+  steady 3 counts (about 0.2 C) above sparse reads; and concurrent readers
+  land such pairs at random, so a fast reader sees excursions of 10 to 15
+  counts in a share of its samples that grows with the read rate (a third at
+  100 Hz). The `aa-offset-calibrate` diagnostic reads its two sensors 31 ms
+  apart and reduces each window to an interquartile mean; the cooling engine
+  and `/status` still read the PIC back to back (the bias is inside the
+  gates' margins). A pacing of PIC reads in the kernel would give every reader
+  the same value (Next work).
 - **Coolant-ADC offsets around a lit tube.** The air-assist fan's return
   current rides a ground path the thermistor reference shares, so both coolant
   sensors read about 1.2 C low at the run duty (proportional to the fan's
@@ -1340,8 +1353,13 @@ pump flag. Beam detect stays with item 6.
     campaign is a full one; the drills that prove the safety fixes directly are
     `kernel.deadman-close` (new), `cloud.lid-during-button-wait` (now a job
     longer than the ring), `cloud.verdict-hold` (new, about twelve minutes with
-    the loop heater), `motion.deadman` (the hang case now recovers on `$X`),
+    the loop heater), `motion.deadman` (the hang case recovers on a soft
+    reset and `$X`: the stream fault is a critical alarm, which the core
+    unlocks only after a reset, and the reset is what re-arms the stream),
     and the `cooling.*` set); then the push in CI order and the pin bumps.
+    The session runs on image 20260902144848; the harness and diagnostic
+    defects its first pass found are fixed in local commits (the dated record
+    is in CAMPAIGN-LOG).
     Decisions taken in the remediation that the operator confirms or reverses:
     the release image has no shell login (the install page now says so); the
     cloud client holds and resumes on the cooling verdict with a 30-minute
@@ -1355,3 +1373,12 @@ pump flag. Beam detect stays with item 6.
     that floats high gets a pull-down pad in the device tree); one forced
     kernel hard hang to confirm that the bootloader's watchdog-timeout path
     boots the factory recovery and that a power cycle returns from it.
+
+10. **PIC read pacing.** A PIC read within a fraction of a millisecond of
+    the previous one returns a disturbed value (facts bank, "Coolant-ADC
+    readings depend on the read pattern"). Serialize the PIC transactions in
+    the kernel module with a minimum spacing (a millisecond is enough by the
+    measurement), so every reader, the engine, `/status`, the diagnostics and
+    a bench sampler, sees the same value whatever the others do. A module
+    change: it rides the next image flash, with the coolant-reading tests
+    (`cooling.aa-offset-calibrate`, `cooling.flow-verify`) as its proof.

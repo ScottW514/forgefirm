@@ -7136,6 +7136,89 @@ bench measurements, one local image build of both images, then the pushes
 in CI order (forgefirm first), the pin bumps, and the operator's
 decisions listed in the same item.
 
+## 2026-09-02: the pooled bench session, first pass: the unattended set
+
+Image 20260902144848 (dev), built locally from the audit remediation, was
+flashed to the SD slot; the fresh-boot reference was taken at uptime 24 s.
+The unattended queue ran nine times. Every stop was a harness or
+diagnostic defect, none an image defect, and every fix went the same way:
+host tests, hot deploy to the board, bench PASS, one local commit. At the
+end the unattended set is green and the campaign is open with 43 of 54
+tests satisfied; the 11 left are the attended queue, the operator's
+(`laser.emission-witness`, `cooling.flow-under-load`, `laser.m5-rapid-dark`,
+`laser.disarm-in-hold`, `laser.armed-kill`, `laser.pause-resume-lid-cancel`,
+`cloud.service-protocol`, `cloud.lid-interlock-abort`, `cloud.pause-resume`,
+`cloud.oversize-stream`, `cloud.paused-lid-cancel`), plus the two bench
+measurements BRINGUP item 9 lists.
+
+The defects, in the order the queue found them:
+
+1. `image.health` compared the running kernel's full release string with
+   the manifest's modules directory, which the remediation (forgefirm
+   88ec984) lists without the `LOCALVERSION_AUTO` hash. The test strips the
+   same suffix from both sides (forgefirm 133b61a).
+2. `kernel.fire-line` phase B was refused by the HV-off latch-unlock gate
+   (forgefirm 64f552fc, its first bench run): the gate ran within a second
+   of phase A's run, and the one-shot holds `CHARGE_PUMP_ALIVE` for 0.45 s
+   after the last 200 ms feed. The gate now waits up to 3 s for the chain
+   to release and records the wait; the chain released after 0.41 s at each
+   of the three phase boundaries (forgefirm b3efab9).
+3. `motion.deadman`'s hang case (new in the remediation) sent `$X` alone.
+   The stream fault raises Alarm 17, a critical event: the core refuses
+   `$X` with error 79 until a soft reset, and the reset is what re-arms the
+   stream (grblHAL 38b450e). The drill records the refusal, resets,
+   unlocks, requires the ring back at its idle free count, then jogs; the
+   final assertion had also read the state off the report dict as a string
+   (forgefirm d536963). Bench: kill respawn 1.2 s, hang to underrun 0.21 s,
+   `$X` -> `ALARM:17 error:79`, reset and `$X` -> Idle, ring 33521664 of
+   33521664, jog Jog -> Idle, restart retook supervision.
+4. `cooling.aa-offset-calibrate` refused four runs (spreads 17.9, 11.3,
+   23.2 and 8.3 counts over six edges of a 15-count step). Two causes. The
+   queue ran it right after `cooling.flow-verify`, whose no-flow trial
+   heats the tube water by 17 C; the warm slug circulates past the sensors
+   for minutes and the stationary gate, which compares split-half means,
+   passes at a wave's crest: the calibration is registered before the
+   heater tools now (forgefirm 1fef9c6). And the readings themselves: a
+   PIC read's value depends on how soon it follows the previous PIC read
+   (a pair 0.1 ms apart: the second reads 6 to 8 counts high with a wide
+   spread; 0.5 to 10 ms apart: tight, a steady 3 counts above sparse
+   reads; other readers land such pairs at random). The tool read both
+   sensors back to back at 8 Hz and averaged; an 8 Hz sampler with spaced
+   reads found every edge within 2 counts of 15 at the same moments. The
+   tool reads the sensors 31 ms apart at 16 Hz, reduces each window to its
+   interquartile mean, logs every window's count, extremes and value, and
+   its spread limit is 12 (forgectrl 0b35f8a; docs 7df312b). Bench: spread
+   3.6 and 4.2 standalone, 7.9 under the queue, 5.0 on the final binary;
+   the idle windows within 0.6 counts across a run. The cooling engine and
+   `/status` still read the PIC back to back; the bias is inside the gates'
+   margins and is a facts-bank entry and Next work item 10 (a pacing of PIC
+   reads in the kernel).
+5. `update.slots-and-signature`'s apply section (forgefirm b182a5a, never
+   bench-run) required 200 where the daemon answers 202 with `started`,
+   and looked for "not signed", which is the daemon's wording ("archive is
+   not signed with the ForgeFIRM release key"); its cleanup had deleted the
+   staged archive under the running job, which is why the first run's job
+   ended with "not a usable fwup archive" (forgefirm 7605a90).
+6. A queue started 4 s after a forgetest restart ran 7 tests instead of
+   10: the bench page's `/state` poll had a fixture probe in flight (an
+   mDNS answer), the probe stamped its time at its start, and the queue
+   start read the stale "no fixture", so the three operator tests the
+   fixture runs (`cloud.mode-switch`, `cloud.lid-during-button-wait`,
+   `cloud.verdict-hold`) were routed to nobody. The probe is serialized
+   and stamped at completion; `tests/test_fixture.py` holds the race
+   (forgefirm 7605a90).
+
+The campaign rules cost what they promise: a FAIL closes the campaign, so
+the always-required core (`image.health` and the five `kernel.*` drills,
+about five minutes) ran again after every stop, nine times in all.
+
+The board at the end of the pass: the image's forgectrl is replaced by the
+0b35f8a build, and the forgetest suite files `image.py`, `kernel.py`,
+`motion.py`, `cooling.py`, `update.py` and `runner.py` are the committed
+ones, all hot-deployed; the manifest still names the pins the image was
+built from until the next flash. `/tmp` is empty and `/data` holds nothing
+of the session's. The head was returned to its start by the baselines.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis
