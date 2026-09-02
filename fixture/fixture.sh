@@ -45,6 +45,12 @@ cmd_env() {
 
 cmd_build() {
     [ -e fixture.env ] || { echo "no fixture.env: run ./fixture.sh env first" >&2; exit 1; }
+    # The file holds the WiFi PSK and the API key: nobody but the owner
+    # reads it (an MSYS shell cannot express the mode, so it is not judged).
+    if [ "$(uname -o 2>/dev/null)" != "Msys" ] && [ -n "$(find fixture.env -perm /077 2>/dev/null)" ]; then
+        echo "fixture.env is group- or world-readable: chmod 600 fixture.env" >&2
+        exit 1
+    fi
     if have idf.py; then
         idf.py set-target "$CHIP" >/dev/null
         idf.py build

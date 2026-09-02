@@ -9,7 +9,6 @@ DESCRIPTION = "OpenGlow/ForgeFIRM development image for Glowforge"
 # emulator fixtures are the canned frames its service-protocol test answers
 # the service with.
 IMAGE_INSTALL += " \
-  forgectrl \
   forgetest \
   python3-gfutilities-emulator \
   python3-mmap \

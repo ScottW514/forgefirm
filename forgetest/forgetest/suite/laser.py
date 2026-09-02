@@ -715,7 +715,7 @@ def arm_wait_lid(ctx):
         ev["messages"] = [ln for ln in text.splitlines() if ln.startswith("[MSG:") or ln.startswith("ALARM")]
         ctx.log("controller: %s", ev["messages"])
         ctx.check("lid opened during arm - job canceled" in text,
-                  "the lid open was not reported as cancelling the arm")
+                  "the lid open was not reported as canceling the arm")
         ctx.check("help]" in text, "no reset banner after the lid-open cancel (it must be a clean cancel)")
         ctx.check("ALARM" not in text, "an alarm was raised on the lid-open cancel")
         # Armed window closed and the kernel latch locked.
@@ -869,7 +869,7 @@ def pause_resume_lid_cancel(ctx):
         ctx.check(zero_at is not None and zero_at < 3.0,
                   "emission did not stop after the lid opened (first 0 at %s)", zero_at)
         ctx.check(tail_zero, "emission returned after the lid opened")
-        ctx.check("lid opened - job canceled" in text, "the lid open was not reported as cancelling the job")
+        ctx.check("lid opened - job canceled" in text, "the lid open was not reported as canceling the job")
         ctx.check("help]" in text, "no reset banner after the cancel")
         ctx.check("ALARM" not in text, "an alarm was raised on the cancel (position should be kept)")
         t3 = time.time()

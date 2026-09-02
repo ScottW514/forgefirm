@@ -1,11 +1,11 @@
 # ForgeFIRM bring-up status & cold-start runbook
 
-Last updated: **2026-08-26**.
+Last updated: **2026-09-02**.
 
 This is the present state of the machine, the bench runbook, the measured
-hardware facts, and the authoritative list of open work. **The dated record —
+hardware facts, and the authoritative list of open work. **The dated record  - 
 bench campaigns, drills, scope gates, the audit remediation, the acceptance
-campaigns — is [`CAMPAIGN-LOG.md`](CAMPAIGN-LOG.md)**; come here for what is
+campaigns - is [`CAMPAIGN-LOG.md`](CAMPAIGN-LOG.md)**; come here for what is
 true now, go there for how it was proven.
 
 Read together with:
@@ -24,12 +24,12 @@ hardware-validated.**
   39.98 kHz; `CONFIG_PREEMPT=y`; both OV5648 cameras on the mainline
   imx-media pipeline with VPU JPEG encode; A/B slot install, signed `.fw`
   releases and factory restore.
-- **GRBL mode cuts real jobs.** grblHAL (the stock core plus one local fix, and
+- **GRBL mode cuts real jobs.** grblHAL (the stock core plus two local fixes, and
   the ForgeFIRM driver) speaks Grbl 1.1f over TCP:23; LightBurn drives motion, the laser and the
   camera stream. First light landed 2026-08-11.
 - **Cloud mode runs the factory experience end to end**, deliberately kept
   and maintained: sign-in, camera homing, prints, pause/resume, cancel.
-- **forgectrl is the one machine-services daemon** behind both modes —
+- **forgectrl is the one machine-services daemon** behind both modes  - 
   cooling engine, controller supervision, pulse-device broker, motion-liveness
   gate, cameras, telemetry, settings, diagnostics, logging, updates, web panel.
 - **Laser safety is hardware-first and bench-proven.** The chain
@@ -42,15 +42,15 @@ hardware-validated.**
   modes (cancel-and-return on a lid or interlock open, button pause/resume),
   bench-validated 2026-08-17.
 - **Releases are gated by the acceptance tool** (`forgetest`, dev image only):
-  a 46-test catalog, domain-scoped inheritance, an always-required safety core,
+  a 54-test catalog, domain-scoped inheritance, an always-required safety core,
   a bench actuator that works the lid, the interlock and the button so most of
   the operator's part runs unattended, and a release gate that reads the
-  exported artifact. The latest full campaign, on dev image `20260824230512`,
-  satisfied 45 of 45 from nothing in 27 minutes (36 tests unattended) and
-  authorizes a release; **no release is cut yet.**
+  exported artifact. The latest full campaign satisfied every test from
+  nothing and authorizes a release (the record is in `CAMPAIGN-LOG.md`);
+  **no release is cut yet.**
 
-Current bench state: dev image `20260824230512`, the board resting on the SD
-dev image (eMMC slot 1 = factory 2024, slot 2 = ForgeFIRM v0.1.0, archives in
+Current bench state: dev image `20260901225926` on the SD card (eMMC slot 1 =
+factory 2024, slot 2 = a ForgeFIRM pin-file image, archives in
 `/data/forgefirm/archive`).
 
 ## The bench
@@ -64,7 +64,7 @@ dev image (eMMC slot 1 = factory 2024, slot 2 = ForgeFIRM v0.1.0, archives in
   works: U-Boot (in eMMC boot0) reads the saved env at eMMC user-area 0x80000,
   which selects the boot device (bench board: `mmcdev=0
   mmcroot=/dev/mmcblk1p1` = SD), then loads `/boot/uEnv.txt` and `/boot/zImage`
-  from that rootfs partition — so the kernel always comes from the burned SD.
+  from that rootfs partition - so the kernel always comes from the burned SD.
   Full map: "eMMC boot & recovery architecture" in the facts bank below.
   **Module-only changes hot-swap**: scp `glowforge.ko` over
   `/lib/modules/<kver>/extras/`, then `rmmod glowforge && modprobe glowforge`.
@@ -75,7 +75,7 @@ dev image (eMMC slot 1 = factory 2024, slot 2 = ForgeFIRM v0.1.0, archives in
 - **Module hot-swap vs kernel re-stamps**: the hot-swap only loads if the
   module was built against the FLASHED kernel's patch state. Any edit under the
   kernel recipe's overlay (e.g. `glowforge.dts`) re-stamps
-  `CONFIG_LOCALVERSION_AUTO` — and the stamp does NOT reproduce by reverting
+  `CONFIG_LOCALVERSION_AUTO` - and the stamp does NOT reproduce by reverting
   the edit (the kernel patch tree is a fresh git commit each `do_patch`, not
   sstate-restored), so after any overlay edit the module can only ship with a
   full image flash. **Kernel/BSP changes therefore ride one image flash,
@@ -91,11 +91,11 @@ dev image (eMMC slot 1 = factory 2024, slot 2 = ForgeFIRM v0.1.0, archives in
 - **fwup lab (host)**: a host directory (`<fwup-lab>`) holds host-built
   `fwup-0.14.2` (factory-era) and `fwup-v1.16.0` under `bin/` and the DEV
   signing keypair `devkeys/fwup-key.{priv,pub}` (`fwup-key-raw.pub` = raw
-  32-byte form — what fwup 0.14.2 expects; 1.x reads both). Cross-version
+  32-byte form - what fwup 0.14.2 expects; 1.x reads both). Cross-version
   compatibility is proven both ways (modern-packed signed archives apply with
-  0.14.2; modern fwup verifies and applies the factory `.fw` — signer key
+  0.14.2; modern fwup verifies and applies the factory `.fw` - signer key
   2017-05-001.pub). **The production release key is held offline by the
-  operator** — the installer embeds its public key, so releases sign with that
+  operator** - the installer embeds its public key, so releases sign with that
   key only. Pack releases with `scripts/mkfw.sh`; the full pipeline is
   `scripts/release.sh`, invoked as:
   `FWUP=<fwup-lab>/bin/fwup-v1.16.0 FWUP_COMPAT=<fwup-lab>/bin/fwup-0.14.2
@@ -108,19 +108,16 @@ dev image (eMMC slot 1 = factory 2024, slot 2 = ForgeFIRM v0.1.0, archives in
   the end of the session. Bench tools worth keeping live in
   `forgefirm/scripts/bench/` and ship on the dev image under
   `/usr/share/forgetest/bench/`.
-- **Shell gotchas** (cost real time): PowerShell mangles embedded double quotes
-  in git-commit here-strings (avoid `"` in messages); `wsl -- bash -c '...'`
-  eats `$VAR` expansions (use script files run via PowerShell, not Git Bash,
-  which MSYS-mangles `/mnt/c` paths).
 
 ## Running the controller (grblHAL-glowforge on the board)
 
-Source: the `grblHAL-glowforge` sibling repo — the **canonical grblHAL driver
+Source: the `grblHAL-glowforge` sibling repo - the **canonical grblHAL driver
 repo** (github.com/openglow-org/grblHAL-glowforge, branch `main`): core as a
 submodule at `src/grbl` (→ openglow-org/grblHAL-core fork, branch `forgefirm` = upstream
-master plus one local commit, the `step_us_min` buffer sizing that keeps a
-fortified build from aborting in `settings_init`; the settings-write crash fix
-merged upstream 2026-08-04 as grblHAL/core PR #999). `driver.c` implements the
+master plus two local commits: the `step_us_min` buffer sizing that keeps a
+fortified build from aborting in `settings_init`, and the laser-power
+re-assert on the first segment after a hold, which is what keeps a resumed M3
+job lit; the settings-write crash fix merged upstream as grblHAL/core PR #999). `driver.c` implements the
 HAL; machine constants live in `src/boards/glowforge.h`.
 
 **The controller is spawned and supervised by forgectrl**: the supervisor
@@ -129,29 +126,29 @@ child, respawns it on a crash (after safing the machine), and switches modes
 live via `POST /mode` / the Status-tab selector. The `grblhal` and `gfcloud`
 init scripts defer to it (they remain as manual emergency levers, routed
 through `POST /controller/stop|start`). The pulse device arrives as a
-broker-inherited fd (`GF_PULSE_FD`) — the device never closes across mode
+broker-inherited fd (`GF_PULSE_FD`) - the device never closes across mode
 switches, homing handovers or respawns, so the 40 V rail never cycles as a side
-effect — and the supervisor verifies **physical motion** (head-accelerometer
+effect - and the supervisor verifies **physical motion** (head-accelerometer
 liveness probe) before the first controller spawn of each session.
 
 Architecture: a wall-paced producer thread runs the core stepper ISR against a
 virtual step clock (1000× machine tick) and maps step events to pulse bytes; a
 SCHED_FIFO shipper feeds `/dev/glowforge` through a bounded queue; a recursive
 core mutex stands in for interrupt masking. `GFSINK` unset = null-sink mode
-(full engine, no hardware I/O — host testing and CI).
+(full engine, no hardware I/O - host testing and CI).
 
 1. Build: `bash <repo>/forgefirm/scripts/bench/build-glowforge.sh` in the build
-   environment (from Windows, launch it through the WSL distro from PowerShell
-   — Git Bash mangles `/mnt/c` paths). Produces `build-arm/grblHAL_glowforge`
+   environment (on a Windows host, inside the WSL distro). Produces
+   `build-arm/grblHAL_glowforge`
    in the checkout (`-O1 -g`; machine constants force-included into the core:
    53.333 µsteps/mm XY @ ×8, 2.832 half-steps/mm Z, 0.417" Z travel,
-   12000 mm/min max, 700/590 mm/s² accel — factory-derived, see
+   12000 mm/min max, 700/590 mm/s² accel - factory-derived, see
    `puls_profile.py`).
 2. Deploy: move the new binary over `/usr/bin/grblHAL_glowforge` (mv replaces
    the inode, so the running instance is untouched), then kill the running
-   controller — the supervisor respawns it on the new binary within about a
+   controller - the supervisor respawns it on the new binary within about a
    second.
-3. Standalone start (bench/debug only — requires forgectrl stopped, since the
+3. Standalone start (bench/debug only - requires forgectrl stopped, since the
    broker's exclusive hold on `/dev/glowforge` makes any self-open fail EBUSY):
    `cd /data && GFSINK=/dev/glowforge grblHAL_glowforge -p 23 -e
    /data/EEPROM-glowforge.DAT`. Env knobs: `GFSINK_RATE` (machine tick, default
@@ -162,7 +159,7 @@ core mutex stands in for interrupt masking. `GFSINK` unset = null-sink mode
    applies the full analog machine config at init either way (×8 modes, decay 1,
    motor_lock 8, laser latched, PIC hold currents) and swaps PIC run/hold
    currents around motion. Each motion run logs a producer-stats line
-   (callbacks, µs/call, max-behind, clamped) — `clamped` should stay 0.
+   (callbacks, µs/call, max-behind, clamped) - `clamped` should stay 0.
 4. Connect LightBurn/UGS to `<machine-ip>:23`, or jog raw: `$J=G91X40F1200`.
    `^X` mid-motion aborts via kernel `cnc/stop` (controlled decel) and raises an
    alarm; TCP disconnects never kill the process (the dead-man fd stays held).
@@ -175,15 +172,15 @@ still the one loaded at start until the controller restarts (a mode switch,
 a `POST /controller/stop` + `start`, or a boot). Verified host-side: after a
 runtime `$35=0` the shipped duties stay floored.
 
-**Stored `$`-settings beat freshly baked defaults** — after changing
+**Stored `$`-settings beat freshly baked defaults** - after changing
 `GLOWFORGE_DEFAULTS` values, run `$RST=$` once on the board (settings persist
 in the eeprom file in `/data`).
 
 **Protocol-loop pacing is fd-blocking.** `serial_wait()` drains TX then
 `ppoll()`s the listen/client fds with a state-dependent timeout: idle and alarm
 at 10 ms (1 ms while a delay callback is pending), motion at 200 µs, and the
-parked states — a completed feed hold, a parked door ajar or closed, and sleep
-— at the coarse idle poll, while the motion sub-phases (`Hold_Pending` decel,
+parked states - a completed feed hold, a parked door ajar or closed, and sleep
+ -  at the coarse idle poll, while the motion sub-phases (`Hold_Pending` decel,
 `Parking_Retracting`/`Resuming`) keep the tight pace. Measured on the bench:
 idle 2.7 %, active move 34–35 %, parked 2.7–3.0 %. Client RX is armed only
 while the ring has a full read's worth of room, so a flow-control-violating
@@ -274,21 +271,21 @@ planner left the following moves cutting at a stale duty, or dark.
 Contract rules enforced structurally: a power byte leads every kernel run
 before any fire bit (a run start resets duty to ~100 %), transitions are
 coalesced per tick so power bytes are never consecutive, and power bytes cost
-no machine tick. Fire only ever rides motion segments of laser blocks — jogs,
-G0 and homing are fire-free by construction — and the end-of-data backstop
+no machine tick. Fire only ever rides motion segments of laser blocks - jogs,
+G0 and homing are fire-free by construction - and the end-of-data backstop
 covers every stream end. **Duty persists after end-of-data** (PWMSAR retains
 its last value): the laser-off guarantee rests entirely on FIRE.
 
-**Arming — the operator's button press is required.** The first laser-on of a
+**Arming - the operator's button press is required.** The first laser-on of a
 job (M3/M4, planner-synced) refuses outright if a coolant fire gate stands or
 if no head is detected (`ALARM:3`, "laser fire blocked: no head detected"),
 else forces the run fan profile on, unlocks the kernel laser latch, lights the
-button white and blocks the gcode stream — pumping real-time traffic — until
+button white and blocks the gcode stream - pumping real-time traffic - until
 the operator presses the physical button (EV_SW bit 2), a soft reset aborts, a
 lid or interlock open cancels, or `laser_button_timeout_s` (default 300 s)
 expires into alarm 3. The coolant verdict is re-checked immediately after the
 wait, before the window opens. The armed window survives S changes and M5/M3
-toggles (no re-prompt mid-job) and closes — relocking the latch — at program
+toggles (no re-prompt mid-job) and closes - relocking the latch - at program
 end (`M2`/`M30`/`%`), when the sender connection changes, after
 `laser_disarm_s` (default 60 s) of spindle-off idle, or immediately on
 alarm/homing/reset/stream fault. The disarm grace counts down in Hold, Door and
@@ -339,7 +336,7 @@ factory 2.6.0-2228 session; measured numbers in the facts bank).
   the head returns to the position the job started from **with the lid still
   open**, the kernel latch relocks and the armed window closes. The
   return-home park ignores the lid and always runs to completion. The next job
-  re-arms with a button press — the same press the hardware button latch needs,
+  re-arms with a button press - the same press the hardware button latch needs,
   so software and hardware agree by construction.
 - **During the pre-run button wait:** a lid or interlock open cancels the job
   with the reason named (clean soft reset, no alarm); a press with the lid open
@@ -372,9 +369,9 @@ doors = bit 3 (the series combination the safety chain itself uses), remote
 interlock = bit 5 (inverted sense), button = bit 2. The door signal is hidden
 from the core while it is IDLE, JOG or HOMING (`gfsw_visible`) so a lid cycle at
 idle cannot park the controller in `Door:0` and leave a sender waiting.
-**hv_enable (bit 4) is never gated on** — it is the readback of the chain's
+**hv_enable (bit 4) is never gated on** - it is the readback of the chain's
 HV_ENABLE output, telemetry only. **The interlock latch (bit 6) is not gated on
-either** — the hardware chain enforces it. No switch device (host builds) = no
+either** - the hardware chain enforces it. No switch device (host builds) = no
 capability advertised. `GF_SWITCH_FILE` is the file-backed EV_SW word that lets
 null-sink builds drive these edges in CI.
 
@@ -384,15 +381,15 @@ Runtime-selectable through `homing_mode` in `/data/forgefirm.conf` (forgectrl
 `GET/POST /settings`, panel selector); the driver re-reads the file on every
 `$H`:
 
-- `gfcloud` — factory camera homing via the Glowforge web service. **Live
+- `gfcloud` - factory camera homing via the Glowforge web service. **Live
   verified**; a full cycle runs in 50–65 s.
-- `switches` — the planned limit-switch cycle (falls through to the core, still
+- `switches` - the planned limit-switch cycle (falls through to the core, still
   disabled `$22=0`).
-- `none` — `$H` rejects with error 5.
+- `none` - `$H` rejects with error 5.
 
 Architecture: `glowforge_homing.c` registers a driver `$H` that shadows the
 core's; for gfcloud it suspends the stream engine (only from a fully idle
-kernel — closing the flock'd fd mid-program is an e-stop), spawns
+kernel - closing the flock'd fd mid-program is an e-stop), spawns
 `/usr/sbin/gfhome.py` (config `/data/etc/gfhome.conf`, first-run copy from
 `/etc/gfhome.conf.sample`), pumps the protocol so senders keep getting status,
 then reacquires the device and re-applies the analog config and `step_freq`.
@@ -400,7 +397,7 @@ then reacquires the device and re-applies the analog config and `step_freq`.
 `ALARM:18` like a failed core cycle (`gfcloud_home_timeout_s`, default 300).
 The runner drives the GFUIService dispatch itself (the stock `run()` loop can
 neither stop nor close the socket) and treats hunt + ≥1
-accelerometer-witnessed motion window + quiet (10 s) as complete — the modern
+accelerometer-witnessed motion window + quiet (10 s) as complete - the modern
 v2.6.0 sequence, captured from a live service session, is settings → hunt → lid_image
 → single corner move → lid_image → silence. It then re-homes
 the lens against the hall for a deterministic Z. **A quiet service without an
@@ -409,7 +406,7 @@ accel-witnessed motion window is a failure, not a homing.**
 Position semantics: factory home = machine origin (back-left corner, +Y =
 FRONT, workspace all-positive 0..495 × 0..279); Z top-of-travel = 10.6.
 `gfcloud_home_x/y/z` calibrate the post-home coordinates once measured
-(defaults 0 / 0 / Z max). GRBL mode permits unhomed cutting — position shows
+(defaults 0 / 0 / Z max). GRBL mode permits unhomed cutting - position shows
 counters-only and painted red until anchored.
 
 ## The machine-services daemon (forgectrl, port 8080)
@@ -420,15 +417,15 @@ supervision**, the **pulse-device broker**, the **motion-liveness gate**, the
 **cooling engine** (single owner of fans/pump/TEC/heater for both modes), plus
 cameras, telemetry, settings, diagnostics, the web panel, updates and the
 **logging tree**. It runs under a respawn wrapper (its init script); a
-restarted daemon retakes supervision once the machine is idle — an unmanaged
+restarted daemon retakes supervision once the machine is idle - an unmanaged
 controller left running mid-move is replaced at idle, not adopted (the old
 inherited fd cannot be taken over). The meta-forgefirm recipe pins its SRCREV
 in `forgectrl-pin.inc` (bump deliberately after pushing) and installs the
 sysvinit script from the repo's `init/`; bench builds cross-compile with
 `forgefirm/scripts/bench/build-forgectrl.sh`. The **machine-services
-contract** — EV_SW switch map, sensor conversions, hardware single-writer
+contract** - EV_SW switch map, sensor conversions, hardware single-writer
 ownership, cooling channels, mode supervision, pulse-device ownership, logging
-— is [forgectrl](https://docs.forgefirm.org/technical/forgefirm/forgectrl/) on the documentation site.
+ -  is [forgectrl](https://docs.forgefirm.org/technical/forgefirm/forgectrl/) on the documentation site.
 
 Every state-changing endpoint requires the first-boot bearer token in `/data`
 (embedded in the panel), a Host address-literal check, and
@@ -438,7 +435,7 @@ additionally require the physical button held.
 
 One ulfius daemon serves it all:
 
-- `GET /` — the tabbed control panel (**Status / Machine / GF Cloud / GRBL /
+- `GET /` - the tabbed control panel (**Status / Machine / GF Cloud / GRBL /
   Diagnostics / Logs / System**; sources in `forgectrl/src/ui/`,
   `index.html`, `panel.js`, `forms.js`, `help.js` and `theme.css`, bundled into the binary by
   `embed.cmake`; `tools/devserver.py` and the repo's `.devcontainer/` serve the
@@ -449,13 +446,13 @@ One ulfius daemon serves it all:
   reboot. All settings controls disable (with a banner) while the machine is not
   idle **or a diagnostic is running**. `/?action=stream|snapshot` remain the
   mjpg-streamer-compatible aliases (lid camera; LightBurn uses the stream one).
-- `GET /status` — motion state and true machine position (kernel step counters
-  anchored at homing via `/run/grblhal.homed` — the Grbl socket is never polled,
+- `GET /status` - motion state and true machine position (kernel step counters
+  anchored at homing via `/run/grblhal.homed` - the Grbl socket is never polled,
   a connection there displaces the sender), coolant temps, pump/TEC, all four
   fan tachs, the sensed laser evidence (emission samples, HV current, lid IR),
   faults, the safety switches via `EVIOCGSW` (head = real presence, i.e. the
   head sysfs group exists), and a `diag` flag for the UI lock.
-- `GET/POST /settings` — the shared machine settings store
+- `GET/POST /settings` - the shared machine settings store
   (`/data/forgefirm.conf`, 0600, validated keys, empty-value-clears via query
   params; `gf_password` write-only). **Writes 409 unless `cnc/state` is idle**
   and 409 while a diagnostic owns the hardware; a multi-key POST lands as one
@@ -465,51 +462,51 @@ One ulfius daemon serves it all:
   `laser_disarm_s`, `rail_settle_s`, `lid_lamp_idle`, `lid_policy`,
   `cloud_pause_backtrack_ticks`, `cloud_resume_lead_ticks`, `cloud_hold_max_s`, the twelve
   `log_<logger>_disk|_remote` levels and `syslog_server|port|proto`.
-- `GET /mode`, `POST /mode?controller=grbl|cloud` — the supervisor: current
+- `GET /mode`, `POST /mode?controller=grbl|cloud` - the supervisor: current
   mode, controller state (`running | stopped | standby | motion-fault`), pid,
   and the motion-liveness verdict (`verified | unverified | fault`); the POST is
   the live idle-gated mode switch and the retry lever after a motion fault.
-- `POST /controller/stop|start` — the routed emergency levers the init scripts
+- `POST /controller/stop|start` - the routed emergency levers the init scripts
   use. Stop writes `cnc/stop` + `cnc/laser_latch=1` **before** the SIGTERM
   (kernel-level, instantaneous) and holds supervision suspended.
 - `POST /cool/state` (job-state reports from the active controller, level-
   triggered ~1 Hz) and `GET /cool/status` (engine phase, verdict, temps, report
   age). The verdict the controllers enforce is the
   `/run/forgefirm/cooling.state` file.
-- `POST /diag/flow-verify|flow-calibrate|abort`, `GET /diag/status` — the
+- `POST /diag/flow-verify|flow-calibrate|aa-offset-calibrate|abort`, `GET /diag/status` - the
   diagnostics runner (below).
-- `GET /cam/stream?cam=lid|head` — multipart MJPEG at half the sensor's frame
+- `GET /cam/stream?cam=lid|head` - multipart MJPEG at half the sensor's frame
   in each axis, 1296×972 on a 5 MP machine (2×2 Bayer-superpixel demosaic,
   JPEG q75; `FORGECTRL_STREAM_Q` overrides, `FORGECTRL_STREAM_FPS` caps the
   frame rate, unset/0 = sensor max).
-- `GET /cam/snapshot?cam=lid|head&res=full|half&q=1..100` — single JPEG,
+- `GET /cam/snapshot?cam=lid|head&res=full|half&q=1..100` - single JPEG,
   default the sensor's full frame, 2592×1944 on a 5 MP machine (own MIT
   bilinear demosaic).
-- `GET /cam/status` — JSON (running/cam/clients/frames/fps/fps_cap/encoder/
+- `GET /cam/status` - JSON (running/cam/clients/frames/fps/fps_cap/encoder/
   buffers/sensor, the stream + snapshot geometry the fitted sensor implies,
   and the privacy gate's `capture_allowed` / `stopped_by_lid`). Stream and
   snapshot answer 409 while the lid is open.
 - `GET /slots`, `POST /boot`, `POST /update/check|download|apply|upload`,
-  `GET /update/status`, `POST /restore/factory`, `POST /system/reboot` — the
+  `GET /update/status`, `POST /restore/factory`, `POST /system/reboot` - the
   A/B update manager ([install and update](https://docs.forgefirm.org/technical/forgefirm/install-and-update/)). Upload is auth + idle + job
   gated; a booted-slot write is refused under any `root=` spelling.
-- `GET /logs`, `GET /logs/tail`, `POST /logs/export` — the logging tree
+- `GET /logs`, `GET /logs/tail`, `POST /logs/export` - the logging tree
   (below).
-- `GET /fuse-identity` — serial, derived hostname and the SRK password, behind
+- `GET /fuse-identity` - serial, derived hostname and the SRK password, behind
   the token AND the physical button; fetched on demand only.
 
 **Panel conventions:** the header identifies the machine by its **fuse
 identity** (the factory hostname derived from the OCOTP serial), regardless of
 any cloud identity override. **Units** are a display-only preference
 (`ui_units`): the backend stores metric, and saves post only fields whose
-display string changed. **Position always shows** — counters-only and painted
+display string changed. **Position always shows** - counters-only and painted
 red while unreferenced, normal once anchored.
 
 **Camera engine.** One worker owns the V4L2 node persistently (media-ctl /
 v4l2-ctl sequences identical to `gfhardware/cam.py`, factory exposure/gain/WB,
 software hflip in the demosaic); it starts on demand and tears down fully after
 10 s idle so gfhardware one-shot grabs still work. **Privacy gate: neither
-camera captures unless the lid is closed** — `machine_lid_closed()` (EV_SW
+camera captures unless the lid is closed** - `machine_lid_closed()` (EV_SW
 bit 3, fail-closed) is checked at every entry point and once per frame, so an
 open lid refuses stream and snapshot with HTTP 409 and a lid opened mid-capture
 tears the pipeline down; `gfhardware.cam.capture()` enforces the same rule for
@@ -518,7 +515,7 @@ disables it, and the factory's lid-open focus hunt now fails as a result
 ([the video pipeline](https://docs.forgefirm.org/technical/forgefirm/video-pipeline/)). Geometry, Bayer depth and
 the manual control set come from a **sensor profile** chosen by whichever
 driver bound on that camera's I2C bus, so one image serves both the 5 MP
-OV5648 (2592×1944) and the 8 MP OV8856 (3264×2448) — both 8-bit BGGR, so the
+OV5648 (2592×1944) and the 8 MP OV8856 (3264×2448) - both 8-bit BGGR, so the
 capture word and the demosaic are the same and only the geometry changes;
 `/cam/status` reports the model and the frame sizes that follow from it.
 A frame the capture queue flags errored is dropped rather than demosaiced,
@@ -527,18 +524,18 @@ engine; `/cam/status` carries the running `health` counts (`src/camhealth.c`,
 host test `camhealth_test`). The cameras share the
 hardware video-mux and the NEWEST request wins it: **streams preempt** (the
 current stream's clients end cleanly), **snapshots borrow** (pause, switch,
-grab one frame, switch back — a ~1–2 s freeze). The per-camera lamp
+grab one frame, switch back - a ~1–2 s freeze). The per-camera lamp
 (`pic/lid_led` / `head/white_led`) is raised to `FORGECTRL_LAMP` (default 132)
 while capturing and restored to the resting level on idle. The resting lid lamp
 is the `lid_lamp_idle` setting (0–255, default 236), asserted at daemon start,
 on a live settings change, and at every controller spawn.
 
 Measured performance (bench): **15.0 fps sustained** at 1296×972, sensor-
-limited — NEON superpixel→YUV420 convert (18–20 ms) plus CODA960 VPU JPEG
+limited - NEON superpixel→YUV420 convert (18–20 ms) plus CODA960 VPU JPEG
 encode (7 ms) on cached (non-coherent) V4L2 capture buffers, so there is no
 bounce copy; daemon ~41 % CPU with one viewer. Full-res snapshot 2.4 s warm /
 2.7 s cold. Fallbacks, each bench-verified: `FORGECTRL_NO_CACHED_BUFS` (bounce
-copy, needed on a kernel without the `allow_cache_hints` patch — detected via
+copy, needed on a kernel without the `allow_cache_hints` patch - detected via
 the `MMAP_CACHE_HINTS` capability bit), `FORGECTRL_NO_NEON` (scalar convert,
 bit-identical), `FORGECTRL_NO_VPU` (libjpeg; also the snapshot path).
 The default path is newer and bench-proven: the GC880 GPU demosaic feeding the
@@ -555,7 +552,7 @@ stream directly** while jogging from the same session; motion coexistence is
 proven (`clamped 0`, max behind 4.5–7.2 ms of the 200 ms queue at 15 fps).
 
 Run by hand: `/usr/bin/forgectrl &` after `/etc/init.d/forgectrl stop` (kill
-before scp when redeploying — text-file-busy). It logs through syslog
+before scp when redeploying - text-file-busy). It logs through syslog
 (`/data/log/forgefirm/forgectrl/forgectrl.log`; a terminal, or `FFLOG_STDERR=1`,
 echoes the lines).
 
@@ -608,7 +605,7 @@ override and wins for the process lifetime).
 
 **Flow verification, as it runs:** a one-shot check at flood start (M8) heats
 the loop at `cool_flow_heater_pct` for `cool_flow_check_s` and discriminates on
-downstream temperature RISE, with periodic re-checks every `cool_recheck_s` —
+downstream temperature RISE, with periodic re-checks every `cool_recheck_s`  - 
 a stopped pump is undetectable any other way. A check starts only once the
 sensors agree and the downstream reading is stationary (split-half mean
 difference, not peak-to-peak). An over-limit check is a **suspicion**, not a
@@ -623,7 +620,7 @@ a JOG gets a jog-cancel.
 
 rsyslog is the system logger and the only log writer. forgectrl and the grblHAL
 driver emit through the shared non-blocking `fflog` emitter (drops, never waits
-— a stalled log daemon can never park a controller thread), gfcloud/gfhome
+ -  a stalled log daemon can never park a controller thread), gfcloud/gfhome
 through `SysLogHandler`, the kernel through `imklog`; a controller's stray
 stdout/stderr rides a per-controller `logger` relay under its own name. Tree:
 `/data/log/forgefirm/{forgectrl,grblhal,gfcloud,gfhome,kernel,system}/`,
@@ -631,7 +628,7 @@ size-capped and rotated at boot and hourly (the `forgefirm-logging` recipe
 renders the rsyslog rules from the settings at S19 via
 `forgectrl --render-syslog`). Levels (`log_<logger>_disk` /
 `_remote`) and the remote target (`syslog_server/port/proto`) are machine
-settings **applied at reboot** — the panel's Logs tab shows configured vs.
+settings **applied at reboot** - the panel's Logs tab shows configured vs.
 effective and offers the reboot, plus a live viewer and a sanitized `tar.gz`
 export for issue reports (`POST /logs/export`; `src/sanitize.c` replaces
 serial, hostname, cloud credentials, panel token, SSID/PSK, IPs, MACs and
@@ -640,21 +637,21 @@ e-mails with stable placeholders). Design and contract:
 
 ## Release acceptance (forgetest, port 8090)
 
-The release acceptance tool — catalog, campaigns, domain fingerprints,
+The release acceptance tool - catalog, campaigns, domain fingerprints,
 inheritance, the always-required core, invalidate-all, the release gate and the
-coverage currency rule — is specified on the site (Developers, "Acceptance"); the tool lives in
+coverage currency rule - is specified on the site (Developers, "Acceptance"); the tool lives in
 `forgetest/` and ships only on the dev image (`/etc/init.d/forgetest`, HTTP
-:8090). It is **bench-validated**: the full campaign on dev image
-`20260824230512` (`c-20260824231028-b7ca`) satisfied 45 of 45 from nothing,
-36 of them unattended with the bench actuator in the loop, in 27 minutes, and
-the export reads "Release authorized: YES" for that image's manifest. That
+:8090). It is **bench-validated**: a full campaign has satisfied the whole catalog
+from nothing with the bench actuator in the loop (the record is in
+`CAMPAIGN-LOG.md`), and its export reads "Release authorized: YES". That
 authorizes a release; it is not one until `releases/v<version>/acceptance.json`
 is committed.
 
-- **Catalog: 46 tests** in `forgetest/forgetest/suite/`, every one a port of a
+- **Catalog: 54 tests** in `forgetest/forgetest/suite/`, every one a port of a
   proven bench drill or a bench-verified check: the always-required core
   (`image.health`, `kernel.latch-locked-idle`, `kernel.k1-k2`,
-  `kernel.fire-line`), `forgectrl.*`, `logs.*`, `update.*`, `motion.*`
+  `kernel.deadman-close`, `kernel.backtrack-bounds`, `kernel.fire-line`,
+  `laser.emission-witness`), `forgectrl.*`, `logs.*`, `update.*`, `motion.*`
   (pacing, jog round-trip, liveness probe, cancel/abort, dead-man, the lid,
   interlock and button parity tests), `cooling.*` (flow verification, fans
   quiet after motion, a gate setting tripping and off by value, a fan under
@@ -667,7 +664,7 @@ is committed.
   the cloud client driven from a local socket with a synthesized
   laser-free job, no account, no network, nothing on the bed). Tests that
   share a setup are merged; the `auto` tests stay separate for failure
-  isolation. 28 are `auto`, 9 `operator`, 9 `live`; with the bench actuator up,
+  isolation. 34 are `auto`, 10 `operator`, 10 `live`; with the bench actuator up,
   eight of the operator tests run in the unattended queue.
 - **The operator's part is asked for by name, not by popup**
   (the site, Developers, "Acceptance", "The operator's part"): a Ready prompt before a
@@ -687,7 +684,7 @@ is committed.
   `do_deploy`), `forgefirm-image-manifest.bbclass` assembles them plus the layer
   content hashes into `/etc/forgefirm-manifest.json` (also deployed beside the
   image as `*.forgefirm-manifest.json`), and `scripts/manifest-from-tree.py`
-  computes the byte-identical thing on a workstation — the identity is
+  computes the byte-identical thing on a workstation - the identity is
   content-defined, independent of the checkout's commit or dirty state.
   **Component pins live in `<recipe>-pin.inc`** (SRCREV + the PV that moves
   with it, nothing else) and
@@ -696,7 +693,7 @@ is committed.
   platform change and invalidates everything.
 - **Baseline rule:** every test and bench tool is bracketed by a baseline pass
   (`forgetest/baseline.py`), against a fresh-boot reference taken once per boot
-  **after a power cycle** (a soft reboot leaves the lid lamp dark — the PIC
+  **after a power cycle** (a soft reboot leaves the lid lamp dark - the PIC
   lights it at power-on). Takeover runs capture the controller-owned kernel
   attributes on entry and write them back before forgectrl restarts, so a
   leftover `motor_lock` mask can never read as a wedged driver.
@@ -767,7 +764,7 @@ is committed.
   The per-job range in raw counts is the record, and a ceiling, if one is
   ever wanted, is set in raw counts from it (`temp_calibrate.py supply-*`
   stays for a machine where the heatsink is reachable).
-- **The SoC guards itself.** The i.MX6DL (rev 1.3) on-die monitor is
+- **The SoC guards itself.** The i.MX6 Solo (rev 1.3) on-die monitor is
   `thermal_zone0` (`imx_thermal_zone`, the same node as `hwmon0`), governor
   `step_wise`, trips at **85 C passive** and **90 C critical** (the
   consumer-grade points the driver derives from the fuses: hot point 95,
@@ -799,7 +796,7 @@ is committed.
 - **DRV8825 stepper drivers wedge on 40 V rail glitches** (factory board; the
   TMC2130s belong to the upgraded OpenGlow board only). A glitch can leave the
   drivers unserviceable: SDMA playback and the position counters run normally
-  while the motors produce nothing. The supply itself is fine — this is a
+  while the motors produce nothing. The supply itself is fine - this is a
   driver failure mode, not a marginal rail. The kernel drives their nRESET and
   nSLEEP pins (`reset-gpio` gpio3 18, `sleep-gpio` gpio3 16), but only as a
   pair inside every enable/disable cycle, together with the rail: the reset
@@ -813,24 +810,24 @@ is committed.
   motion**; keep the rail up (every power-up is a wedge lottery), which is why
   the pulse-device broker exists and why there is no idle-rail-off policy.
 - **Motion liveness = the head accelerometer** (`glowforge.dts` `head-accel`,
-  i2c-3 @0x1e — resolve iio devices by bus path, never by index; lid = i2c-0
+  i2c-3 @0x1e - resolve iio devices by bus path, never by index; lid = i2c-0
   @0x1e, board = i2c-3 @0x1d). Signatures on an identical commanded move: real
   motion **1800–2900 counts peak-to-peak** on X/Y (noise floor at 1 g ≈ 16384),
   a genuinely dead/wedged axis ≤ ~250, and the rail-on / current-step jolt up to
-  ~700 — which is why the forgectrl probe gates controller start at
+  ~700 - which is why the forgectrl probe gates controller start at
   **p2p ≥ 800** (`P2P_MOVING`), writes `cnc/motor_lock=0` for its own move (a
   leftover mask from any tool must not read as a wedge) and settles 300 ms
   after the run-current step before sampling. A masked axis reads 144–480.
   gfhome requires at least one accel-witnessed motion window before a quiet
-  service counts as homed. Raw sysfs accel reads are slow (~150 ms each) —
+  service counts as homed. Raw sysfs accel reads are slow (~150 ms each)  - 
   enough for a binary verdict over a multi-second window, not for waveforms.
 - **Any probe/liveness move goes RIGHT (+X) first, then back**: a cable lives
   at the end of LEFT travel and must never be crushed.
 - **Rail-contact signature** (from the retired accelerometer-homing spike,
   relevant to any future contact sensing; tools `accel_fast.py`,
   `bump_seek.py`): creep baseline ≈0.5–2 k counts, contact jumps to 29–42 k
-  within ~4 ms (20–40×). But **slow approaches are near-silent** — belt
-  compliance turns slow-speed skipping into sub-threshold grinding — so any
+  within ~4 ms (20–40×). But **slow approaches are near-silent** - belt
+  compliance turns slow-speed skipping into sub-threshold grinding - so any
   contact-sensing scheme must strike fast. Direct I²C (unbind st-accel,
   CTRL1=0x6F = 800 Hz ODR) reads ~530 Hz from Python; st_accel sysfs one-shots
   are ~6 Hz and the kernel has no IIO triggers.
@@ -895,7 +892,7 @@ is committed.
   (authoritative).
 - **Z**: bit 6 SET = lens UP = +Z (hardware-verified). Home = hall trigger at
   TOP; usable travel ≈ 30 half-steps ≈ 10.6 mm ≈ 0.417"; 0.3534 mm/half-step.
-  Never blind-drive Z — hall-supervised only.
+  Never blind-drive Z - hall-supervised only.
 - **XY**: 0.15 mm per full step; DIR bit set = −X / +Y (Y1/Y2 complementary).
   **+Y physically moves the gantry toward the FRONT.** Home corner (convention,
   for the planned limit-switch homing) = back-left (X min, Y min), workspace
@@ -917,14 +914,14 @@ is committed.
   (6.4 % measured vs 6.3 % commanded at PWMSAR=8).
 - **Laser duty thresholds** (ladder on scrap at F300, constant power): the
   tube has two thresholds, far apart. The discharge **strikes between 2 % and
-  3 %** duty — 2 % (PWMSAR 2) draws no measurable `hv_current` and leaves
-  nothing at all, 3 % (PWMSAR 3) draws current — but it does **not lase
+  3 %** duty - 2 % (PWMSAR 2) draws no measurable `hv_current` and leaves
+  nothing at all, 3 % (PWMSAR 3) draws current - but it does **not lase
   usefully until 16 %** (PWMSAR 20), the lowest duty leaving a continuous
   mark. Between them (3–14 %) is a **dead band**: current flows and climbs,
   and each line shows only a spot at its start (the strike transient) with a
-  dark line after it. So the usable analog range is ~16–100 %, and `$35`
-  (`DEFAULT_SPINDLE_PWM_MIN_VALUE`) ships at **16** to hold every nonzero S
-  above it. Raw `hv_current` counts are a presence/absence witness only: the
+  dark line after it. So the usable range on the retired analog model was ~16 to 100 %. On the
+  density model that ships, `$35` (`DEFAULT_SPINDLE_PWM_MIN_VALUE`) is **10**,
+  the derived density floor (`laser_floor_density`). Raw `hv_current` counts are a presence/absence witness only: the
   per-rung means are non-monotonic at the top of the ladder and the signal
   has no characterized transfer function.
 - **Feed hold and resume in GRBL mode** (stream-measured on the null-sink
@@ -952,7 +949,7 @@ is committed.
 - **Factory power model** (three cloud cuts of one 1" square, same location,
   material and speed, only the UI power setting changed, pulse files captured
   from each): the **power byte is pinned at 127**
-  in all three runs — three occurrences each, one as the cut begins and a
+  in all three runs - three occurrences each, one as the cut begins and a
   refresh every ~27 000 ticks (~2.7 s). Analog duty is never a power control.
   **Dose is FIRE-bit density on a fixed 7-tick period** (700 µs at
   `STfr` = 10 000, ~1.43 kHz), the on-count dithered between adjacent integers
@@ -961,7 +958,7 @@ is committed.
   = 7 of 7 (0.9965, continuous). The period was exactly 7 in all 570 measured
   cycles of both dithered runs, and the mix of adjacent on-counts matches the
   fractional part exactly (PP 1 wants 1.371; 2-runs are 212 of 571 = 0.371).
-  The three **headers are identical** — the power setting never reaches the
+  The three **headers are identical** - the power setting never reaches the
   machine, so the whole model is service-side. Motion is identical too: 5420
   steps, 101.62 mm, 10.81 s at 9.44 mm/s. **Density tracks velocity through
   corners**, by the same relative factor at every power setting (corner/cruise
@@ -995,10 +992,11 @@ is committed.
   at 40 %: 25/25 correct classifications, plus all three settle cases. Settled-
   loop noise is 0.52 °C peak-to-peak but only 0.11 °C split-half, which is why
   the stationarity gate uses split-half means. Coolant windows: run ceiling
-  33 °C, resume 31 °C (factory job-header CMrx/…); the factory's low side
-  (floors ≈1.0/4.0 °C, ~16 °C warm-up gate) is not implemented yet. The
+  33 °C, resume 31 °C (factory job-header CMrx/…); the low side ships as the
+  coolant floor (`cool_temp_min`, 5 °C, a fire gate) and the warm-up gate
+  (`cool_temp_start`, 16 °C), the `COLD` and `WARMUP` verdicts. The
   coolant thermistor conversion is the factory B-equation recovered from the
-  v2.6.0 binary — derivation on [sensors](https://docs.forgefirm.org/technical/machine/sensors/); the old
+  v2.6.0 binary - derivation on [sensors](https://docs.forgefirm.org/technical/machine/sensors/); the old
   UAPI "best guess" linear formula was 3–5 °C high and everything derived from
   it had to be re-derived. The flow check's bands hold from 19 to 27 C, the
   loop heater's ceiling in a 20 C room, with the margin widening warm; above
@@ -1037,7 +1035,7 @@ is committed.
   against a 177 ceiling plus drift), so no lamp change can trip them; each
   job still logs baseline and peaks.
 - **Emission and HV witnesses**: `cnc/laser_on_sampled` goes to its full 255
-  count on a commanded fire window and returns to 0 at Idle — the reliable
+  count on a commanded fire window and returns to 0 at Idle - the reliable
   witness. `pic/hv_current` tracks the cut (0 idle → hundreds/1023 raw while
   firing) and is the only live HV telemetry on this PSU (`hv_voltage` is
   grounded). **`cnc/laser_pgood` (J1_14, GPIO4_21) is the supply's power-good,
@@ -1123,8 +1121,8 @@ is committed.
   the v2.6.0 app carries a complete but config-gated subsystem.
 - **Switches**: truthy = closed/OK for lid/doors/button. **SW_INTERLOCK is
   INVERTED**: the remote interlock (the regulatory 2-pin lockout connector)
-  reads ACTIVE only when the loop is OPEN. Basic/Plus — including the bench
-  machine — ship the connector factory-jumpered, so the bit reads 0 =
+  reads ACTIVE only when the loop is OPEN. Basic/Plus - including the bench
+  machine - ship the connector factory-jumpered, so the bit reads 0 =
   satisfied; Pro brings it out for an external lockout chain. It must NOT gate
   motion (the beam is hardware-gated), but ForgeFIRM's kernel module does drive
   INTERLOCK_RESET high whenever the loop reads open, so the CD4043B latch
@@ -1132,24 +1130,24 @@ is committed.
   (bench-verified: loop pulled → `interlock_latch`=1, `interlock_circuit` b4
   set, all within one 50 ms sample; reinserted → all clear).
 - **`hv_enable` (EV_SW bit 4, GPIO4_06) is the readback of the safety chain's
-  HV_ENABLE output** through the U24 inverter — not an input. Active for the
+  HV_ENABLE output** through the U24 inverter - not an input. Active for the
   whole duration of any run, inactive at idle, and it drops 454 ± 3 ms after
   the last charge-pump pulse (one-shot t_w measured pulse-to-drop with
   `scripts/bench/cp_watchdog_timing.py`: 451.8 / 455.6 ms; feed period
-  199.98 ms; matching the measured R·C ≈ 500 kΩ × ≈900 nF). It gates nothing —
+  199.98 ms; matching the measured R·C ≈ 500 kΩ × ≈900 nF). It gates nothing  - 
   it is telemetry (`/status` `switches.hv_enable`, panel "HV enable"), read
   alongside `cnc/charge_pump_alive` (`interlock_circuit` b5). **Across a pause
   and a resume** (measured at the pads with `scripts/bench/resume_dark_lead.py`,
   ~2 kHz through /dev/mem): a pause stops motion 317 ms after the command and
   HV_ENABLE drops with the watchdog 550 ms after it, so a pause shorter than
   about half a second never drops HV at all; on the resume HV_ENABLE and the
-  watchdog are back within ~3 ms while motion only restarts at ~219 ms — the
+  watchdog are back within ~3 ms while motion only restarts at ~219 ms - the
   chain re-arms ~216 ms **before** the first step, so a resumed cut loses
   nothing and no dark dwell is warranted. Naming note: the factory design
   labels this net **E-STOP**; entries in `CAMPAIGN-LOG.md` written before the
   2026-08-15 rename call it `estop`/`SW_ESTOP` with the pre-rename polarity
   (the DTS then declared the pin active-high, so the bit read HIGH at idle and
-  LOW through a run — the same physical behavior, inverted). The DTS now
+  LOW through a run - the same physical behavior, inverted). The DTS now
   declares it active-low, and the former `estop_halts_motion` /
   `MOTION.ESTOP_HALTS_MOTION` opt-in is gone: a real e-stop belongs in the
   lid-switch chain ([the safing chain](https://docs.forgefirm.org/technical/machine/safing-chain/)). Doors/door1/door2 stay stable during
@@ -1160,7 +1158,7 @@ is committed.
   idle in 86–91 ms, the return-home park starting ~300–340 ms after the edge and
   running to completion **with the lid still open**, the job reported
   `:cancelled`. A cancel from the app takes the same path. The button pauses a
-  print — controlled stop, then a 2000-tick laser-off backtrack — and resumes it
+  print - controlled stop, then a 2000-tick laser-off backtrack - and resumes it
   with a 1950-tick laser-off lead; the button **flashes white while paused**. A
   lid open while paused cancels the job and parks from where it stands. The lens
   hunt is not lid-gated.
@@ -1178,7 +1176,7 @@ is committed.
   `cnc/laser_latch` is write-only, so lock state is read from b3.
 - **Machine identity from OCOTP nvmem**: HW_OCOTP_MAC0 is the serial,
   base-23-encoded to the factory hostname (`BCDFGHJKMQRTVWXY2346789`, XXX-YYY)
-  — fuse-verified against the factory label, and the C implementation matches
+  - fuse-verified against the factory label, and the C implementation matches
   gfhardware `id.py` over 200 k random serials. The bench machine's actual
   values are deliberately not recorded here: this is a public document and a
   fuse identity cannot be rotated.
@@ -1188,17 +1186,17 @@ is committed.
 - eMMC (`mmcblk2`): 3.6 GiB user area + two 16 MiB hardware boot partitions
   (`mmcblk2boot0/1`). Factory user-area MBR (per the factory `.fw` manifest):
   p1/p2 = 200 MiB rootfs A/B at blocks 8192/417792, p3 = `/data` from block
-  827392 to end of disk. (The bench board ran the legacy ForgeFIRM layout —
-  p3 shrunk plus a p4 — until `slotmigrate` reclaimed it to the byte-exact
+  827392 to end of disk. (The bench board ran the legacy ForgeFIRM layout  - 
+  p3 shrunk plus a p4 - until `slotmigrate` reclaimed it to the byte-exact
   factory geometry.)
 - **U-Boot lives in boot0** at 1 KiB (IMX IVT header), not in the user area.
   Any boot0 rewrite below 0xC0000 risks the bootloader.
 - **Saved env**: user area 0x80000 with a redundant copy at 0x82000 (what
   `ffboot`/`fw_setenv` target; boot0's own 0x80000 region is zeros). Slot
-  selection = `mmcdev`/`mmchwpart`/`mmcpart`/`mmcroot`. Gap: `ffboot` sets
-  three of the four but never `mmchwpart` — it relies on the saved 0.
+  selection = `mmcdev`/`mmchwpart`/`mmcpart`/`mmcroot`. `ffboot` writes all four in
+  one transaction (`mmchwpart` 0, the user area).
 - **Default (compiled-in) env boots recovery**: `mmcdev=1 mmchwpart=1
-  boot_recovery=yes` — a blank or corrupt env lands in recovery mode, not a
+  boot_recovery=yes` - a blank or corrupt env lands in recovery mode, not a
   brick. `bootcmd`: select mmc dev+hwpart → load and import `/boot/uEnv.txt`
   from the selected partition → if `boot_recovery=yes`, boot kernel+DTB from
   raw boot0 sectors, else load `/boot/zImage` from the slot's rootfs. U-Boot
@@ -1225,7 +1223,7 @@ is committed.
   headroom.
 - **Facts about the factory 2024 firmware** (learned during the slot install):
   no `/factory/imgN` mounts, the generic `fw_env.config` points at the WRONG
-  device (use the per-device `fw_env_mmcblk2.config` — ffboot's selection
+  device (use the per-device `fw_env_mmcblk2.config` - ffboot's selection
   logic), no SSH (serial console only), and the factory kernel cannot see the
   SD card (`ffboot -s` needs `-f` from factory). Factory `/etc/version` is a
   numeric datetime stamp, so newest-slot selection is integer comparison.
@@ -1270,8 +1268,9 @@ feature requests, enhancements) will eventually be tracked as GitHub issues.
     from the authorized export, `scripts/release.sh`, the kas flip and the
     first GitHub release, per the site (Developers, "Release flow"), once
     ready to publish. Repoint the core submodule to
-    upstream if the `step_us_min` sizing fix merges.
-5. **Update system — recovery refresh.** A refreshed recovery image in
+    upstream once both local commits (the `step_us_min` sizing and the
+    hold-resume power re-assert) merge.
+5. **Update system - recovery refresh.** A refreshed recovery image in
     boot0; the design is on [install and update](https://docs.forgefirm.org/technical/forgefirm/install-and-update/).
 6. **Head IRQ (exploratory).**
     Owed for the head IRQ, only if a coarse hardware interrupt is wanted
@@ -1329,7 +1328,7 @@ covers the warm-up hold), the supply temperature window (the service sends
 the whole ADC range and the factory binds it to nothing; the supply is
 watched per job instead), the head, lid, interconnect and fused temperature
 ceilings (no sensor at those locations; the chassis is watched per job), the
-head accelerometer thresholds (item 6), the lid IR thresholds (the fire
+head accelerometer thresholds (the crash watch, on local knobs), the lid IR thresholds (the fire
 watch runs on local knobs; the header values stay ignored), the
 HV current caps (the sampled emission witness covers the idle case, and HV
 current is ranged per job), the thermal report upload conditions and the
@@ -1349,4 +1348,10 @@ pump flag. Beam detect stays with item 6.
     bound (`cloud_hold_max_s`); `FORGEFIRM_RELEASE` is 0.0.1, so the bench slot
     at v0.1.0 will meet the installer's downgrade prompt; the `faultpos`
     live-fire drill is gone; a coolant sensor unreadable for two ticks is the
-    SENSOR verdict.
+    SENSOR verdict. Bench measurements the audit asks for, pooled into the
+    same session: the reset-to-probe state of the 40 V enable, the heater
+    enable, the TEC enable and the laser-enable nets at the connector during
+    a cold boot (the pads are 100 k pull-ups until a driver probes; a net
+    that floats high gets a pull-down pad in the device tree); one forced
+    kernel hard hang to confirm that the bootloader's watchdog-timeout path
+    boots the factory recovery and that a power cycle returns from it.

@@ -8,8 +8,8 @@
 > [community forum](https://community.openglow.org).
 
 Open-source firmware for Glowforge brand CNC lasers. ForgeFIRM replaces the
-cloud-dependent factory software on the **stock control board** — no hardware
-modification — and gives the machine a local controller, a local web control
+cloud-dependent factory software on the **stock control board** - no hardware
+modification - and gives the machine a local controller, a local web control
 panel, and a standard Grbl interface.
 
 * [Latest Release](https://github.com/openglow-org/forgefirm/releases)
@@ -50,7 +50,7 @@ machine is idle:**
 
 The control board is common to Glowforge Basic, Plus, and Pro. The 5 MP
 (OV5648) camera modules are fully supported and hardware-validated. The 8 MP
-(OV8856) modules found in "HD" units have a complete capture path — the kernel
+(OV8856) modules found in "HD" units have a complete capture path - the kernel
 patches, device tree and sensor-aware capture profile they need are all in the
 build, but it has never run on an 8 MP machine, so treat it as untested.
 

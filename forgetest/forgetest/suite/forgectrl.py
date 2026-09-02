@@ -45,7 +45,7 @@ def auth(ctx):
     for path, params in (("/controller/stop", None), ("/controller/start", None),
                          ("/mode", {"controller": "grbl"}), ("/settings", {"ui_units": "mm"}),
                          ("/diag/flow-verify", None), ("/diag/abort", None),
-                         ("/update/apply", None), ("/boot", {"slot": "a"}),
+                         ("/update/apply", None), ("/boot", {"target": "a"}),
                          ("/system/reboot", None), ("/restore/factory", None)):
         st, body = fc.post(path, params=params, auth=False)
         ctx.log("POST %s (no token) -> %s %s", path, st, body if isinstance(body, dict) else "")

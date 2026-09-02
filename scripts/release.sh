@@ -10,7 +10,7 @@
 #                                      sign, checksums, stage, publish cmd
 #                                      (the acceptance gate reads
 #                                      releases/v<version>/acceptance.json)
-#   release.sh --dev                   build + pack a dev-signed .fw for
+#   release.sh --dev                   build + pack a dev-signed .fw of the dev image for
 #                                      the GUI upload path; no staging
 #
 # Environment:
@@ -89,6 +89,11 @@ if [ "$MODE" = "dev" ]; then
   KEY="${FORGEFIRM_DEV_KEY:?set FORGEFIRM_DEV_KEY to the dev signing key}"
   build_images
   resolve_ext4
+  # The dev archive carries the dev image (forgetest, the bench tools), not
+  # the release rootfs: what the panel's upload path installs on the bench
+  # is what the bench runs.
+  EXT4="${EXT4/forgefirm-image-glowforge/forgefirm-image-dev-glowforge}"
+  [ -f "$EXT4" ] || die "dev rootfs not found: $EXT4"
   check_size
   REL=$(sed -n 's/^FORGEFIRM_RELEASE ?= "\(.*\)"/\1/p' "$IMAGE_BB")
   DEVVER="v${REL}-dev-$(date +%Y%m%d%H%M%S)"

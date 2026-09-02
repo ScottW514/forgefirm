@@ -12,7 +12,7 @@
  * only updated in place. A poll that rebuilt them would swallow the click
  * it landed on: the button that took the mousedown would be gone before
  * the mouseup, so no click event would ever be raised. Every action also
- * greys its control out on the press and pulls the next poll forward, so
+ * grays its control out on the press and pulls the next poll forward, so
  * the page answers the operator rather than the timer. The help popovers
  * (help.js) sit on static elements only, so no rebuild ever orphans one.
  *
@@ -56,7 +56,7 @@ function schedule(ms){if(pollTimer)window.clearTimeout(pollTimer);pollTimer=wind
 function kick(){schedule(120)}
 function poll(){if(polling){schedule(150);return}polling=true;
  /* While an action is still in flight the state is asked for in full:
-    a 304 would skip the render that releases the greyed-out buttons. */
+    a 304 would skip the render that releases the grayed-out buttons. */
  var h=(stateEtag&&!pending)?{'If-None-Match':stateEtag}:null;
  api('GET','/state',null,function(s,d,x){polling=false;
   if(s===200){stateEtag=x.getResponseHeader('ETag');state=d;
@@ -72,7 +72,7 @@ function setIgnoreReq(on){ignoreReq=!!on;try{window.localStorage.setItem('forget
  $('ignreq').checked=ignoreReq;setHtml($('ignreqon'),ignoreReq?"<span class='on'>ON - prerequisites are not enforced</span>":'');
  if(state&&catalog)renderGroups()}
 /* A start already sent but not yet seen in the state counts as busy, so
-   the buttons grey out on the click rather than on the next poll. The
+   the buttons gray out on the click rather than on the next poll. The
    window is capped in case the answer never arrives. A queue holds the
    machine between its tests as well as during them. */
 function batchActive(){return !!(state&&state.batch&&!state.batch.finished)}

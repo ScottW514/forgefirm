@@ -337,6 +337,25 @@ def pidof(comm):
     return out
 
 
+def pgrep_f(needle):
+    """PIDs whose /proc/<pid>/cmdline contains needle (a script run by an
+    interpreter has the interpreter's comm, so pidof cannot see it)."""
+    out = []
+    try:
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit():
+                continue
+            try:
+                with open("/proc/%s/cmdline" % pid, "rb") as f:
+                    if needle.encode() in f.read():
+                        out.append(int(pid))
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return out
+
+
 def run(cmd, timeout=60):
     """Run a command list; returns (rc, combined output)."""
     try:

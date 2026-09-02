@@ -43,11 +43,7 @@ ADC_F = 1024.0 * 1.3
 RINF = 10000.0 * math.exp(-3380.0 / 298.15)
 
 
-def degc(raw):
-    if raw is None or raw <= 0 or raw >= ADC_F:
-        return float('nan')
-    r = 10000.0 / (ADC_F / raw - 1.0)
-    return 3380.0 / math.log(r / RINF) - 273.15
+from gfbench import degc
 
 
 def rd(path):

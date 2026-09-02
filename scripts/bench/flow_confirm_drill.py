@@ -62,9 +62,7 @@ def temps():
     adc_f = 1024.0 * 1.3
     rinf = 10000.0 * math.exp(-3380.0 / 298.15)
 
-    def degc(raw):
-        r = 10000.0 / (adc_f / float(raw) - 1.0)
-        return 3380.0 / math.log(r / rinf) - 273.15
+    from gfbench import degc
     with open('/sys/glowforge/pic/water_temp_1') as f:
         d = degc(f.read())
     with open('/sys/glowforge/pic/water_temp_2') as f:

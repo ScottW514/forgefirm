@@ -1,5 +1,5 @@
 # ============================================================================
-# ForgeFIRM — kas build configuration  (factory Glowforge control board)
+# ForgeFIRM - kas build configuration  (factory Glowforge control board)
 # ============================================================================
 # The forgefirm repo is the BASE: it controls the build, the output firmware
 # images land here (build/tmp/deploy/images/glowforge/), and the status docs
@@ -31,10 +31,10 @@ target: forgefirm-image
 
 # kas uses KAS_WORK_DIR (the dir you run kas from = the forgefirm repo root).
 # Upstream layers are cloned into ./layers/, the build runs in ./build/, and
-# caches go in ./downloads + ./sstate-cache — all gitignored, all inside forgefirm.
+# caches go in ./downloads + ./sstate-cache - all gitignored, all inside forgefirm.
 repos:
 
-  # --- This repo (forgefirm) — auto-detected, no url/path needed -------------
+  # --- This repo (forgefirm) - auto-detected, no url/path needed -------------
   forgefirm:
     layers:
       meta-forgefirm:
@@ -73,7 +73,7 @@ repos:
     layers:
       .:
 
-  # --- meta-openglow — Glowforge BSP layers ---------------------------------
+  # --- meta-openglow - Glowforge BSP layers ---------------------------------
   # Referenced as a local sibling checkout (no url => kas performs no git ops,
   # so in-place BSP edits are what gets built). The kernel-module-glowforge
   # sources are NOT a layer; the kernel-module-glowforge.bb recipe fetches them
@@ -98,14 +98,14 @@ repos:
 # local.conf additions
 # ----------------------------------------------------------------------------
 local_conf_header:
-  # Accept the NXP/Freescale firmware EULA — required to unpack firmware-imx
+  # Accept the NXP/Freescale firmware EULA - required to unpack firmware-imx
   # (i.MX SDMA/VPU firmware blobs) pulled in by the i.MX6 BSP. ForgeFIRM targets
   # the factory i.MX6 Glowforge board, so this firmware is intrinsic to the image.
   eula: |
     ACCEPT_FSL_EULA = "1"
 
   # The kernel defaults to linux-fslc 6.12 in conf/machine/glowforge.conf
-  # (with the factory drivers forward-ported — EPIT/SDMA/OV5648/glowforge.ko —
+  # (with the factory drivers forward-ported - EPIT/SDMA/OV5648/glowforge.ko  - 
   # see the site, Developers, "Build"). This explicit pin is redundant but harmless.
   kernel: |
     PREFERRED_PROVIDER_virtual/kernel = "linux-fslc"

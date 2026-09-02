@@ -1215,7 +1215,7 @@ def lid_interlock_abort_body(ctx, ev, off, job, offset):
              "The job is longer than the ring holds, so the ring is filled before the button "
              "lights; that takes a minute. When the button lights white, do NOT press it - open "
              "the lid, and close it when told. Nothing moves and nothing fires."],
-      description="A cloud print waiting for the button is cancelled by the lid: the wait ends "
+      description="A cloud print waiting for the button is canceled by the lid: the wait ends "
                   "with the lid named as the reason, the laser latch relocks, the armed window "
                   "closes, no run starts, and the job ends ':cancelled'. The job is longer than "
                   "the ring, so its feeder is alive through the wait with the rest of the print "
@@ -1285,7 +1285,7 @@ def lid_during_button_wait_body(ctx, ev, off, job, offset):
     ctx.act("lid", "close")
     settle_cloud(ctx, offset)
     ev["events"] = offline_events(off)
-    ctx.log("PASS: lid open at the button prompt cancelled the print; latch locked, armed=false, "
+    ctx.log("PASS: lid open at the button prompt canceled the print; latch locked, armed=false, "
             "button dark, ring empty with the feed stopped")
 
 
@@ -1422,7 +1422,7 @@ def pause_resume(ctx):
     relocked = [ln for ln in log_lines_since(GFCLOUD_LOG, offset)
                 if "relocking the laser" in ln or ("print [" in ln and CANCELLED in ln)]
     ev["relock_or_cancel_lines"] = len(relocked)
-    ctx.check(not relocked, "the pause relocked or cancelled the job (%s)", relocked[:2])
+    ctx.check(not relocked, "the pause relocked or canceled the job (%s)", relocked[:2])
 
     # The job's lifecycle, from the same print: a warm-up before the first
     # fire and a rest after the park are equipment protection the service
@@ -1587,8 +1587,8 @@ def oversize_stream_body(ctx, ev, off, job, offset, before):
     # or interlock abort - stop, park back to the job start, relock,
     # disarm, ':cancelled' - judged in full.
     off.cancel(9004)
-    ctx.log("cancelled the print as the app would")
-    svc_stop = "action cancelled mid-run; stopping motion"
+    ctx.log("canceled the print as the app would")
+    svc_stop = "action canceled mid-run; stopping motion"
     got = wait_log(ctx, offset, [svc_stop, "start return home", "return home complete"], 300)
     fin = wait_action_finished(ctx, offset, "print", 60)
     ev["service_cancel"] = {k: message(v) for k, v in got.items()}
@@ -1596,7 +1596,7 @@ def oversize_stream_body(ctx, ev, off, job, offset, before):
     for k, v in ev["service_cancel"].items():
         ctx.log("  [cancel] %s: %s", k, "seen" if v else "MISSING")
     ctx.check(got[svc_stop], "the app's cancel did not stop the run")
-    ctx.check(got["return home complete"], "the cancelled print did not park to completion")
+    ctx.check(got["return home complete"], "the canceled print did not park to completion")
     judge_abort_tail(ctx, ev, offset, "app", fin)
     ctx.check(hw.sysfs_int("cnc/streaming", 0) == 0,
               "the device was left in live-feed mode after the job ended")
@@ -1610,7 +1610,7 @@ def oversize_stream_body(ctx, ev, off, job, offset, before):
             "stopped it, parked, relocked and reported ':cancelled'")
 
 
-@test("cloud.paused-lid-cancel", title="A paused cloud print is cancelled by the lid",
+@test("cloud.paused-lid-cancel", title="A paused cloud print is canceled by the lid",
       subsystem="cloud", kind="live", est_min=6,
       covers=_MACHINE_RUN, requires=["cloud.pause-resume", "cloud.lid-interlock-abort"],
       actions=["button", "lid"],
@@ -1618,7 +1618,7 @@ def oversize_stream_body(ctx, ev, off, job, offset, before):
              "The head needs 40 mm of free +X and +Y travel.",
              "Press the button to start; when asked, press it again (pause), then open the lid and "
              "leave it open until the head is back; close it when told."],
-      description="A job paused on the button is cancelled by the lid, from the state the factory "
+      description="A job paused on the button is canceled by the lid, from the state the factory "
                   "ends it in - there is no resume past a lid open. The same tail as every abort: "
                   "the motion stops, the head parks back at the job start, the latch relocks and "
                   "the armed window closes, the button goes dark, and the print ends ':cancelled'. "
@@ -1666,12 +1666,12 @@ def paused_lid_cancel_body(ctx, ev, off, job, offset):
     st, cs = ctx.forgectrl.get("/cool/status")
     ev["armed_after"] = cs.get("armed") if isinstance(cs, dict) else None
     ev["latch_locked_after"] = latch_locked()
-    ctx.check(not ev["armed_after"], "armed window still open after the paused print was cancelled")
+    ctx.check(not ev["armed_after"], "armed window still open after the paused print was canceled")
     ctx.check(ev["latch_locked_after"],
-              "kernel latch not locked after the paused print was cancelled")
+              "kernel latch not locked after the paused print was canceled")
     ev["button_dark"] = hw.button_lit()
     ctx.check(ev["button_dark"] is False, "the button is still lit after the cancel (%s)", ev["button_dark"])
     ctx.act("lid", "close")
     settle_cloud(ctx, offset)
     ev["events"] = offline_events(off)
-    ctx.log("PASS: a paused print cancelled by the lid stopped, parked, relocked and reported ':cancelled'")
+    ctx.log("PASS: a paused print canceled by the lid stopped, parked, relocked and reported ':cancelled'")

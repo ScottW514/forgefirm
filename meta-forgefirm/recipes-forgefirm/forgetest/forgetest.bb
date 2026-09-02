@@ -12,10 +12,20 @@ LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda
 # that builds the images, so the catalog and the gate agree by construction.
 FILESEXTRAPATHS:prepend := "${THISDIR}/../../../:"
 
+# The package directory and the init script, not the tool's whole tree: the
+# host unit tests and their caches would otherwise enter the fetch checksum
+# and rebuild the dev image after a workstation test run.
 SRC_URI = " \
-    file://forgetest/ \
+    file://forgetest/forgetest/ \
+    file://forgetest/forgetest.init \
     file://scripts/bench/ \
 "
+
+do_unpack:append() {
+    import subprocess
+    subprocess.call(['find', d.getVar('WORKDIR') + '/forgetest', d.getVar('WORKDIR') + '/scripts',
+                     '-name', '__pycache__', '-type', 'd', '-prune', '-exec', 'rm', '-rf', '{}', '+'])
+}
 
 S = "${WORKDIR}"
 

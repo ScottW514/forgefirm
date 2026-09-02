@@ -20,7 +20,7 @@ DESCRIPTION = "OpenGlow/ForgeFIRM image for Glowforge"
 # nothing here imports. Each Python recipe declares the module packages it
 # imports (python3-core plus the few it uses), so the meta-package goes.
 FORGEFIRM_RELEASE_TRIM ?= "nano"
-IMAGE_INSTALL:remove = "gfui-client python3 ${FORGEFIRM_RELEASE_TRIM}"
+IMAGE_INSTALL:remove = "python3 ${FORGEFIRM_RELEASE_TRIM}"
 
 # grblhal-glowforge: the grblHAL motion controller (Grbl over TCP:23).
 # forgectrl: the ForgeFIRM machine-services daemon (HTTP :8080): controller

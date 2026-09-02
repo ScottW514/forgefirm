@@ -28,8 +28,9 @@ Drills (pass a name):
             (default 300) on scrap, sampled like `witness`. Prints the
             per-channel peak delta over the ambient baseline and the
             engine's own "run telemetry" line is the record. Run it
-            >= 3 times on representative material; the highest peak
-            delta sizes cool_fire_ir_delta.
+            >= 3 times on representative material; the highest peaks
+            are what the engine's cool_fire_q1/q2 alert and critical
+            thresholds (absolute counts) must sit above.
               ircut [S] [F]             e.g. ircut 1000 300
   pthresh   Laser power-threshold ladder: one line per power level on
             scrap, climbing from 2 % to 30 % of full, at constant power
@@ -196,8 +197,29 @@ def panel_token():
     except OSError:
         return ''
 
-# Ambient lid-IR baseline (2026-08-14, lid closed, idle): per-channel means.
-IR_BASELINE = [37.3, 36.3, 39.5, 40.0]
+
+def sample_ir_baseline(seconds=3.0):
+    """Per-channel lid-IR means at idle, lid closed, taken before the job:
+    the baseline this run is judged against (never a stored one)."""
+    acc = [0.0, 0.0, 0.0, 0.0]
+    n = 0
+    t_end = time.time() + seconds
+    while time.time() < t_end:
+        s = sample_forgectrl()
+        if s and s['ir'] and len(s['ir']) == 4:
+            for i in range(4):
+                acc[i] += s['ir'][i]
+            n += 1
+        time.sleep(0.25)
+    if not n:
+        return None
+    return [round(a / n, 1) for a in acc]
+
+
+def ir_delta(peak, base):
+    if base is None:
+        return ['n/a'] * 4
+    return [round(peak[i] - base[i], 1) for i in range(4)]
 
 
 def get_json(path):
@@ -394,6 +416,7 @@ def drill_witness(g):
         'G90',
         'M2',                   # program end: X-3 job-based disarm trigger
     ]
+    ir_base = sample_ir_baseline()
     samples = run_and_sample(g, job)
     # Analysis.
     emis = [s['emission'] for s in samples if s['emission'] is not None]
@@ -415,8 +438,7 @@ def drill_witness(g):
     print('pgood_samples during job: peak=%s (>=128 = power-good)'
           % (max(pgood_vals) if pgood_vals else '-'))
     print('lid_ir peak=%s vs baseline=%s  delta=%s'
-          % (ir_peak, IR_BASELINE,
-             [round(ir_peak[i] - IR_BASELINE[i], 1) for i in range(4)]))
+          % (ir_peak, ir_base, ir_delta(ir_peak, ir_base)))
     print('hv_current range: %s..%s' % (min(hv_vals) if hv_vals else '-',
                                         max(hv_vals) if hv_vals else '-'))
     print('armed observed during job: %s' % armed_seen)
@@ -436,10 +458,11 @@ def drill_witness(g):
           % (round(disarm_dt, 1) if disarm_dt is not None else '>75 (REVIEW)'))
     ok = peak_emis > 0 and end_emis == 0
     print('WITNESS emission %s' % ('PASS' if ok else 'REVIEW - see values above'))
-    # Emit the recommended cool_fire_ir_delta floor.
-    worst = max(ir_peak[i] - IR_BASELINE[i] for i in range(4))
-    print('suggest cool_fire_ir_delta >= max(15, %.0f) once several jobs '
-          'confirm the peak delta' % (2 * worst if worst > 0 else 15))
+    # The engine's fire watch trips on absolute lid-IR counts, per quartile
+    # pair (cool_fire_q1_alert / _critical, cool_fire_q2_alert / _critical):
+    # the peaks above are what those thresholds must clear on a clean job.
+    print('fire-watch thresholds must sit above these peaks: %s '
+          '(cool_fire_q1_* for channels 1-2, cool_fire_q2_* for 3-4)' % ir_peak)
     return samples
 
 
@@ -502,6 +525,7 @@ def drill_ircut(g):
         'G1 X-30 F%d' % feed, 'G1 Y-30 F%d' % feed,
         'M5', 'G90', 'M2',
     ]
+    ir_base = sample_ir_baseline()
     samples = run_and_sample(g, job, overall_timeout=400)
     ir_peak = [0, 0, 0, 0]
     ir_min = [10 ** 6] * 4
@@ -522,14 +546,13 @@ def drill_ircut(g):
     print('\n--- results ---')
     print('samples: %d  emission peak=%s  fire_watch states=%s'
           % (len(samples), max(emis) if emis else '-', sorted(fw)))
-    delta = [round(ir_peak[i] - IR_BASELINE[i], 1) for i in range(4)]
+    delta = ir_delta(ir_peak, ir_base)
     print('lid_ir min=%s peak=%s baseline=%s  peak delta=%s'
-          % (ir_min, ir_peak, IR_BASELINE, delta))
+          % (ir_min, ir_peak, ir_base, delta))
     print('hv_current range: %s..%s' % (min(hv_vals) if hv_vals else '-',
                                         max(hv_vals) if hv_vals else '-'))
-    worst = max(delta)
-    print('worst peak delta this job: %s counts -> cool_fire_ir_delta must sit '
-          'above the worst across ALL jobs (>= 2x it, never < 15)' % worst)
+    print('worst peaks this job: %s counts -> the cool_fire_q1/q2 alert '
+          'thresholds must sit above the worst across ALL jobs' % ir_peak)
     print('the engine logged its own "run telemetry: lid IR ..." line for this job')
     return samples
 
@@ -961,20 +984,7 @@ def _linfit(xs, ys):
     return a, b, r2
 
 
-def _degc(raw):
-    """The factory coolant conversion when gfbench is importable (on the
-    board, or with GF_HOST set), else None and the raw count is quoted.
-    The helper lives beside this file in the repo and under the bench
-    directory on the dev image; a copy staged elsewhere still finds it."""
-    for d in (os.path.dirname(os.path.abspath(__file__)),
-              '/usr/share/forgetest/bench'):
-        if d not in sys.path:
-            sys.path.append(d)
-    try:
-        from gfbench import degc
-    except (ImportError, SystemExit):
-        return None
-    return degc(raw)
+from gfbench import degc as _degc
 
 
 def pcurve_levels(g, pcts):

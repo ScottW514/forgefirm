@@ -757,7 +757,7 @@ class CloudSuiteTests(unittest.TestCase):
         self.hunted(1522)
         self.append(["2026-08-17T09:41:00.500000+00:00 gfcloud[1522] INFO websocket:_on_open RX-EVENT: ready"])
         lines = [l.replace("machine:_resume_retraced resuming (laser lead 1950 ticks)",
-                           "machine:_resume_retraced resume refused ([Errno 22] Invalid argument); cancelling")
+                           "machine:_resume_retraced resume refused ([Errno 22] Invalid argument); canceling")
                  for l in fixture("pause")]
         pre, rest = cut(lines, "current state: MachineState.RUNNING")
         pre, rest = pre + [rest[0]], rest[1:]
@@ -972,7 +972,7 @@ class CloudSuiteTests(unittest.TestCase):
         hooks = {"press it. The print then waits": lambda: self.append(wait + run[:1], delay=0.05)}
         self.assertFails(cloud.verdict_hold, "the run started under the warm-up hold", hooks=hooks)
 
-    # -- a paused print cancelled by the lid, a running one by the app --------
+    # -- a paused print canceled by the lid, a running one by the app --------
     def cancel_parts(self):
         """(print prologue, the pause lines, the lid stop + park + cancel,
         the same tail with the app's cancel as the trigger - what
@@ -986,7 +986,7 @@ class CloudSuiteTests(unittest.TestCase):
                   "2026-08-17T09:42:26.100000+00:00 gfcloud[1522] INFO machine:_run_loop "
                   "paused at Position(x=41.2, y=17.0, z=0.0)"]
         app_cancel = [l.replace("lid opened mid-run; stopping motion",
-                                "action cancelled mid-run; stopping motion") for l in rest]
+                                "action canceled mid-run; stopping motion") for l in rest]
         return pre, paused, rest, app_cancel
 
     def test_paused_lid_cancel_on_the_bench_excerpt(self):
@@ -1009,7 +1009,7 @@ class CloudSuiteTests(unittest.TestCase):
         self.assertFalse(ev["armed_after"])
         self.assertFalse(ev["button_dark"])
         self.assertEqual(self.fc.posts, [])
-        self.assertTrue(any("PASS: a paused print cancelled by the lid" in l for l in run.lines), run.lines)
+        self.assertTrue(any("PASS: a paused print canceled by the lid" in l for l in run.lines), run.lines)
 
     def test_paused_lid_cancel_fails_when_the_paused_print_resumes_instead(self):
         # a lid that resumed (or was ignored) leaves the print ':completed'

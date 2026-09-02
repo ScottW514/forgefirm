@@ -114,7 +114,7 @@ def forgefirm_manifest_sha256_file(path):
     return h.hexdigest()
 
 python forgefirm_manifest_assemble() {
-    import glob, hashlib, json, os
+    import glob, hashlib, json, os, re
 
     rootfs = d.getVar('IMAGE_ROOTFS')
     components = {}
@@ -145,7 +145,12 @@ python forgefirm_manifest_assemble() {
 
     layer_identity, layer_build = forgefirm_manifest_layers(d)
     platform = {'machine': d.getVar('MACHINE'), 'layers': layer_identity}
-    platform['kernel_modules'] = sorted(os.listdir(os.path.join(rootfs, 'lib', 'modules'))) \
+    # The modules directory carries the kernel's LOCALVERSION_AUTO hash,
+    # which does not reproduce across a re-patch of the same source; the
+    # kernel's identity is its pinned SRCREV and config (the @srcrev and
+    # @config entries above), so the hash is stripped from the name here.
+    platform['kernel_modules'] = sorted(re.sub(r'[+-]g[0-9a-f]{7,}$', '', n)
+                                        for n in os.listdir(os.path.join(rootfs, 'lib', 'modules'))) \
         if os.path.isdir(os.path.join(rootfs, 'lib', 'modules')) else []
     dtbs = {}
     for p in sorted(glob.glob(os.path.join(rootfs, 'boot', '**', '*.dtb'), recursive=True)):

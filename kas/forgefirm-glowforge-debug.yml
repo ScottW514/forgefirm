@@ -1,5 +1,5 @@
 # ============================================================================
-# ForgeFIRM — debug-kernel build variant
+# ForgeFIRM - debug-kernel build variant
 # ============================================================================
 # One target: a dev image whose kernel carries the lock-correctness options
 # (DEBUG_MUTEXES, PROVE_LOCKING, DEBUG_ATOMIC_SLEEP, DEBUG_SPINLOCK). It rides

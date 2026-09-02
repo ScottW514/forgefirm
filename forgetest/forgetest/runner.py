@@ -500,9 +500,13 @@ class Takeover:
         rc, out = hw.initd("forgectrl", "stop")
         log("takeover: forgectrl stop -> rc %s" % rc)
         deadline = time.time() + 15
-        while time.time() < deadline and (hw.pidof("forgectrl") or hw.pidof("grblHAL_glowfor")):
+        # Every holder of the pulse device: the daemon, the GRBL controller,
+        # and the cloud client (a script, so found by its command line).
+        def holders():
+            return hw.pidof("forgectrl") + hw.pidof("grblHAL_glowfor") + hw.pgrep_f("gfcloud.py")
+        while time.time() < deadline and holders():
             time.sleep(0.5)
-        left = hw.pidof("forgectrl") + hw.pidof("grblHAL_glowfor")
+        left = holders()
         if left:
             self.__exit__(None, None, None)
             raise Failed("takeover: processes still alive after stop: %s" % left)
