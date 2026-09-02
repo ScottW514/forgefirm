@@ -13,11 +13,11 @@
  * What the operator must read mid-run (the steps, prompts, notices and
  * the live-laser acknowledgment) stays in the page and never moves here.
  */
-var DOC_BASE = 'https://docs.openglow.org/forgefirm/';
+var DOC_BASE = 'https://docs.forgefirm.org/';
 var HELP = {
   campaign: {
     t: 'Campaign',
-    d: 'acceptance/campaign',
+    d: 'developers/acceptance/',
     p: [
       'A release is authorized when a campaign is open on this image and every catalog test is satisfied: by a PASS in the campaign, or (never for the core) by an earlier PASS whose domain fingerprint is unchanged. A FAIL ends the campaign.',
       'The manifest identity is the image, the catalog hash is the test set; either changing starts the count over.'
@@ -25,7 +25,7 @@ var HELP = {
   },
   queues: {
     t: 'Run what is left',
-    d: 'acceptance/queues',
+    d: 'developers/acceptance/',
     p: [
       'Each queue takes every test of its kind that the campaign does not already count as satisfied, runs them one at a time in prerequisite order, and stops on the first result that is not a PASS.',
       'The unattended queue needs nobody in the room; with the bench fixture up, the operator tests it can perform by itself run there too. The other one does: it prompts, and it fires the laser. Stop-the-queue cancels what is still waiting and lets the run in progress finish; Abort ends that one too.'
@@ -33,7 +33,7 @@ var HELP = {
   },
   actions: {
     t: 'Campaign actions',
-    d: 'acceptance/actions',
+    d: 'developers/acceptance/',
     p: [
       'Export builds the release artifact the release gate reads (acceptance.json, with acceptance.md for people) from the campaign as it stands. The raw log is the append-only record; the journal is the daemon\'s own.',
       'Invalidate all forces a full campaign; give the reason. Reset campaign closes the open campaign without invalidating anything: earlier passes stay inheritable under the campaign rules, and the next Start opens a new one.'
@@ -41,14 +41,14 @@ var HELP = {
   },
   ignore: {
     t: 'Ignore prerequisites',
-    d: 'acceptance/prerequisites',
+    d: 'developers/acceptance/',
     p: [
       'A test\'s requires list only orders the runs. With the switch on, any test starts alone and its record notes which prerequisites were unmet; the release still needs every test satisfied.'
     ]
   },
   bench: {
     t: 'Bench diagnostics',
-    d: 'bench/tools',
+    d: 'developers/bench/',
     p: [
       'The bench tools under scripts/bench, run on the board with their output in the Run pane. Nothing here enters a campaign. Tools not yet ported are listed for completeness.',
       'Live tools need the operator acknowledgment; takeover and scope tools stop forgectrl for the duration and start it again when they finish.'

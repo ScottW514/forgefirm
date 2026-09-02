@@ -440,7 +440,7 @@ One ulfius daemon serves it all:
 
 - `GET /` — the tabbed control panel (**Status / Machine / GF Cloud / GRBL /
   Diagnostics / Logs / System**; sources in `forgectrl/src/ui/`,
-  `index.html` + `panel.css` + `panel.js`, bundled into the binary by
+  `index.html`, `panel.js`, `forms.js`, `help.js` and `theme.css`, bundled into the binary by
   `embed.cmake`; `tools/devserver.py` and the repo's `.devcontainer/` serve the
   same panel on a workstation against a live board or a mock). Status carries
   the controller-mode selector, the operational dashboard, a scaled lid
@@ -461,11 +461,10 @@ One ulfius daemon serves it all:
   and 409 while a diagnostic owns the hardware; a multi-key POST lands as one
   atomic replace. Keys: `controller_mode`, `homing_mode`, `gfcloud_home_x/y/z`,
   `gfcloud_home_timeout_s`, `gf_serial`, `gf_password`, `ui_units`,
-  `wifi_country`, the nine `cool_*` tunables, `laser_button_timeout_s`,
+  `wifi_country`, the thirty `cool_*` tunables, `laser_button_timeout_s`,
   `laser_disarm_s`, `rail_settle_s`, `lid_lamp_idle`, `lid_policy`,
-  `cloud_pause_backtrack_ticks`, `cloud_resume_lead_ticks`, the twelve
+  `cloud_pause_backtrack_ticks`, `cloud_resume_lead_ticks`, `cloud_hold_max_s`, the twelve
   `log_<logger>_disk|_remote` levels and `syslog_server|port|proto`.
-  `cool_fire_ir_delta` is a hand-edited conf key, not a panel setting.
 - `GET /mode`, `POST /mode?controller=grbl|cloud` — the supervisor: current
   mode, controller state (`running | stopped | standby | motion-fault`), pid,
   and the motion-liveness verdict (`verified | unverified | fault`); the POST is
@@ -592,9 +591,17 @@ hard-abort at 48 °C downstream:
   gates between; reports both bands and recommends threshold = (flow max +
   no-flow min)/2 with an Apply button, or refuses when the gap is under 3 °C.
 
-**Cooling tunables are conf-backed**: the nine `cool_*` keys (`flow_rise`,
-`flow_heater_pct`, `flow_check_s`, `recheck_s`, `confirm_max_s`, `temp_max`,
-`temp_resume`, `cooldown_s`, `cooldown_max_s`) live in `/data/forgefirm.conf`
+**Cooling tunables are conf-backed**: the thirty `cool_*` keys (the flow
+check: `flow_rise`, `flow_heater_pct`, `flow_check_s`, `recheck_s`,
+`confirm_max_s`, `laser_heat_cw`, `laser_heat_density`, `aa_offset_counts`;
+the temperatures: `temp_max`, `temp_resume`, `temp_critical_c`, `temp_min`,
+`temp_start`; the TEC: `tec_present`, `tec_on_c`, `tec_off_c`; the fire
+watch: `fire_q1_alert`, `fire_q1_critical`, `fire_q2_alert`,
+`fire_q2_critical`; the crash watch: `accel_x_alert`, `accel_y_alert`,
+`accel_abort`; the cooldown: `cooldown_s`, `cooldown_max_s`; the airflow
+gates: `tach_exhaust_min_rpm`, `tach_intake_min_rpm`,
+`tach_air_assist_min_rpm`, `purge_min_current`, `fan_grace_s`) live in
+`/data/forgefirm.conf`
 (Machine tab, validated ranges), and the cooling engine re-reads them at **every
 run start** (env `GFCOOL_*` > conf > compiled default; env stays the bench
 override and wins for the process lifetime).
