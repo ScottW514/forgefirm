@@ -1357,9 +1357,12 @@ pump flag. Beam detect stays with item 6.
     reset and `$X`: the stream fault is a critical alarm, which the core
     unlocks only after a reset, and the reset is what re-arms the stream),
     and the `cooling.*` set); then the push in CI order and the pin bumps.
-    The session runs on image 20260902144848; the harness and diagnostic
-    defects its first pass found are fixed in local commits (the dated record
-    is in CAMPAIGN-LOG).
+    The session's queues are green on image 20260902144848, the unattended
+    set and the attended set both (2026-09-02); the harness and diagnostic
+    defects they found are fixed in local commits (the dated record is in
+    CAMPAIGN-LOG). Owed now: the two bench measurements below, the pushes in
+    CI order, the pin bumps, one image build, and the campaign on that image,
+    which the release gate asks for.
     Decisions taken in the remediation that the operator confirms or reverses:
     the release image has no shell login (the install page now says so); the
     cloud client holds and resumes on the cooling verdict with a 30-minute

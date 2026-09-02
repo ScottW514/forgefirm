@@ -7219,6 +7219,74 @@ ones, all hot-deployed; the manifest still names the pins the image was
 built from until the next flash. `/tmp` is empty and `/data` holds nothing
 of the session's. The head was returned to its start by the baselines.
 
+## 2026-09-02: the pooled bench session, second pass: the attended set
+
+The attended queue ran on image 20260902144848 later the same day and
+passed in full: `laser.emission-witness` (on its fifth run; the four
+before it are below), `cooling.flow-under-load`, `laser.m5-rapid-dark`,
+`laser.disarm-in-hold`, `laser.armed-kill`, `laser.pause-resume-lid-cancel`,
+`cloud.service-protocol`, `cloud.lid-interlock-abort`, `cloud.pause-resume`,
+`cloud.oversize-stream` and `cloud.paused-lid-cancel`, and the always
+core ran green once more behind them (21:50 to 21:52 UTC). The campaign
+was not run again after the last harness change of the day (the cooling
+implementation hashes moved), by the operator's decision: the image
+built from the pushed pins gets its own campaign, and the release gate
+asks for that one anyway.
+
+Three more defects, none in the image:
+
+1. `laser.emission-witness`'s dwell-gap latch rule (forgefirm 85d266e,
+   2026-08-31, its first runs under fire) refused three clean runs. It
+   required the hardware button latch clear in every sample the engine
+   reported armed and then, after a first fix, in every sample up to the
+   last nonzero emission count; both windows came from lagging signals
+   (the engine's armed flag follows the controller's next report, the
+   emission counter latches once per second and reads nonzero about two
+   seconds past the relock) and reached into the tail where the job-end
+   relock sets the latch by design. The machine was right every time:
+   all four sides burned, and the per-sample trail the drill keeps now
+   shows the latch clear from the press to the relock, emission through
+   the fourth side, HV_ENABLE's dip in the dwell and its return. The rule
+   judges the hardware's own window now, from the first emission in every
+   sample whose readback word shows the laser latch unlocked, both bits
+   from that word, and the third run's recorded trail replays to a pass.
+   A fourth run errored on a name the refactor had removed and one later
+   check still used, which py_compile cannot catch and a live drill never
+   executes on the host; the CI job fails on any undefined name in the
+   harness now (forgefirm 970f10a).
+2. The daemon dropped 18 to 46 log lines at every job start ("fflog: N
+   message(s) dropped (syslog socket unavailable or full)"), the named
+   safing writes among the lines at risk. The kernel's queue for a unix
+   datagram socket is 10 datagrams and the engine's arm-time settings
+   dump alone was 18 in two milliseconds. The logging init sets
+   `net.unix.max_dgram_qlen` to 512 before rsyslog and the daemons start
+   (forgefirm 3bb16a4; set at runtime on the board for the rest of the
+   session), the dump is one line, and the four engine paths that safe the
+   machine write their stop and lock before their log line rather than
+   after (forgectrl 5c6ee35).
+3. The exhaust ran at 6200 rpm on an idle machine after
+   `kernel.fire-line`'s takeover restarted forgectrl with the kernel in the
+   drill's safe state (disabled). The remediation's busy-start rule took
+   the cooldown airflow, as it should over a live cut, but left the engine
+   in its idle state, which never re-applies its own duties, so the
+   posture had no exit unless a job opened a session. The engine remembers
+   a busy start and takes the idle duties on the first tick that finds the
+   machine idle with no session (forgectrl 522cdb2).
+   `cooling.fans-quiet-after-motion` gained the case: forgectrl stopped,
+   `cnc/disable` written, forgectrl started; the busy start logged, idle
+   airflow one tick later, the duties idle within 15 s (forgefirm
+   9258dea). Seen beside it and left as designed: after every
+   takeover restart the supervisor's first liveness probe finds no motion
+   and its ladder cycles the rail for 5 s before the retry passes, the
+   DRV8825 wedge on the rail power-up that disable-then-enable causes.
+
+The board at the end of the day: the image's forgectrl replaced by the
+522cdb2 build, the forgetest suite files and runner as committed, the
+datagram queue at 512 until the next boot; `/tmp` empty, `/data`
+untouched. Owed, in order: the two bench measurements BRINGUP item 9
+lists, the pushes in CI order (forgefirm first), the pin bumps with
+`bitbake -c fetch`, one image build, and the campaign on that image.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis
