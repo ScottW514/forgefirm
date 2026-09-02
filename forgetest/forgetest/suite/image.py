@@ -41,6 +41,20 @@ def kernel_config():
     return cfg
 
 
+def kernel_ident(name):
+    """A kernel release or modules-directory name less its LOCALVERSION_AUTO
+    hash (+g<hash> or -g<hash>). The hash does not reproduce across a
+    re-patch of the same source; the manifest lists modules directories
+    without it, and the kernel's identity is its @srcrev and @config."""
+    return re.sub(r"[+-]g[0-9a-f]{7,}$", "", name)
+
+
+def kernel_matches(release, modules_dirs):
+    """True when the running release names one of the manifest's modules
+    directories, hashes aside (a manifest without them constrains nothing)."""
+    return not modules_dirs or kernel_ident(release) in {kernel_ident(m) for m in modules_dirs}
+
+
 def _dt_u32(path):
     """A device-tree cell as an int (big-endian), or None."""
     try:
@@ -97,7 +111,7 @@ def image_health(ctx):
     ev["kernel_release"] = rel
     mods = manifest.platform.get("kernel_modules") or []
     ctx.log("kernel release %s (manifest modules dirs: %s)", rel, ",".join(mods))
-    ctx.check(not mods or rel in mods, "running kernel %r is not the manifest's %s", rel, mods)
+    ctx.check(kernel_matches(rel, mods), "running kernel %r is not the manifest's %s", rel, mods)
 
     # 3. the module and its sysfs
     ctx.check(os.path.isdir("/sys/module/glowforge"), "glowforge.ko is not loaded")
