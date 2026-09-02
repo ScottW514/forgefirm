@@ -164,10 +164,34 @@ def hv_off():
     return None
 
 
+HV_RELEASE_S = 3.0
+
+
+def wait_hv_off(ctx, timeout_s=HV_RELEASE_S):
+    """hv_off_reason() once the chain has released, or the reason that still
+    stands after timeout_s. A run feeds the charge-pump watchdog every
+    200 ms and the one-shot holds ALIVE for 0.45 s after the last feed (the
+    feed's soft timer can add one more feed after the state leaves
+    running), so a phase that follows a run finds the chain still up for
+    under a second. The wait covers that release and nothing more; the
+    time it took is logged when it was not immediate and kept in the
+    evidence."""
+    t0 = time.time()
+    why = hv_off_reason()
+    while why is not None and time.time() - t0 < timeout_s:
+        ctx.sleep(0.05)
+        why = hv_off_reason()
+    dt = round(time.time() - t0, 2)
+    ctx.evidence.setdefault("hv_release_s", []).append(dt)
+    if why is not None or dt >= 0.1:
+        ctx.log("hv off: %s after %.2f s", "released" if why is None else "still held", dt)
+    return why
+
+
 def require_hv_off(ctx):
     """The same rule at the start of the run (the precheck ran a moment
     earlier; the machine must still agree)."""
-    why = hv_off_reason()
+    why = wait_hv_off(ctx)
     ctx.evidence["charge_pump_alive"] = rd("cnc/charge_pump_alive")
     ctx.evidence["kernel_state"] = rd("cnc/state")
     ctx.check(why is None, "%s - refusing the latch unlock", why)
@@ -175,7 +199,7 @@ def require_hv_off(ctx):
 
 def check_hv_off(ctx):
     """The hard check right before an unlock (no prompt: forgectrl is down)."""
-    why = hv_off_reason()
+    why = wait_hv_off(ctx)
     ctx.check(why is None, "%s - refusing the latch unlock", why)
 
 

@@ -65,6 +65,18 @@ def hv_off_reason():
         return 'charge_pump_alive=%s state=%s' % (alive, state)
     return None
 
+
+def wait_hv_off(timeout_s=3.0):
+    # A run feeds the charge-pump watchdog every 200 ms and the one-shot
+    # holds ALIVE for 0.45 s after the last feed, so a phase that follows a
+    # run finds the chain still up for under a second: wait for the release.
+    t0 = time.time()
+    why = hv_off_reason()
+    while why is not None and time.time() - t0 < timeout_s:
+        time.sleep(0.05)
+        why = hv_off_reason()
+    return why
+
 def rd_pos():
     with open('/sys/glowforge/cnc/position', 'rb') as f:
         raw = f.read(32)
@@ -220,7 +232,7 @@ def drill_k2():
 
 
 def drill_k3():
-    why = hv_off_reason()
+    why = wait_hv_off()
     if why is not None:
         print('ABORT: the safety chain is not holding HV off (%s) - refusing latch unlock' % why)
         return 1
