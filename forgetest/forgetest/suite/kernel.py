@@ -122,12 +122,18 @@ class PulseDevice:
     def rewind(self):
         os.lseek(self.fd, 1, os.SEEK_SET)
 
+    def drop(self):
+        """Close the device with the lock still held: the dead man's switch."""
+        fd, self.fd = self.fd, None
+        os.close(fd)
+
     def __exit__(self, *exc):
         try:
             wr("cnc/laser_latch", 1)         # re-lock unconditionally
         finally:
-            fcntl.flock(self.fd, fcntl.LOCK_UN)
-            os.close(self.fd)
+            if self.fd is not None:
+                fcntl.flock(self.fd, fcntl.LOCK_UN)
+                os.close(self.fd)
         return False
 
 
@@ -312,6 +318,67 @@ def k1_k2(ctx):
                   "K2: position counters did not return to start (%s -> %s)", pos_before[:3], pos_after[:3])
         ctx.log("K2 PASS: FIRE window replayed after the resume waypoint with "
                 "laser_enable/laser_on at 0 throughout")
+
+
+# ---------------------------------------------------------------- dead man
+
+@test("kernel.deadman-close", title="The final close of a running pulse device halts the engine and safes the head",
+      subsystem="kernel", kind="auto", hardware="takeover", always=True, est_min=1,
+      covers=_KERNEL_COVERS,
+      requires=["kernel.k1-k2"],
+      description="The kernel dead man's switch: a pulse device closed while locked and running "
+                  "halts the engine at once, locks the laser latch, and puts the head in its safe "
+                  "state - lens driver disabled at low current, measure laser and UV LED off. The "
+                  "lens driver is enabled at low current before the close, so the safe state has "
+                  "something to undo. Motors locked; duty zero.")
+def deadman_close(ctx):
+    ev = ctx.evidence
+    with ctx.takeover():
+        stream = POWER0 + PAD * (6 * TICK_HZ)
+        snap(ctx, "deadman pre")
+        wr("cnc/motor_lock", 15)
+        wr("cnc/laser_latch", 1)
+        wr("cnc/ramp_rate", 125000)
+        wr("cnc/step_freq", TICK_HZ)
+        wr("head/z_current", 1)
+        wr("head/z_enable", 0)
+        before = {"z_enable": rd("head/z_enable"), "z_current": rd("head/z_current")}
+        ev["head_before"] = before
+        ctx.check(before["z_enable"] == "0", "the lens driver did not enable (z_enable %s)", before["z_enable"])
+        with PulseDevice(ctx) as dev:
+            dev.rewind()
+            wr("cnc/enable", 1)
+            ctx.sleep(0.5)
+            dev.write(stream)
+            wr("cnc/run", 1)
+            ctx.sleep(1.0)
+            st = rd("cnc/state")
+            ctx.check(st == "running", "expected running before the close, got %s", st)
+            t0 = time.time()
+            dev.drop()
+            while time.time() - t0 < 5:
+                if rd("cnc/state") != "running":
+                    break
+            dt = time.time() - t0
+        state = rd("cnc/state")
+        after = {"z_enable": rd("head/z_enable"), "z_current": rd("head/z_current"),
+                 "measure_laser": rd("head/measure_laser"), "uv_led": rd("head/uv_led")}
+        latch = hw.sysfs_int("cnc/interlock_circuit")
+        ev["close"] = {"halt_s": round(dt, 4), "state": state, "faults": rd("cnc/faults"),
+                       "interlock_circuit": latch}
+        ev["head_after"] = after
+        snap(ctx, "deadman post")
+        ctx.log("final close: state=%s after %.4f s; head %s", state, dt, after)
+        ctx.check(state == "idle", "the engine did not halt on the final close (state %s)", state)
+        ctx.check(dt < 1.0, "the halt took %.3f s", dt)
+        ctx.check(latch is not None and latch & (1 << 3), "the latch is not locked after the close")
+        ctx.check(after["z_enable"] == "1" and after["z_current"] == "1",
+                  "the head was not safed: z_enable %s z_current %s (want 1, 1: driver disabled, low current)",
+                  after["z_enable"], after["z_current"])
+        ctx.check(after["measure_laser"] == "0" and after["uv_led"] == "0",
+                  "measure laser %s, UV LED %s after the close", after["measure_laser"], after["uv_led"])
+        wr("cnc/stop", 1)
+        ctx.log("PASS: the final close halted the engine in %.3f s, latch locked, head safed", dt)
 
 
 # ---------------------------------------------------------------- backtrack
