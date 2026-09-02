@@ -1360,9 +1360,13 @@ pump flag. Beam detect stays with item 6.
     The session's queues are green on image 20260902144848, the unattended
     set and the attended set both (2026-09-02); the harness and diagnostic
     defects they found are fixed in local commits (the dated record is in
-    CAMPAIGN-LOG). Owed now: the two bench measurements below, the pushes in
-    CI order, the pin bumps, one image build, and the campaign on that image,
-    which the release gate asks for.
+    CAMPAIGN-LOG). The two bench measurements are closed: the connector pads
+    were not measured (the device tree carries the factory's pad configuration
+    and the factory machine shows no trouble there, the operator's decision),
+    and the forced kernel hang ended in the factory recovery after the 60 s
+    watchdog with a power cycle returning, as documented. Owed now: the pushes
+    in CI order, the pin bumps, one image build, and the campaign on that
+    image, which the release gate asks for.
     Decisions taken in the remediation that the operator confirms or reverses:
     the release image has no shell login (the install page now says so); the
     cloud client holds and resumes on the cooling verdict with a 30-minute

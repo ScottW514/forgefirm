@@ -7287,6 +7287,39 @@ untouched. Owed, in order: the two bench measurements BRINGUP item 9
 lists, the pushes in CI order (forgefirm first), the pin bumps with
 `bitbake -c fetch`, one image build, and the campaign on that image.
 
+## 2026-09-02: the forced kernel hang, and the two measurements closed
+
+The audit asked for two bench measurements with the pooled session. The
+operator dropped the first, the reset-to-probe state of the 40 V enable,
+heater enable, TEC enable and laser-enable nets at the connector during a
+cold boot: the device tree carries the factory's pad configuration for
+those pins, and the factory machine shows no trouble there; nothing to
+measure.
+
+The second was done: one forced kernel hang on image 20260902144848, the
+machine idle and the laser locked. `kernel.panic` was set to 0 at runtime
+(the command line's `panic=10` would have rebooted the kernel by a
+software reset, which is not the path in question), then `c` was written
+to `/proc/sysrq-trigger`. The panic spins with interrupts off, the driver
+cannot feed WDOG1, and the timeout reset follows.
+
+What happened, with the times: the board went silent at 22:21:27 UTC, two
+seconds after the write. WDOG1 was armed at 60 s (WCR 0x771f: enabled,
+external reset output on; read back from the register after the return),
+so the reset came at about 22:22:27. U-Boot took its watchdog-timeout
+branch (the button turned purple, the operator's observation) and, the
+board being fused for eMMC boot, booted the factory recovery image, which
+took the machine's lease and answered ping from 22:23:48 with no SSH. The
+serial console showed nothing from the hang until the power cycle: the
+recovery boot prints nothing there, and the purple button is the only
+sign. A power cycle at about 22:26:05 (a power-on reset reloads the saved
+environment, `boot_recovery=no`) booted ForgeFIRM from the SD slot again;
+forgectrl came up, and WRSR read POR.
+
+So the documented path holds: a hard hang ends in the factory recovery
+after the 60 s watchdog, and a power cycle returns. The recovery page and
+the storage page say now what the console does not show.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis
