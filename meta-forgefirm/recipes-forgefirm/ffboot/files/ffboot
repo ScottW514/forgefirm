@@ -63,7 +63,7 @@ probe_part () {
     if [ -z "$ROOT_DIR" ]; then
       P_MOUNTED=yes
       ROOT_DIR=$(mktemp -d /tmp/ffboot.probe.XXXXXX) || return 1
-      if ! mount -o ro -t ext4 "$1" "$ROOT_DIR" 2>/dev/null; then
+      if ! mount -o ro,noload -t ext4 "$1" "$ROOT_DIR" 2>/dev/null; then
         rmdir "$ROOT_DIR" 2>/dev/null
         return 1
       fi
