@@ -1247,6 +1247,26 @@ is committed.
   mountpoints from `/proc/mounts` and mount fresh targets with explicit
   `-t ext4`.
 
+- **The bootloader in boot0 is the factory's U-Boot 2015.07 (built 2018-02-20),
+  read from the device; the BSP's `u-boot_2020.01` recipe is the source
+  reference, not what runs.** Measured 2026-09-02 with a forced kernel hang
+  (`kernel.panic=0`, then `c` to `/proc/sysrq-trigger`, the machine idle):
+  WDOG1 reads armed at 60 s with WDOG_B on timeout (WCR 0x771f, read through
+  `/dev/mem`; the board has no `devmem`, python's mmap works under
+  STRICT_DEVMEM for MMIO), the kernel's imx2_wdt adopts the running watchdog
+  at probe and the core feeds it (CONFIG_WATCHDOG_HANDLE_BOOT_ENABLED), and
+  nothing in userspace opens `/dev/watchdog`. The reset came 60 s after the
+  hang; U-Boot took its watchdog-timeout branch (the purple button) and booted
+  the factory recovery from boot0 (`root=/dev/mmcblk2boot0p1`, squashfs), which
+  took the machine's lease and answered ping with no SSH; a power cycle
+  returned ForgeFIRM (`boot_recovery=no`, WRSR POR). The serial console showed
+  nothing from the hang to the power cycle, U-Boot's own lines included, which
+  is not explained by anything in the software (stdout=serial, baudrate
+  115200, the strings present in the fielded binary); the same adapter on the
+  SoC console pins shows U-Boot at every normal boot and a console in the
+  recovery image after a button-hold recovery from power-off. An oddity of
+  the watchdog reboot, recorded, not an open item. The kernel config now
+  carries CONFIG_WATCHDOG_SYSFS so the state is readable without /dev/mem.
 ## Next work
 
 Open items only. Anything closed is in `CAMPAIGN-LOG.md`. Open items (bugs,
