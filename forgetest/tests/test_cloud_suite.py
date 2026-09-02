@@ -912,6 +912,66 @@ class CloudSuiteTests(unittest.TestCase):
         self.assertEqual(self.fc.posts, [])
         self.assertTrue(any("PASS: lid open at the button prompt" in l for l in run.lines))
 
+    # -- the cooling verdict: the armed print waits on the warm-up ------------
+    def test_verdict_hold_on_the_bench_excerpt(self):
+        self.in_offline()
+        self.fc.state["status"]["coolant"] = {"up_c": 21.5, "down_c": 21.4}
+        self.fc.state["settings"].update({"cool_temp_min": "5", "cool_temp_start": "16"})
+        self.fc.state["cool"].update({"verdict": "OK", "hold": False, "fire_ok": True, "armed": False})
+        lines = fixture("pause")
+        pre, rest = cut(lines, "waiting for button")
+        pre = pre + [rest[0]]
+        # the run and the print's end, without the pause in the middle
+        _, run = cut(rest, "machine:_run_loop starting run")
+        run = [l for l in run if "paus" not in l and "resum" not in l]
+        stamp = "2026-08-17T09:44:14.%06d+00:00 gfcloud[1927] INFO machine:_verdict_wait "
+        wait = [stamp % 100000 + "waiting on the cooling engine: WARMUP (WARM-UP: coolant 21.5 C under "
+                "the 22.5 C start gate - heater on, hold)"]
+        release = [stamp % 200000 + "cooling verdict clean after WARMUP; starting the run"]
+
+        def on_post(path, form):
+            if path == "/settings" and form.get("cool_temp_start") not in (None, "0", "16"):
+                self.fc.state["cool"].update({"verdict": "WARMUP", "hold": True, "fire_ok": False,
+                                              "armed": True, "phase": "warm-up"})
+            return None
+        self.fc.on_post = on_post
+        self.offline_print_hooks(pre)
+
+        def press():
+            self.append(wait, delay=0.05)
+
+            def released():
+                self.fc.state["cool"].update({"verdict": "OK", "hold": False, "fire_ok": True,
+                                              "armed": False, "phase": "run"})
+                self.append(release + run, delay=0.0)
+            threading.Timer(3.0, released).start()
+        hooks = {"press it. The print then waits": press}
+        run_ = self.run_test(cloud.verdict_hold, hooks=hooks, test_id="cloud.verdict-hold")
+        ev = run_.evidence
+        self.assertEqual(ev["gate"], 22.5)
+        self.assertEqual(ev["warmup"]["verdict"], "WARMUP")
+        self.assertTrue(ev["log"]["cooling verdict clean after WARMUP; starting the run"])
+        self.assertIn(":completed", ev["print finished"])
+        posted = [f for p, f in self.fc.posts if p == "/settings"]
+        self.assertEqual(posted[0]["cool_temp_start"], "22.5")
+        self.assertEqual(posted[-1], {"cool_temp_min": "5", "cool_temp_start": "16"})
+        self.assertTrue(any("PASS: the armed print waited" in l for l in run_.lines))
+
+    def test_verdict_hold_fails_when_the_print_runs_under_the_hold(self):
+        self.in_offline()
+        self.fc.state["status"]["coolant"] = {"up_c": 21.5, "down_c": 21.4}
+        self.fc.state["settings"].update({"cool_temp_min": "5", "cool_temp_start": "16"})
+        self.fc.state["cool"].update({"verdict": "WARMUP", "hold": True, "fire_ok": False, "armed": True})
+        lines = fixture("pause")
+        pre, rest = cut(lines, "waiting for button")
+        pre = pre + [rest[0]]
+        _, run = cut(rest, "machine:_run_loop starting run")
+        stamp = "2026-08-17T09:44:14.%06d+00:00 gfcloud[1927] INFO machine:_verdict_wait "
+        wait = [stamp % 100000 + "waiting on the cooling engine: WARMUP (no reason given)"]
+        self.offline_print_hooks(pre)
+        hooks = {"press it. The print then waits": lambda: self.append(wait + run[:1], delay=0.05)}
+        self.assertFails(cloud.verdict_hold, "the run started under the warm-up hold", hooks=hooks)
+
     # -- a paused print cancelled by the lid, a running one by the app --------
     def cancel_parts(self):
         """(print prologue, the pause lines, the lid stop + park + cancel,
