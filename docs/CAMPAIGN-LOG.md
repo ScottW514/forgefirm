@@ -7065,6 +7065,77 @@ the move also returns 200. The old release path answers 301 to the
 organization, as expected. The redirect still lasts only while no repository
 reclaims the old name, so the published links were rewritten anyway.
 
+## 2026-09-02: the audit remediation, host-tested and committed locally
+
+The 2026-09-01 whole-tree audit (221 findings) is remediated in local
+commits in every repository, none pushed, nothing yet on the bench. The
+work stayed local by decision: one pooled bench session on a locally built
+dev image proves it, then one push per repository in CI order, then the pin
+bumps and one image build.
+
+What moved, by repository (local commits since the last push):
+
+- forgefirm 8ff37d1 through 88ec984: three new drills
+  (`kernel.deadman-close`, always required; `cloud.verdict-hold`; the
+  lid-at-button-wait drill on a job longer than the ring), inheritance
+  blocked by a later FAIL, ffboot fingerprinted as a component (and moved
+  under the recipe), a skipped gate ships no acceptance artifact, the
+  installer verifies the factory archive before it trusts it, the first
+  release is 0.0.1, helper imports move the fingerprints, the foreign-
+  signature update drill, the stream harness rules 22 and 23, the runbook
+  brought to the present, the bench records moved out of the tool
+  directory, `release.sh --dev` packs the dev image, and ffboot probes with
+  `noload`.
+- forgectrl 3e6899c through 8c83a03: the SENSOR verdict, bounded HTTP
+  bodies, uploads keyed on their authorization and owned by one sender,
+  the engine tick on an absolute one-second grid, `cloud_hold_max_s`, the
+  panel's verdict and controller-state rows, `resume_ok` in `/cool/status`,
+  `cool_recheck_s` as a gate, condvars on CLOCK_MONOTONIC, a libjpeg fatal
+  error that ends the encode and not the daemon, the GPU fence timeout.
+- grblHAL-glowforge 3405179 through b951f3a (core fork f32d17e in the
+  submodule): jogs ship dark under an armed window, the rolloff shapes
+  against the segment's own ratio, a reset acknowledges a stream fault, the
+  exit ramps down, the arm follows its sender, the verdict polled at 500 ms.
+- kernel-module-glowforge cb202ef, 8315fd8: the head safe state disables
+  the lens driver, a stopped start does not commit, faults log once, dead
+  weight removed.
+- python3-gfhardware f76e96e through 1511336: the feeder stopped on every
+  way out of a job, a kernel fault is an abort with the safing run to the
+  end, the client honors hold and resume, the switch monitor restarts, the
+  button level is the backstop, the thermal writers the engine owns are
+  gone, host tests in CI.
+- Glowforge-Utilities 15b415e, dbf80b8: the transmit pump survives a socket
+  error, short GET retries, the report claim released in a finally, config
+  values with a percent sign, host tests in CI.
+- meta-openglow 634de93 through 454ab2a: uart2 and i2c2 disabled, the
+  camera-select pad on its own pinctrl group, `CONFIG_STRICT_DEVMEM`, the
+  v2 device-tree name, the dead gfui-client and legacy kernel recipes
+  removed, fstab, the prompt in profile.d.
+- forgefirm-docs 9972dfe through c9602ea: every contract page matched to
+  the code it describes.
+
+Host proof, all green on 2026-09-02: forgectrl 15 host tests and the
+daemon build with -Werror; grblHAL unit tests plus the laser-stream (rules
+1 to 23) and lifecycle harnesses; the kernel module cross-compiled against
+the image kernel in the Yocto work directory; gfhardware 125 tests across
+five modules (one Windows-only failure in test_cam_lid_gate, the fail-
+closed O_NONBLOCK path, not a defect); gfutilities 127 tests; forgetest 258
+unit tests and the coverage lint (54 tests, no uncovered path); the docs
+site's strict build and style lint.
+
+Deferred, with the reason: P-13 and P-14 (edits inside the SDMA and SPI
+kernel patch files; regenerating a patch needs the kernel tree, and the
+failures are latent); K-4 and K-8 (script and scope work outside a fix);
+FA-20 (the devserver mock); the B-16 residual (a `__pycache__` inside the
+package directory still enters the fetch checksum; the tests' caches no
+longer do); P-1 and P-2 (bench measurements, pooled into the session).
+
+Owed: the pooled bench session (the drills named in BRINGUP "Next work"
+item 9 plus the full campaign, since every layer hash moves), the two
+bench measurements, one local image build of both images, then the pushes
+in CI order (forgefirm first), the pin bumps, and the operator's
+decisions listed in the same item.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis
