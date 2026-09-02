@@ -544,6 +544,7 @@ class Runner:
         self.batch = None
         self.fixture = None       # the bench actuator, when one is up (fixture.py)
         self._fixture_probed = 0.0
+        self._fixture_lock = threading.Lock()
         self._fixture_said = None
         self.boot_ref = None
         self.recover()
@@ -568,25 +569,29 @@ class Runner:
         """The fixture, up and answering, or None; re-probed at most every
         FIXTURE_PROBE_S unless forced (before a run). A probe that finds
         it gone, or a config that appeared, changes the queues' routing
-        from then on."""
-        now = time.time()
-        if not force and now - self._fixture_probed < FIXTURE_PROBE_S:
-            return self.fixture
-        self._fixture_probed = now
-        had = self.fixture
-        # a box that is not there is said once, not every probe
-        said = []
-        fx = _fixture.probe(said.append)
-        for m in said:
-            if m != self._fixture_said:
-                self._note(m)
-                self._fixture_said = m
-        if fx is not None:
-            self._fixture_said = None
-        if fx is None and had is not None:
-            self._note("fixture: %s no longer answers - running without it" % had.hostname)
-        self.fixture = fx
-        return fx
+        from then on. One probe at a time, and the probe counts from its
+        completion: a caller that arrives while another's probe is in
+        flight (a page poll and a queue start right after the daemon
+        came up) waits for its answer instead of reading the stale
+        fixture, which routed the fixture's tests to nobody."""
+        with self._fixture_lock:
+            if not force and time.time() - self._fixture_probed < FIXTURE_PROBE_S:
+                return self.fixture
+            had = self.fixture
+            # a box that is not there is said once, not every probe
+            said = []
+            fx = _fixture.probe(said.append)
+            for m in said:
+                if m != self._fixture_said:
+                    self._note(m)
+                    self._fixture_said = m
+            if fx is not None:
+                self._fixture_said = None
+            if fx is None and had is not None:
+                self._note("fixture: %s no longer answers - running without it" % had.hostname)
+            self.fixture = fx
+            self._fixture_probed = time.time()
+            return fx
 
     def fixture_channels(self):
         """The channels the fixture covers right now (the button only

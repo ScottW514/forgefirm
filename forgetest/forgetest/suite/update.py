@@ -96,7 +96,8 @@ def slots_and_signature(ctx):
             ctx.log("slot %s is selected for the next boot: the apply is refused before the "
                     "signature check, which is its own guard", target)
         else:
-            ctx.check(st == 200, "the apply job did not start: %s %s", st, body)
+            ctx.check(st == 202 and isinstance(body, dict) and body.get("started") is True,
+                      "the apply job did not start: %s %s", st, body)
             result = None
             t0 = time.time()
             while time.time() - t0 < 60:

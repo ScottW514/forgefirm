@@ -416,6 +416,26 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(av["unattended"], ["r.auto"])
         self.assertIsNone(summary)
 
+    def test_a_queue_started_during_a_probe_waits_for_the_fixture(self):
+        # The daemon just came up: nothing probed yet, a page poll starts
+        # the first probe (slow: an mDNS answer), and the queue start
+        # lands while it is in flight. The start must see the fixture.
+        stub = self.stub
+
+        def slow_probe(log, path=None, resolver=None):
+            time.sleep(0.5)
+            return stub
+        fx.probe = slow_probe
+        self.runner._fixture_probed = 0.0
+        self.runner.fixture = None
+        poll = threading.Thread(target=self.runner.probe_fixture)
+        poll.start()
+        time.sleep(0.1)
+        order = self.runner.batch_selection("unattended")
+        poll.join()
+        self.assertIn("r.lid", order)
+        self.assertIn("r.btn", order)
+
     def run_queue(self, group, ack_live=False):
         ok, msg, order = self.runner.start_batch(group, ack_live=ack_live)
         self.assertTrue(ok, msg)
