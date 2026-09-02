@@ -147,8 +147,10 @@ STAMP=$(debugfs -R "cat /etc/forgefirm-version" "$EXT4" 2>/dev/null)
 # A release is never signed
 # without it; FORGEFIRM_ACCEPTANCE_SKIP=1 bypasses deliberately and loudly.
 ART="$REPO/releases/v$VERSION/acceptance.json"
+GATED=1
 if [ -n "${FORGEFIRM_ACCEPTANCE_SKIP:-}" ]; then
   warn "acceptance gate SKIPPED by FORGEFIRM_ACCEPTANCE_SKIP - this release carries no acceptance proof"
+  GATED=0
 else
   [ -f "$ART" ] \
     || die "no acceptance artifact at releases/v$VERSION/acceptance.json - run the campaign on the bench, export, commit"
@@ -205,17 +207,32 @@ fi
 echo "== stage assets =="
 cp -L "$DEPLOY/forgefirm-image-glowforge.rootfs.wic.gz" "$STAGE/forgefirm-image-glowforge.rootfs.wic.gz"
 # The acceptance artifact travels with the release (see the site,
-# Developers, "Acceptance").
+# Developers, "Acceptance") - only when the gate accepted it for THIS
+# rootfs. A skipped gate ships no artifact: an acceptance.json next to a
+# rootfs it never authorized would read as proof. The release says so
+# instead, and goes out as a prerelease.
 ASSETS="forgefirm.fw sha256sums.txt forgefirm-image-glowforge.rootfs.wic.gz"
-if [ -f "$ART" ]; then
+PRERELEASE=""
+rm -f "$STAGE/acceptance.json" "$STAGE/acceptance.md" "$STAGE/NO-ACCEPTANCE.txt"
+if [ "$GATED" = 1 ] && [ -f "$ART" ]; then
   cp "$ART" "$STAGE/acceptance.json"
   ASSETS="$ASSETS acceptance.json"
   if [ -f "${ART%.json}.md" ]; then
     cp "${ART%.json}.md" "$STAGE/acceptance.md"
     ASSETS="$ASSETS acceptance.md"
   fi
+else
+  cat > "$STAGE/NO-ACCEPTANCE.txt" <<NOTE
+ForgeFIRM v$VERSION was signed with the acceptance gate skipped
+(FORGEFIRM_ACCEPTANCE_SKIP). No acceptance campaign authorized this
+rootfs. Treat it as a prerelease.
+NOTE
+  ASSETS="$ASSETS NO-ACCEPTANCE.txt"
+  PRERELEASE="--prerelease"
 fi
-( cd "$STAGE" && sha256sum forgefirm.fw forgefirm-image-glowforge.rootfs.wic.gz > sha256sums.txt )
+# Every attached file is bound to the release by the sums, the artifact
+# included.
+( cd "$STAGE" && sha256sum $(echo "$ASSETS" | tr ' ' '\n' | grep -v '^sha256sums.txt$') > sha256sums.txt )
 ls -la "$STAGE"
 
 cat <<EOF
@@ -230,14 +247,14 @@ Pre-publish checklist (docs.forgefirm.org, Developers, "Release flow"):
 Publish (from a directory with an authenticated gh):
   cd "$STAGE"
   gh release create "v$VERSION" --repo openglow-org/forgefirm \\
-    --title "ForgeFIRM v$VERSION" --generate-notes \\
+    --title "ForgeFIRM v$VERSION" --generate-notes $PRERELEASE \\
     $ASSETS
 EOF
 
 if [ "$PUBLISH" = "1" ]; then
   command -v gh >/dev/null || die "--publish requested but gh is not on PATH"
   ( cd "$STAGE" && gh release create "v$VERSION" --repo openglow-org/forgefirm \
-      --title "ForgeFIRM v$VERSION" --generate-notes \
+      --title "ForgeFIRM v$VERSION" --generate-notes $PRERELEASE \
       $ASSETS ) \
     || die "gh release create failed"
   echo "== published v$VERSION =="
