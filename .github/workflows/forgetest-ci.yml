@@ -54,13 +54,15 @@ jobs:
 
       - name: Unit tests
         working-directory: forgefirm/forgetest
-        run: python -m unittest discover -s tests -v
+        # -B: no bytecode caches under the package directory (the recipe's fetch
+        # checksum would otherwise move without a source change)
+        run: python -B -m unittest discover -s tests -v
 
       - name: No undefined names (the live drills never execute on the host)
         working-directory: forgefirm/forgetest
         run: |
           pip install pyflakes
-          if python -m pyflakes forgetest tests | grep -E "undefined name"; then exit 1; fi
+          if python -B -m pyflakes forgetest tests | grep -E "undefined name"; then exit 1; fi
 
       - name: Shared UI files match forgectrl at its pinned revision
         working-directory: forgefirm
@@ -68,7 +70,7 @@ jobs:
 
       - name: Coverage lint (enforced)
         working-directory: forgefirm/forgetest
-        run: python -m forgetest.coverage --manifest ../tree-manifest.json --enforce | tee "$GITHUB_STEP_SUMMARY"
+        run: python -B -m forgetest.coverage --manifest ../tree-manifest.json --enforce | tee "$GITHUB_STEP_SUMMARY"
 
       - name: Gate self-check on the tree manifest
         working-directory: forgefirm
