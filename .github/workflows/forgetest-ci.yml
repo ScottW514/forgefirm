@@ -56,6 +56,12 @@ jobs:
         working-directory: forgefirm/forgetest
         run: python -m unittest discover -s tests -v
 
+      - name: No undefined names (the live drills never execute on the host)
+        working-directory: forgefirm/forgetest
+        run: |
+          pip install pyflakes
+          if python -m pyflakes forgetest tests | grep -E "undefined name"; then exit 1; fi
+
       - name: Shared UI files match forgectrl at its pinned revision
         working-directory: forgefirm
         run: python scripts/check-ui-vendor.py

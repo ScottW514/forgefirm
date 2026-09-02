@@ -97,7 +97,38 @@ def sample(ctx):
         "button_lit": hw.button_lit(),
         "hv_enable": (st.get("switches") or {}).get("hv_enable"),
         "button_latch": hw.sysfs_int("cnc/button_latch"),
+        # the whole readback word (bit 0 LASER_ON, 1 LASER_ENABLE, 2 button
+        # latch, 3 laser latch, 4 interlock latch reset, 5 charge pump alive)
+        # and the debounced switches, so a latch that sets mid-job says
+        # which of its two inputs did it
+        "il": hw.sysfs_int("cnc/interlock_circuit"),
+        "lid": (st.get("switches") or {}).get("lid"),
+        "button": (st.get("switches") or {}).get("button"),
+        "locked": st.get("laser_locked"),
+        "gstate": None,
+        "msgs": "",
     }
+
+
+TRAIL_FIELDS = ("t", "gstate", "kstate", "emission", "armed", "il", "button_latch", "locked",
+                "lid", "button", "hv_enable", "beam", "hv", "msgs")
+
+
+def trail(samples):
+    """The sample trail as rows for the evidence: relative seconds and the
+    fields TRAIL_FIELDS names, so a run's timeline can be read back
+    without a rerun."""
+    if not samples:
+        return []
+    t0 = samples[0]["t"]
+    rows = []
+    for s in samples:
+        row = [round(s["t"] - t0, 2)]
+        for f in TRAIL_FIELDS[1:]:
+            v = s.get(f)
+            row.append(v if v != "" else None)
+        rows.append(row)
+    return rows
 
 
 def beam_witness(ctx, ev, samples, base, tag=""):
@@ -228,6 +259,38 @@ def judge_kill(ctx, trail, what):
     return zero_at, tail_zero, not_running
 
 
+IL_BUTTON_LATCH = 4      # cnc/interlock_circuit bit 2
+IL_LASER_LATCH = 8       # bit 3: the SoC lock line, 1 = locked
+
+
+def dwell_gap(samples):
+    """The dwell-gap verdict over a sample trail. The button latch has
+    two set inputs, the lid and the SoC lock, so while the lock line
+    reads released the latch must read clear: from the first sample
+    with emission (the press has cleared it by then) through every
+    sample whose readback word shows the laser latch unlocked, which
+    spans the kernel-run gap of the dwell and ends at the relock. Both
+    bits come from the same word, so no lagging flag can misplace the
+    window: the engine's armed flag follows the controller's next report,
+    and the emission counter latches once per second and stays nonzero
+    about two seconds past the relock (three runs on the bench failed on
+    windows drawn from those). HV_ENABLE's dip in the gap and its return
+    with emission after it are judged from the first emission on."""
+    first = next((i for i, s in enumerate(samples) if s["emission"]), None)
+    span = ([s for s in samples[first:] if s.get("il") is not None and not (s["il"] & IL_LASER_LATCH)]
+            if first is not None else [])
+    latch = [1 if (s["il"] & IL_BUTTON_LATCH) else 0 for s in span]
+    set_at = [i for i, v in enumerate(latch) if v]
+    hv_en = [s.get("hv_enable") for s in samples[first:]] if first is not None else []
+    dip = next((i for i, v in enumerate(hv_en) if v is False), None)
+    back_lit = dip is not None and any(
+        s.get("hv_enable") and s["emission"] for s in samples[first + dip:])
+    return {"button_latch_unlocked_max": max(latch) if latch else None,
+            "button_latch_unlocked_samples": len(latch),
+            "button_latch_set_at": set_at[:8],
+            "hv_enable_dipped": dip is not None, "hv_enable_back_lit": back_lit}
+
+
 def run_and_sample(ctx, g, job, sample_hz=8, overall_timeout=200):
     """Stream the job; sample forgectrl through arm -> fire -> disarm.
     Completes on: emission seen then Idle > 3 s; or armed then disarmed
@@ -256,6 +319,14 @@ def run_and_sample(ctx, g, job, sample_hz=8, overall_timeout=200):
                 disarmed_now = seen_armed and not smp["armed"]
             next_t = now + period
         st = g.status_report()["state"]
+        if samples:
+            # the controller's state and whatever it said since the last
+            # sample, next to the sample they belong to
+            samples[-1]["gstate"] = st
+            said = " ".join(l.strip() for l in g.drain().splitlines()
+                            if l.strip() and l.strip() != "ok")
+            if said:
+                samples[-1]["msgs"] = (samples[-1]["msgs"] + " " + said).strip()[:400]
         if st.startswith("Idle"):
             if idle_since is None:
                 idle_since = now
@@ -381,6 +452,8 @@ def emission_witness(ctx):
             samples = run_and_sample(ctx, g, job)
         finally:
             ctx.clear_notice()
+        ev["trail_fields"] = list(TRAIL_FIELDS)
+        ev["trail"] = trail(samples)
         beam = beam_witness(ctx, ev, samples, base)
         emis = [s["emission"] for s in samples if s["emission"] is not None]
         peak = max(emis) if emis else 0
@@ -398,21 +471,17 @@ def emission_witness(ctx):
                    "pgood_peak": max((s["pgood"] for s in samples if s["pgood"] is not None), default=None)})
         ctx.log("emission_samples peak=%s end=%s; hv %s..%s; lid_ir peak %s; armed seen %s",
                 peak, end, ev["hv_min"], ev["hv_max"], ir_peak, armed_seen)
-        # The dwell: a kernel-run gap inside the armed window. The button
+        # The dwell: a kernel-run gap inside the unlocked window. The button
         # latch has no input from the charge-pump watchdog (its SET inputs
-        # are the lid and the SoC lock), so it must read clear through the
-        # gap, while HV_ENABLE drops with the watchdog and returns for the
-        # third side.
-        latch_armed = [s["button_latch"] for s in samples if s["armed"] and s["button_latch"] is not None]
-        first_fire = next((i for i, s in enumerate(samples) if s["emission"]), None)
-        hv_en = [s["hv_enable"] for s in samples[first_fire:]] if first_fire is not None else []
-        dip = next((i for i, v in enumerate(hv_en) if v is False), None)
-        back_lit = dip is not None and any(
-            s["hv_enable"] and s["emission"] for s in samples[first_fire + dip:])
-        ev.update({"button_latch_armed_max": max(latch_armed) if latch_armed else None,
-                   "hv_enable_dipped": dip is not None, "hv_enable_back_lit": back_lit})
-        ctx.log("dwell gap: button latch through the armed window max=%s; HV_ENABLE dipped=%s, "
-                "back with emission after it=%s", ev["button_latch_armed_max"], dip is not None, back_lit)
+        # are the lid and the SoC lock), so it must read clear from the
+        # first emission until the relock, across the gap, while HV_ENABLE
+        # drops with the watchdog and returns for the third side.
+        gap = dwell_gap(samples)
+        ev.update(gap)
+        ctx.log("dwell gap: button latch through the unlocked window max=%s over %d samples (set at %s); "
+                "HV_ENABLE dipped=%s, back with emission after it=%s", gap["button_latch_unlocked_max"],
+                gap["button_latch_unlocked_samples"], gap["button_latch_set_at"], gap["hv_enable_dipped"],
+                gap["hv_enable_back_lit"])
         # X-3: job-based disarm at Idle after M2
         dt = wait_disarm(ctx, 75)
         ev["disarm_after_idle_s"] = round(dt, 1) if dt is not None else None
@@ -425,11 +494,13 @@ def emission_witness(ctx):
     ctx.check(dt is not None and dt < 10.0,
               "the M2 job did not disarm promptly at Idle (%s s; the idle grace is ~60 s)",
               ev["disarm_after_idle_s"])
-    ctx.check(latch_armed and max(latch_armed) == 0,
-              "the hardware button latch read SET inside the armed window (max %s over %d samples)",
-              ev["button_latch_armed_max"], len(latch_armed))
+    ctx.check(gap["button_latch_unlocked_samples"] and gap["button_latch_unlocked_max"] == 0,
+              "the hardware button latch read SET while the laser latch was unlocked (max %s over %d "
+              "samples, at %s)", gap["button_latch_unlocked_max"], gap["button_latch_unlocked_samples"],
+              gap["button_latch_set_at"])
     ctx.check(ev["hv_enable_dipped"], "HV_ENABLE never dropped across the 2 s dwell (the kernel run did not end)")
-    ctx.check(back_lit, "HV_ENABLE did not return with emission after the dwell (the third side ran dark)")
+    ctx.check(gap["hv_enable_back_lit"],
+              "HV_ENABLE did not return with emission after the dwell (the third side ran dark)")
     judge_beam(ctx, beam)
     check_button_dark(ctx, ev)
     ctx.confirm("Did the laser mark a 20 mm square outline on the scrap, all four sides?")
