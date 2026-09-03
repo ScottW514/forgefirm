@@ -346,10 +346,16 @@ class Fixture:
         return [c for c, s in ch.items() if s in ("open", "pressed")]
 
     def summary(self):
+        # The radio signal and the uptime go in the record: this actuator
+        # is on wifi, and a run that lost it wants both numbers to say
+        # whether the link faded or the box restarted. Without them a
+        # drop is only ever "it was gone".
         st = self.last_state or {}
+        wifi = st.get("wifi") or {}
         return {"hostname": self.hostname, "ip": self._ip, "channels": list(self.channels),
                 "button_enabled": bool(st.get("button_enabled")), "arm_press": self.arm_press,
-                "version": st.get("version"), "uptime_s": st.get("uptime_s")}
+                "version": st.get("version"), "uptime_s": st.get("uptime_s"),
+                "rssi": wifi.get("rssi")}
 
 
 def probe(log, path=None, resolver=resolve_mdns):
