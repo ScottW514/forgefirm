@@ -60,10 +60,8 @@ def _grbl_settings(lines):
                 pass
     return vals
 
-ARM_CUE = ("LIVE FIRE. Eye protection on, exhaust running, fire watch and extinguisher in reach, "
-           "scrap under the head with room to move (%s), lid closed. On Ready the job starts: "
-           "the white button lights and the stream waits for your press of the physical arm "
-           "button; the machine fires only after that press.")
+ARM_CUE = ("LIVE FIRE. Eye protection on. Exhaust on. Extinguisher in reach. "
+           "Put scrap under the head with %s clear, and close the lid.")
 
 # The beam detector's emission signature: this much over its pre-fire
 # level while the beam is on (bench: ~1834 idle, 2600-2890 at S300/S400).

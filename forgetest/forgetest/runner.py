@@ -116,6 +116,10 @@ ACTION_TEXT = {
     ("button", "press"): "Press the button once.",
 }
 ACT_TIMEOUT_S = 180
+# How long a live test waits for the operator to prove they are at the
+# machine by pressing its button. Generous: they may be setting up the
+# scrap, and nothing fires until it lands.
+PRESENCE_TIMEOUT_S = 600
 
 
 class Run:
@@ -131,6 +135,10 @@ class Run:
         self.notice = None        # {"id","text"}: a standing instruction, no button
         self.answers = []
         self.unattended = False   # a fixture-run test: no prompt can be answered
+        # The operator proved they are at the machine by pressing its
+        # button, so the bench actuator performs every press from there
+        # on. Set by Ctx.ready() when an actuator is up to take over.
+        self.fixture_takeover = False
         self.evidence = {}
         self.baseline_captured = None   # preserved state the post pass hands back
         self.aborted = threading.Event()
@@ -266,14 +274,45 @@ class Context:
             raise Failed("operator could not: %s" % text)
 
     def ready(self, text):
-        """Pre-announce a timed step: what happens when the operator
-        clicks Ready and what they do during it. Returns on the click;
-        the test then starts the thing and watches the machine. With the
-        fixture performing the step (the run is unattended) there is
-        nobody to announce it to: the gate passes at once, logged."""
+        """Pre-announce a timed step and wait for the operator to say the
+        machine is set up.
+
+        Where an actuator is up and wired to the button, the operator
+        proves they are at the machine by pressing the machine's own
+        button, and the actuator then performs every press in the test.
+        A person doing timing-critical presses in the middle of a live
+        cut is how a press count becomes unknowable: a press that lands
+        late, or twice, cannot be told apart afterwards from the machine
+        misbehaving. The button does nothing at Idle, so this press is
+        only a presence check.
+
+        With no actuator the operator does the presses and answers on the
+        page, as before. With the run unattended there is nobody to
+        announce it to and the gate passes at once, logged."""
         if self.run.unattended:
             self.log("READY (fixture performs the step): %s", text)
             return
+
+        fixture = getattr(self.runner, "fixture", None) if self.runner is not None else None
+        if fixture is not None and fixture.covers("button"):
+            self.notice(text + " Then press the button on the machine to start.")
+            self.log("READY: waiting for the operator's press on the machine "
+                     "(the bench then does every press in this test)")
+            pressed = self.wait_for(lambda: self.switch("button") is True, PRESENCE_TIMEOUT_S)
+            self.clear_notice()
+            if pressed is None:
+                raise Failed("no press on the machine within %d s: %s"
+                             % (PRESENCE_TIMEOUT_S, text))
+            # Let the button come back up, so this press is never read as
+            # the arm press or a pause toggle.
+            self.wait_for(lambda: self.switch("button") is False, 10)
+            self.run.fixture_takeover = True
+            self.evidence.setdefault("actions", []).append(
+                {"channel": "button", "state": "presence", "by": "operator",
+                 "took_s": round(pressed, 2), "ts": now_ts()})
+            self.log("READY: operator present (press after %.1f s); the bench takes the presses", pressed)
+            return
+
         ans = self.prompt(text, ("Ready", "Cannot"))
         if ans != "Ready":
             raise Failed("operator could not: %s" % text)
@@ -332,6 +371,15 @@ class Context:
         fixture = getattr(self.runner, "fixture", None) if self.runner is not None else None
         rec = {"channel": channel, "state": state, "by": "operator", "ts": now_ts()}
         self.evidence.setdefault("actions", []).append(rec)
+        # The test began with the bench taking the presses. If it is gone
+        # now, say so loudly: falling back to the operator silently is
+        # what turns one dropped actuator into a press nobody can account
+        # for afterwards.
+        if self.run.fixture_takeover and not (fixture is not None and fixture.covers(channel)):
+            rec["fixture_lost"] = True
+            self.log("ACT %s %s: WARNING the bench actuator took this test's presses and is now "
+                     "gone - asking the operator instead; a press from here on is a person's",
+                     channel, state)
         if fixture is not None and fixture.covers(channel):
             self.log("ACT %s %s (fixture)", channel, state)
             rec["by"] = "fixture"
@@ -377,7 +425,17 @@ class Context:
         fixture = getattr(self.runner, "fixture", None) if self.runner is not None else None
         rec = {"channel": "button", "state": "arm", "by": "operator", "ts": now_ts()}
         self.evidence.setdefault("actions", []).append(rec)
-        if not (fixture is not None and fixture.arm_press and fixture.covers("button")):
+        # A presence press at the ready gate hands this test's presses to
+        # the bench, whatever the config's standing opt-in says: the
+        # operator has already proved they are at the machine, which is
+        # the thing the opt-in exists to establish.
+        opted_in = fixture is not None and fixture.covers("button") and \
+            (fixture.arm_press or self.run.fixture_takeover)
+        if not opted_in:
+            if self.run.fixture_takeover:
+                rec["fixture_lost"] = True
+                self.log("ARM: WARNING the bench actuator took this test's presses and is now "
+                         "gone - asking the operator for the arm press")
             self.notice(text)
             return False
         self.log("ARM: the fixture presses when the button lights (the bench's arm_press opt-in)")

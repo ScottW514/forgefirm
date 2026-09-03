@@ -512,6 +512,80 @@ class RoutingTests(unittest.TestCase):
         rec = self.last_result("r.hold")
         self.assertEqual(rec["evidence"]["fixture"]["released"], ["lid"])
 
+    def press_button(self, down):
+        self.fc.state["status"]["switches"]["button"] = bool(down)
+
+    def test_ready_takes_a_press_on_the_machine_as_the_presence_check(self):
+        """With an actuator wired to the button, the operator proves they
+        are at the machine by pressing it, not by clicking the page. The
+        actuator then owns every press in the test, so no press in a live
+        cut is a person's and none can go uncounted."""
+        run = Run("test", "r.live", "r.live")
+        ctx = Context(run, self.runner, self.reg["r.live"])
+        self.runner.probe_fixture(force=True)
+        asked = []
+        run.ask = lambda q, o: asked.append(q)
+        self.press_button(False)
+        threading.Timer(0.3, self.press_button, args=(True,)).start()
+        threading.Timer(0.8, self.press_button, args=(False,)).start()
+        ctx.ready("LIVE FIRE. Scrap under the head.")
+        self.assertEqual(asked, [])                      # no page click asked for
+        self.assertTrue(run.fixture_takeover)
+        rec = [r for r in run.evidence["actions"] if r["state"] == "presence"]
+        self.assertEqual(len(rec), 1)
+        self.assertEqual(rec[0]["by"], "operator")
+        self.assertTrue(any("press the button on the machine" in ln.lower() for ln in run.lines))
+
+    def test_the_presence_press_hands_the_arm_press_to_the_actuator(self):
+        """The bench's standing opt-in is not needed once the operator has
+        proved presence: that press is what the opt-in existed to
+        establish."""
+        run = Run("test", "r.live", "r.live")
+        ctx = Context(run, self.runner, self.reg["r.live"])
+        self.runner.probe_fixture(force=True)
+        self.stub.arm_press = False
+        run.fixture_takeover = True
+        saved = runner_mod.hw.button_lit
+        runner_mod.hw.button_lit = lambda: True
+        try:
+            self.assertTrue(ctx.arm_press())
+            deadline = time.time() + 5
+            while ("button", "press") not in self.stub.acts and time.time() < deadline:
+                time.sleep(0.05)
+            self.assertIn(("button", "press"), self.stub.acts)
+        finally:
+            runner_mod.hw.button_lit = saved
+
+    def test_an_actuator_lost_after_the_takeover_is_said_out_loud(self):
+        """Falling back to the operator without a word is how one dropped
+        actuator becomes a press nobody can account for afterwards."""
+        run = Run("test", "r.live", "r.live")
+        ctx = Context(run, self.runner, self.reg["r.live"])
+        self.runner.probe_fixture(force=True)
+        run.fixture_takeover = True
+        self.runner.fixture = None                       # the box drops off mid-test
+        self.fc.state["status"]["switches"]["lid"] = True
+        threading.Timer(0.3, lambda: self.fc.state["status"]["switches"].__setitem__("lid", False)).start()
+        ctx.act("lid", "open", timeout=5)
+        rec = run.evidence["actions"][-1]
+        self.assertTrue(rec.get("fixture_lost"))
+        self.assertEqual(rec["by"], "operator")
+        self.assertTrue(any("WARNING" in ln and "now gone" in ln for ln in run.lines))
+
+    def test_ready_still_asks_the_page_with_no_actuator(self):
+        run = Run("test", "r.live", "r.live")
+        ctx = Context(run, self.runner, self.reg["r.live"])
+        self.runner.fixture = None
+        asked = []
+
+        def ask(q, o):
+            asked.append((q, list(o)))
+            return "Ready"
+        run.ask = ask
+        ctx.ready("LIVE FIRE. Scrap under the head.")
+        self.assertEqual(asked, [("LIVE FIRE. Scrap under the head.", ["Ready", "Cannot"])])
+        self.assertFalse(run.fixture_takeover)
+
     def test_the_arm_press_is_the_operators_unless_the_bench_opted_in(self):
         run = Run("test", "r.live", "r.live")
         ctx = Context(run, self.runner, self.reg["r.live"])
