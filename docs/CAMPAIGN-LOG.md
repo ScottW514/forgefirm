@@ -7722,6 +7722,71 @@ there were no QA warnings. This image supersedes 20260903011655 as the
 campaign's image, and the campaign must start again on it: three layer hashes
 moved, so nothing is inherited.
 
+## 2026-09-03: the shakedown on image 20260903163543, and the arm fix under fire
+
+The image went on the bench and the whole catalog ran. It does not authorize
+that image, and it was never meant to: one suite file was hot-deployed part
+way through, so the catalog on the machine is not the catalog in the image.
+This pass was for finding defects, and the clean run on a rebuilt image is
+the one that counts.
+
+Two things had to be cleared before any of it. The board came up with its
+clock at March 2018 and the time daemon never stepped it, twenty-one minutes
+in, with the large-step flag set and name resolution working. Every campaign
+identifier and result would have carried that date, so the clock was set from
+the workstation and written to the hardware clock, and the daemon disciplined
+from there. Nothing in this image touches time keeping and the same pattern
+appears on earlier boots, so this is not new, but it is worth a look on the
+next cold boot. The fresh-boot reference itself was clean: eighty attributes,
+no disagreement with the fixed values.
+
+The unattended set then stopped at its seventh test on `kernel.pic-soc-load`.
+The machine was not at fault. Over eleven runs the settle collapsed the load
+dependence from a control split of six or seven counts to one, every time,
+which is the drill's primary assertion and it never failed. What failed was
+the third assertion, which asked the settled reader to move off the idle
+regime by at least half the control split. The move is three counts against a
+split of six, so the bound sat exactly on the median and decided on one count
+of noise: two of the eleven runs failed while the machine read identically to
+the nine that passed. The kernel's spin is a couple of counts lighter than a
+Python spin, so a settled reader lands above the idle regime without reaching
+the busy one, and asking it to reach halfway asked for something the mechanism
+does not promise. The bound is now a third of the split, which still catches
+the failure it guards, a settle that overshoots and lets the conversion fall
+back to idle and so does not move at all, with a count of margin either way.
+That file was hot-deployed and the set re-run: thirty-one of thirty-one.
+
+Then the attended ten, with the fix under live fire. `laser.emission-witness`
+passed, and the evidence that matters is that its new airflow witness found
+nothing: not one sample showed emission while the cooling engine was in a
+phase that runs the fans at idle duty. The fixture pressed 0.3 s after the
+button lit, the same instant press that produced last night's burn, and this
+time the arm waited for the engine to take the job before the window opened.
+Against last night's aborted run on the same test, emission peaked at 154
+rather than 42 and the high-voltage current reached full scale rather than
+236, because the job ran its whole square instead of a second of it. The
+operator confirmed the mark on all four sides. The button latch never read set
+while the laser latch was unlocked, the supply dipped across the two second
+dwell and came back lit for the third side, and the job disarmed a tenth of a
+second after Idle on the program end.
+
+The rest went through without a stop: fifty-six of fifty-six, nothing skipped.
+`laser.armed-kill` took the controller down mid-fire twice, with emission at
+zero about two seconds after each, the latch relocked and the controller
+respawned. `laser.disarm-in-hold` held the window open in feed hold for 60.7 s
+and then disarmed on the grace. `cooling.flow-under-load` judged its rise with
+the tube lit through the window. The cloud four passed, including the
+operator's own judgement that the app's progress advanced as it cut.
+
+The bench fixture dropped off the network in the middle of the attended set,
+after the emission witness and before the fourth test, and was not reachable
+by address or by name from either the machine or the workstation. Its config
+carries no address, only a hostname resolved by a multicast query the fixture
+answers itself, so when it stops answering there is no fallback. The operator
+covered the presses by hand until a power cycle brought it back, and it
+resumed taking the arm press immediately. Pinning its address in the config
+would keep a failed name query from hiding it.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis
