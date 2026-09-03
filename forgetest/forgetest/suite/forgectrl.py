@@ -61,6 +61,24 @@ def auth(ctx):
     ctx.log("POST /update/upload (no token) -> %s", st)
     ctx.check(st in (400, 403), "POST /update/upload without a token -> %s", st)
 
+    # An oversized body from an unauthenticated client must not be
+    # accumulated in memory before the token check. The framework buffers
+    # every POST body ahead of the callback, and its default is no limit,
+    # so without a ceiling this is a way to take the daemon and any job
+    # with it from the network, unauthenticated. The body here is far over
+    # the cap; what matters is that the daemon answers and is still
+    # serving afterwards, having refused the write.
+    big = b"ui_units=mm&pad=" + (b"x" * (4 * 1024 * 1024))
+    st, body = fc.post("/settings", data=big, auth=False,
+                       headers={"Content-Type": "application/x-www-form-urlencoded"})
+    ev["oversize_body_status"] = st
+    ctx.log("POST /settings (no token, %d MiB body) -> %s", len(big) // (1024 * 1024), st)
+    ctx.check(st == 403, "an oversized unauthenticated body -> %s, expected 403", st)
+    st, body = fc.get("/status")
+    ev["alive_after_oversize"] = st
+    ctx.log("GET /status after the oversized body -> %s", st)
+    ctx.check(st == 200, "the daemon did not survive an oversized body (%s)", st)
+
     # origin checks (read endpoint, so only the origin layer decides)
     st, body = fc.get("/status", headers={"Host": "evil.example.net"})
     ev["host_name"] = st

@@ -1364,93 +1364,21 @@ feature requests, enhancements) will eventually be tracked as GitHub issues.
     shipped default of 2 is a starting point, not a truth), and the same
     shape fits any by-eye tunable the commissioning flow meets.
 
-9. **Audit remediation follow-through.** The 2026-09-01 audit's fixes are
-    pushed in every repository, pinned, and built (2026-09-02). The pooled
-    bench session came first, on a locally built dev image (kernel module,
-    forgectrl, grblHAL, gfhardware, gfutilities all moved, so the campaign is
-    a full one; the drills that prove the safety fixes directly are
-    `kernel.deadman-close` (new), `cloud.lid-during-button-wait` (now a job
-    longer than the ring), `cloud.verdict-hold` (new, about twelve minutes with
-    the loop heater), `motion.deadman` (the hang case recovers on a soft
-    reset and `$X`: the stream fault is a critical alarm, which the core
-    unlocks only after a reset, and the reset is what re-arms the stream),
-    and the `cooling.*` set). The session's queues are green on image
-    20260902144848, the unattended set and the attended set both; the harness
-    and diagnostic defects they found are fixed and pushed with the rest (the
-    dated record is in CAMPAIGN-LOG). The two bench measurements are closed:
-    the connector pads were not measured (the device tree carries the
-    factory's pad configuration and the factory machine shows no trouble
-    there, the operator's decision), and the forced kernel hang ended in the
-    factory recovery after the 60 s watchdog with a power cycle returning, as
-    documented. Image 20260902230436 (release and dev) is built on the pushed
-    pins, the kernel and the module rebuilt together for the watchdog sysfs
-    change, and is not the image the campaign runs on: the campaign waits
-    until every audit finding, the deferred ones included, is on one image
-    (the operator's rule). That batch is done (items 10 and 11). The
-    campaign's image is now the local image 20260903163543 (release and dev),
-    which supersedes 20260903011655: it adds the arm-acknowledgment fix that
-    the first attended run made necessary. The cooling verdict carries the
-    engine's own armed flag, and neither controller fires inside its armed
-    window on a verdict that lacks it, because such a verdict answers the idle
-    session that preceded the arm. Four components in that image come from
-    local commits that are not pushed (forgectrl, grblhal-glowforge,
-    kernel-module-glowforge at 0.0.3, python3-gfhardware), each pinned for the
-    build through an overlay that is not committed; the kernel comes from the
-    edited patches.
-    That campaign is done: 56 of 56 on image 20260903211413, nothing
-    inherited and nothing hot-deployed, and the gate reports it authorized
-    (the dated record is in CAMPAIGN-LOG). Owed now: the push in CI order
-    and the pin bumps for the batch, then one build from the pushed pins.
-    Decisions taken in the remediation that the operator confirms or reverses:
-    the release image has no shell login (the install page now says so); the
-    cloud client holds and resumes on the cooling verdict with a 30-minute
-    bound (`cloud_hold_max_s`); `FORGEFIRM_RELEASE` is 0.0.1, so the bench slot
-    at v0.1.0 will meet the installer's downgrade prompt; the `faultpos`
-    live-fire drill is gone; a coolant sensor unreadable for two ticks is the
-    SENSOR verdict.
-
-10. **PIC readings under one SoC load, done and waiting for the image.** The
-    module keeps the CPU busy for `pic_settle_us` (500, a runtime-writable
-    parameter) before every PIC transaction, longer than one loop of the
-    PIC's free-running sampler, so the value a reader gets was converted
-    under the same load whoever reads and whatever it was doing (facts bank,
-    "Coolant-ADC readings depend on the SoC's load at conversion time"): the
-    engine, `/status`, the diagnostics and a bench sampler read the same
-    value, the busy-regime one, about 0.35 C above the idle one. Host-proven
-    by the module's -Werror cross-build and, for the mechanism, by the
-    userspace measurement; on the bench, the new `kernel.pic-soc-load` drill
-    (200 reads after 3 ms of sleep and after 3 ms of spinning, with the
-    settle off and on) and the coolant-reading tests
-    (`cooling.aa-offset-calibrate`, `cooling.flow-verify`). Rides item 9's
-    image; the item closes with the campaign.
-
-11. **The audit's deferred findings, done and waiting for the image.** All six
-    are fixed and host-proven, and ride the local image item 9's campaign
-    runs on. **K-4**: the SDMA script publishes end-of-data in a coherent
-    mailbox word before it signals (and clears the waypoint counter), and the
-    interrupt callback decodes on the mailbox, not on the host's arming, so an
-    end-of-data that arrives before an armed waypoint stops the run at once.
-    **K-8**: a resume's laser-off lead is the script's own inhibit mask,
-    applied to every GPIO word it writes and cleared at the waypoint byte;
-    run start restores the FIRE drive while the script is idle, the callback
-    writes nothing to the GPIO data register, and only the deceleration parks
-    the line. Both are proven on the host by the module's -Werror cross-build
-    and on the bench by the new `kernel.resume-lead` drill (end-of-data before
-    the waypoint at a 1 kHz tick, and a 1000-byte lead over FIRE bits with the
-    latch unlocked and the chain unarmed). **P-13**: the SDMA channel is
-    claimed through dmaengine (`dma_get_slave_channel`, released by
-    `dma_release_channel`, whose resource hooks hold the engine's clocks), and
-    the callback setter kills the tasklet before clearing and initializes it
-    only when setting. **P-14**: the inter-word wait states come from
-    `spi_transfer.word_delay`, which `pic.c` sets beside the post-transfer
-    `delay`. The kernel rebuilt clean with both patches. **B-16**:
-    `BB_SIGNATURE_LOCAL_DIRS_EXCLUDE` in the distro conf names `__pycache__`
-    and `.pytest_cache`, so a workstation's bytecode caches never enter a
-    file:// checksum (proven in the build VM: a cache under the package leaves
-    the fetch task alone, a source change reruns it). **FA-20**: the panel's
-    dev-server mock carries the daemon's tables and reply shapes, and a host
-    test in the forgectrl repository reads them out of the C sources and holds
-    the mock to them. The item closes with the campaign.
+9. **The request-body cap, waiting for a bench run.** The last open finding
+    of the 2026-09-01 audit (FB-2, FA-11). The web framework accumulated
+    every POST body in memory before any endpoint callback ran, so before
+    the token check, with no ceiling: an unauthenticated client on the
+    network could stream until the board ran out of memory and took the
+    daemon, and any job with it. The audit left it at "plausible"; the
+    pinned framework source settles it, its default is unlimited and the
+    ceiling was never set. `forgectrl` now sets 64 KiB, against the
+    64-connection and 16-per-IP limits already there. The firmware upload
+    is unaffected: the cap truncates only the framework's own copy, and
+    its post processor still receives every chunk, so the multipart file
+    parts reach the sink and stream to disk. `forgectrl.auth` gained the
+    case, an oversized unauthenticated body that must be refused with the
+    daemon still serving afterwards. Host-proven; it needs an image and a
+    campaign.
 
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the
