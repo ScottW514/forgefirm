@@ -49,9 +49,10 @@ hardware-validated.**
   nothing and authorizes a release (the record is in `CAMPAIGN-LOG.md`);
   **no release is cut yet.**
 
-Current bench state: dev image `20260901225926` on the SD card (eMMC slot 1 =
+Current bench state: dev image `20260903011655` on the SD card (eMMC slot 1 =
 factory 2024, slot 2 = a ForgeFIRM pin-file image, archives in
-`/data/forgefirm/archive`).
+`/data/forgefirm/archive`). The campaign's image is `20260903163543`, which is
+built and waiting to be flashed.
 
 ## The bench
 
@@ -1385,13 +1386,21 @@ feature requests, enhancements) will eventually be tracked as GitHub issues.
     pins, the kernel and the module rebuilt together for the watchdog sysfs
     change, and is not the image the campaign runs on: the campaign waits
     until every audit finding, the deferred ones included, is on one image
-    (the operator's rule). That batch is done (items 10 and 11) and is on
-    the local image 20260903011655 (release and dev; the module built from
-    its local commit at 0.0.3, the kernel from the edited patches,
-    everything else from the pushed pins), which is the campaign's image.
+    (the operator's rule). That batch is done (items 10 and 11). The
+    campaign's image is now the local image 20260903163543 (release and dev),
+    which supersedes 20260903011655: it adds the arm-acknowledgment fix that
+    the first attended run made necessary. The cooling verdict carries the
+    engine's own armed flag, and neither controller fires inside its armed
+    window on a verdict that lacks it, because such a verdict answers the idle
+    session that preceded the arm. Four components in that image come from
+    local commits that are not pushed (forgectrl, grblhal-glowforge,
+    kernel-module-glowforge at 0.0.3, python3-gfhardware), each pinned for the
+    build through an overlay that is not committed; the kernel comes from the
+    edited patches.
     Owed now: flash the dev image, take a fresh-boot baseline, run the full
     campaign on it, the campaign the release gate asks for; then the push
-    in CI order and the pin bumps for the batch.
+    in CI order and the pin bumps for the batch. Nothing inherits from the
+    earlier campaign: three layer hashes moved.
     Decisions taken in the remediation that the operator confirms or reverses:
     the release image has no shell login (the install page now says so); the
     cloud client holds and resumes on the cooling verdict with a 30-minute

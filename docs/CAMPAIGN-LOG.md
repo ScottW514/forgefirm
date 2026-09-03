@@ -7654,6 +7654,74 @@ the first fire, which is a change to forgectrl and another image before
 any further live fire. The attended eleven were not run; the campaign on
 20260903011655 stands at 45 of 56.
 
+## 2026-09-03: the fire that preceded the airflow, and what it really was
+
+The setting was reset first: `cool_temp_start` back to 16, its default, by a
+POST to /settings on the machine. Every cooling gate row then read its
+compiled default again. The only remaining non-default values are the bench
+calibrations, the air-assist offset of 16 counts, the recorded dose curve, and
+the corner gamma of 1.5.
+
+The second cause turned out to be narrower and worse than "the gates are
+evaluated one tick late". The cooling verdict carried nothing that said which
+session it answered. A controller opens its armed window, reports it, and the
+engine applies the run airflow and the flow interrogation only when it reads
+that report on its next tick. Until then the verdict on file is the one the
+engine computed for the idle session before the arm, and at idle nothing is
+wrong, so it reads `fire_ok=true` and stays fresh inside the two second
+window. In GRBL mode `arm_complete()` re-checks the gate right after the
+button press and opened the window on exactly that verdict. The fixture
+pressed at 0.0 s, so the re-check ran before the engine had ticked at all.
+The hold that followed was the engine catching up, not the cause. Cloud mode
+had the same exposure in `_verdict_wait()`, which broke as soon as the verdict
+read clean.
+
+The fix gives the verdict a run-session identity. The engine publishes
+`armed`, its own view of the window, set from the reported state before
+`flood_apply` and before the publish, so `armed=true` means the verdict was
+computed with the run session open. `gfcool_fire_ok()` additionally requires
+it while the window is open and leaves the pre-arm gate alone, where there is
+nothing yet to acknowledge. `arm_complete()` waits for it, bounded at five
+seconds, and refuses the job if it never comes. The cloud wait requires it
+too. The verdict body grew a key, so its buffer went to 384 bytes behind a
+static assert on the budget: an oversized document is not published, and no
+verdict reads to every controller as a fault.
+
+Proofs, all host. The two new cloud tests were run against the unfixed code
+and failed there: `_verdict_wait()` returned in 72 microseconds on the pre-arm
+verdict, which is the defect itself. The lifecycle harness gained two cases,
+one where the engine never takes the window (refused arm, no emission) and one
+where it takes it two seconds late. The late case is the one that proves the
+controller keeps reading the verdict while it is blocked in the arm; it waited
+1.6 s and then armed. Without that path every job on the machine would fail at
+the arm. Also green: the grblHAL arm unit test, the stream harness at 22
+cases, the 16 forgectrl host tests, the 289 forgetest tests, the coverage lint
+at zero uncovered paths, and the docs build.
+
+The acceptance catalog gained the bench form of the rule. `laser.emission-witness`
+now fails if any sample shows emission while the cooling engine reports a phase
+that runs the fans at idle duty, which is what this failure looked like from
+outside. The sampler records the phase, and the trail carries it.
+
+## 2026-09-03: build p33, image 20260903163543
+
+Both images built green from the committed trees, with four components taken
+from local commits that are not pushed: forgectrl 8ef9509 at PV 0.1.2,
+grblhal-glowforge 2f5edee at 0.1.2, kernel-module-glowforge faa1034 at 0.0.3,
+and python3-gfhardware dd0ebf3 with the app recipes at 0.1.23+git. Each was
+pinned for this build only through a kas overlay that is never committed, with
+its download mirror primed from the local repository; the grblHAL submodule
+came from its own pushed commit. The kernel and the module were cleaned
+together, so the feed carries one kernel version string.
+
+The built images were checked for the fix rather than assumed to carry it: the
+verdict format string with `armed` in the forgectrl binary, the refusal message
+in the controller binary, the armed test in the cloud module, and the new
+airflow witness in the acceptance suite. The p32 content is still present, and
+there were no QA warnings. This image supersedes 20260903011655 as the
+campaign's image, and the campaign must start again on it: three layer hashes
+moved, so nothing is inherited.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis
