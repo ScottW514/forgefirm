@@ -1371,8 +1371,13 @@ feature requests, enhancements) will eventually be tracked as GitHub issues.
     factory recovery after the 60 s watchdog with a power cycle returning, as
     documented. Image 20260902230436 (release and dev) is built on the pushed
     pins, the kernel and the module rebuilt together for the watchdog sysfs
-    change. Owed now: flash the dev image, take a fresh-boot baseline, and run
-    the full campaign on it, the campaign the release gate asks for.
+    change, and is not the image the campaign runs on: the campaign waits
+    until every audit finding, the deferred ones included, is on one image
+    (the operator's rule). That batch is done (item 11) and rides the next
+    local image, which is the campaign's. Owed now: build it, flash the dev
+    image, take a fresh-boot baseline, run the full campaign on it, the
+    campaign the release gate asks for; then the push in CI order and the
+    pin bumps for the batch.
     Decisions taken in the remediation that the operator confirms or reverses:
     the release image has no shell login (the install page now says so); the
     cloud client holds and resumes on the cooling verdict with a 30-minute
@@ -1390,36 +1395,33 @@ feature requests, enhancements) will eventually be tracked as GitHub issues.
     change: it rides the next image flash, with the coolant-reading tests
     (`cooling.aa-offset-calibrate`, `cooling.flow-verify`) as its proof.
 
-11. **The audit's deferred findings.** Six findings of the 2026-09-01 audit were
-    deferred with a reason and are owed here. Four are one kernel batch, since
-    each edits the SDMA script, the module, or a kernel patch file, and a
-    kernel change rides one image flash: **K-4** (end-of-data reached before
-    an armed waypoint is decoded as the waypoint; the script clears its
-    scratch at `alldone` and publishes an end-of-data flag the host decodes on;
-    proof: a cloud pause within the last bytes of a job, a `cloud.pause-resume`
-    case), **K-8** (the FIRE restore at the resume waypoint writes the whole
-    GPIO2 data register from gpiolib's shadow while the script may be
-    mid-byte; move the restore into the script on a scratch flag; a scope on
-    DIR at the resume point first, since the failure is plausible, not seen),
-    **P-13** (the SDMA glue patch hands out a channel without claiming it from
-    dmaengine and re-initializes a tasklet that may be scheduled; claim the
-    channel in `sdma_get_channel()`, release it in the put, `tasklet_kill()`
-    before clearing; latent today, no other client reaches the channel), and
-    **P-14** (the SPI patch takes its inter-word wait states from
-    `spi_transfer.delay`, which the core also applies after the transfer;
-    read `word_delay` and have `pic.c` set it; batch with item 10, since the
-    PIC read pattern measured on 2026-09-02 may turn on these wait states).
-    The patch-file edits are regenerated with `devtool modify linux-fslc` on
-    the pinned tree. Two are host-only: **B-16** (a host `__pycache__` under the
-    forgetest package directory moves the recipe's task hash without a source
-    change; the remediation named the package directory and drops the caches
-    in `do_unpack`, but the fetch checksum is taken before that, so the
-    residual stays: run the host tests with `PYTHONDONTWRITEBYTECODE=1` or
-    clear the caches before a build, since the file fetcher has no exclude);
-    and **FA-20** (the panel's devserver mock diverged from the daemon:
-    mode values, `/cool/status`, the gate table, the settings keys, the diag
-    routes; regenerate its tables from `gates.c` and the settings table), dev
-    tooling with no image consequence.
+11. **The audit's deferred findings, done and waiting for the image.** All six
+    are fixed and host-proven, and ride the local image item 9's campaign
+    runs on. **K-4**: the SDMA script publishes end-of-data in a coherent
+    mailbox word before it signals (and clears the waypoint counter), and the
+    interrupt callback decodes on the mailbox, not on the host's arming, so an
+    end-of-data that arrives before an armed waypoint stops the run at once.
+    **K-8**: a resume's laser-off lead is the script's own inhibit mask,
+    applied to every GPIO word it writes and cleared at the waypoint byte;
+    run start restores the FIRE drive while the script is idle, the callback
+    writes nothing to the GPIO data register, and only the deceleration parks
+    the line. Both are proven on the host by the module's -Werror cross-build
+    and on the bench by the new `kernel.resume-lead` drill (end-of-data before
+    the waypoint at a 1 kHz tick, and a 1000-byte lead over FIRE bits with the
+    latch unlocked and the chain unarmed). **P-13**: the SDMA channel is
+    claimed through dmaengine (`dma_get_slave_channel`, released by
+    `dma_release_channel`, whose resource hooks hold the engine's clocks), and
+    the callback setter kills the tasklet before clearing and initializes it
+    only when setting. **P-14**: the inter-word wait states come from
+    `spi_transfer.word_delay`, which `pic.c` sets beside the post-transfer
+    `delay`. The kernel rebuilt clean with both patches. **B-16**:
+    `BB_SIGNATURE_LOCAL_DIRS_EXCLUDE` in the distro conf names `__pycache__`
+    and `.pytest_cache`, so a workstation's bytecode caches never enter a
+    file:// checksum (proven in the build VM: a cache under the package leaves
+    the fetch task alone, a source change reruns it). **FA-20**: the panel's
+    dev-server mock carries the daemon's tables and reply shapes, and a host
+    test in the forgectrl repository reads them out of the C sources and holds
+    the mock to them. The item closes with the campaign.
 
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the

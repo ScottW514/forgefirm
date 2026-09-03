@@ -679,3 +679,130 @@ def fire_line(ctx):
             except OSError:
                 pass
             ctx.log("safe state restored: state=%s latch=LOCKED", rd("cnc/state"))
+
+
+# ---------------------------------------------------------------- resume lead
+
+@test("kernel.resume-lead", title="A resume's laser-off lead, and an end-of-data before the waypoint",
+      subsystem="kernel", kind="auto", hardware="takeover", est_min=2,
+      covers=_KERNEL_COVERS,
+      requires=["kernel.k1-k2"], precheck=hv_off,
+      steps=["Phase L unlocks the latch with a zero-duty stream, so the drill starts only while "
+             "the HV supply does not report good (true at idle; if it is refused, open the lid - "
+             "the safety chain holds HV off - and start it again)."],
+      description="Two phases behind one takeover, zero duty, motors locked, a 1 kHz tick. E: a "
+                  "resume whose lead is longer than the data (the ring drains before the waypoint) "
+                  "ends the run at end-of-data within a few ticks, not one re-notify period (255 "
+                  "ticks) later: the script publishes end-of-data in its mailbox and the host "
+                  "decodes on that, not on the waypoint it was still waiting for. L: with the "
+                  "latch unlocked and the chain unarmed, a resume with a 1000-byte lead over a "
+                  "stream of FIRE bits keeps the FIRE line low through the lead and drives it from "
+                  "the waypoint byte on. The script masks the laser bits itself, so no host write "
+                  "reaches the GPIO data register while the script runs; LASER_ON stays off (the "
+                  "safety AND-gate holds).")
+def resume_lead(ctx):
+    ev = ctx.evidence
+    require_hv_off(ctx)
+    tick = 1000
+    with ctx.takeover():
+        try:
+            # ---- E: end-of-data before the waypoint
+            stream = POWER0 + PAD * (tick // 2)         # 0.5 s of pads
+            expected = len(stream) / tick
+            ctx.log("E: %d bytes = %.1f s of pads at %d Hz; resume with a %d-byte lead (never reached)",
+                    len(stream), expected, tick, 10 * tick)
+            wr("cnc/motor_lock", 15)
+            wr("cnc/laser_latch", 1)
+            wr("cnc/ramp_rate", 125000)
+            wr("cnc/step_freq", tick)
+            snap(ctx, "E pre")
+            with PulseDevice(ctx) as dev:
+                dev.rewind()
+                wr("cnc/enable", 1)
+                ctx.sleep(0.5)
+                dev.write(stream)
+                underruns_before = int(rd("cnc/underruns"))
+                t0 = time.time()
+                wr("cnc/resume", 10 * tick)
+                state = wait_state(ctx, "running", 2, poll=0.002)
+                ctx.check(state == "running", "E: the resume did not start (state=%s)", state)
+                state = wait_state(ctx, "idle", 5, poll=0.002)
+                dt = time.time() - t0
+                ev["E"] = {"run_to_idle_s": round(dt, 3), "data_s": expected, "state": state,
+                           "underruns_before": underruns_before,
+                           "underruns_after": int(rd("cnc/underruns")), "faults": rd("cnc/faults")}
+                ctx.log("E: %s after %.3f s (the data is %.3f s; a lost end-of-data would add %.3f s)",
+                        state, dt, expected, 255.0 / tick)
+            ctx.check(state == "idle", "E: state %s after the data ran out", state)
+            ctx.check(dt < expected + 0.15,
+                      "E: the run ended %.3f s after its data: end-of-data decoded late", dt - expected)
+            ctx.check(ev["E"]["underruns_after"] == underruns_before,
+                      "E: an underrun was counted on a normal completion")
+            ctx.check(ev["E"]["faults"] == "0", "E: faults=%s", ev["E"]["faults"])
+            ctx.log("E PASS: end-of-data before the waypoint ended the run on time")
+
+            # ---- L: the lead, latch unlocked, chain unarmed
+            check_hv_off(ctx)
+            lead = tick                                 # 1.0 s of FIRE bits held off
+            lead_s = lead / tick
+            stream = POWER0 + FIRE * (2 * tick) + PAD * (tick // 5)
+            ctx.log("L: %d bytes = %.1f s (%.1f s of FIRE bits then pads); lead %d bytes = %.1f s; "
+                    "latch UNLOCKED, chain unarmed", len(stream), len(stream) / tick,
+                    2 * tick / tick, lead, lead_s)
+            wr("cnc/motor_lock", 15)
+            wr("cnc/laser_latch", 1)
+            wr("cnc/step_freq", tick)
+            snap(ctx, "L pre")
+            samples = []
+            state = ""
+            with PulseDevice(ctx) as dev:
+                dev.rewind()
+                wr("cnc/enable", 1)
+                ctx.sleep(0.5)
+                dev.write(stream)
+                try:
+                    wr("cnc/laser_latch", 0)
+                    t0 = time.time()
+                    wr("cnc/resume", lead)
+                    n = 0
+                    while time.time() - t0 < 10:
+                        en, on = rd("cnc/laser_enable"), rd("cnc/laser_on")
+                        samples.append((round(time.time() - t0, 4), en, on))
+                        state = rd("cnc/state")
+                        if state != "running" and time.time() - t0 > 0.2:
+                            break
+                        n += 1
+                        if n % 200 == 0:
+                            ctx.checkpoint()
+                finally:
+                    wr("cnc/laser_latch", 1)
+            snap(ctx, "L post")
+            driven = [s for s in samples if s[1] != "0"]
+            first = driven[0][0] if driven else None
+            last = driven[-1][0] if driven else None
+            inside_lead = [s for s in driven if s[0] < lead_s - 0.02]
+            ev["L"] = {"samples": len(samples), "driven_samples": len(driven),
+                       "first_driven_s": first, "last_driven_s": last, "end_state": state,
+                       "any_laser_on": any(s[2] != "0" for s in samples),
+                       "inside_lead": inside_lead[:5], "laser_on_sampled": rd("cnc/laser_on_sampled"),
+                       "faults": rd("cnc/faults")}
+            ctx.log("L: %d samples, FIRE driven in %d, first at %s s, last at %s s, end state %s",
+                    len(samples), len(driven), first, last, state)
+            ctx.check(state == "idle", "L: ended in %s", state)
+            ctx.check(not inside_lead, "L: FIRE driven inside the lead: %s", inside_lead[:5])
+            ctx.check(driven, "L: FIRE never driven after the lead (the inhibit never cleared)")
+            ctx.check(first is not None and first < lead_s + 0.3,
+                      "L: FIRE first driven at %s s; the lead ends at %.1f s", first, lead_s)
+            ctx.check(not ev["L"]["any_laser_on"],
+                      "L: LASER_ON active with the chain unarmed - the AND-gate did not hold")
+            ctx.check(rd("cnc/laser_enable") == "0", "L: FIRE still driven after end-of-data")
+            ctx.log("L PASS: FIRE low through the %.1f s lead, driven from the waypoint on, LASER_ON off",
+                    lead_s)
+        finally:
+            wr("cnc/laser_latch", 1)
+            try:
+                wr("cnc/ramp_rate", 125000)
+                wr("cnc/disable", 1)            # the script's safe state
+            except OSError:
+                pass
+            ctx.log("safe state restored: state=%s latch=LOCKED", rd("cnc/state"))

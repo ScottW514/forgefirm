@@ -7346,6 +7346,68 @@ Owed: the operator flashes the dev image, takes a fresh-boot baseline, and
 runs the full campaign (all three layer hashes moved), the campaign the
 release gate asks for.
 
+## 2026-09-02: the audit's deferred findings, host-proven
+
+The operator's rule for the campaign set the order: no campaign until every
+audit finding, the deferred six included, is on one image for a final test.
+So the deferred batch was done at once, all of it local, all of it host-proven.
+
+**K-4 and K-8, in the SDMA script and the module.** The waypoint and the
+end-of-data interrupts share one line, and the callback cannot fetch the
+channel context (a channel-0 transfer, which sleeps), so it decoded on
+host-side arming: an end-of-data before an armed waypoint read as the
+waypoint. The script now writes 1 to a coherent mailbox word (allocated
+before the dedicated pool is attached, so the pool stays the ring's alone;
+its physical address rides a reserved context word) before its end-of-data
+notify, clears the waypoint counter, and the callback decodes on the
+mailbox; run start clears it. The resume lead moved into the script too: a
+laser inhibit mask in a second reserved context word, ANDed out of every
+GPIO word beside the motor lock, set by run start for an accelerating
+forward run and cleared by the script at the waypoint byte. Run start
+restores the FIRE drive while the script is idle, the callback writes
+nothing to the GPIO data register, and only the deceleration parks the line
+(the direction register alone). A resume with no lead plays laser-less for
+the whole run, as before, now by construction. The script grew from 160 to
+173 instructions; its branches are 8-bit displacements and the growth pushed
+one past the range, which the assembler refuses, so the layout changed: the
+waypoint action, the power-level path and the first end-of-data tick sit
+past the main loop, reached by short branches; the worst displacement is
++120 of 127. Host proof: the module cross-compiles against the pinned
+kernel with -Werror, its host tests pass. The bench proof is the new
+`kernel.resume-lead` drill, two phases behind one takeover at a 1 kHz tick:
+E, a resume whose lead is longer than the data, where a lost end-of-data
+would show as 255 ms; L, a 1000-byte lead over FIRE bits with the latch
+unlocked and the chain unarmed, the FIRE line sampled through the run. The
+catalog counts 55 tests, 0 uncovered.
+
+**P-13 and P-14, in the kernel patches.** `sdma_get_channel()` claims the
+channel through `dma_get_slave_channel()`, whose resource hook holds the
+engine's ipg/ahb clocks the way the explicit enables did, and
+`sdma_put_channel()` is `dma_release_channel()`; the callback setter kills
+the tasklet before clearing and initializes it only when setting. The SPI
+patch reads `spi_transfer.word_delay` for the PERIODREG wait states, and
+`pic.c` sets `word_delay` beside `delay` (the post-transfer gap the factory
+kernel also had). The hunks were edited in place; do_patch took them and
+the kernel rebuilt clean.
+
+**B-16.** The real fix is bitbake's own knob: `BB_SIGNATURE_LOCAL_DIRS_EXCLUDE`
+in the distro conf names `__pycache__` and `.pytest_cache` beside the VCS
+directories, so the file fetcher's checksum never sees a bytecode cache.
+The experiment in the build VM: a fetch on a clean tree ran the task; a
+cache injected under the package directory left 2 of 2 tasks alone; a real
+source change ran the task again. The CI's `-B` stays as a second layer.
+
+**FA-20.** The panel's dev-server mock carried 10 gate rows of the daemon's
+22, lacked 18 settings keys, accepted a mode the daemon refuses, and sent
+`/cool/status`, `/diag`, `/boot`, `/update` and `/slots` shapes the daemon
+does not. It now carries the daemon's tables and reply shapes, and a host
+test (`tests/test_devserver_mock.py`, 15 cases, one CI step) parses the C
+tables and holds the mock to them.
+
+Owed: one local image with the batch (the module pinned from its local
+commit, the rest from the pushed pins), the flash, the fresh-boot baseline
+and the full campaign; then the push in CI order and the pin bumps.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis
