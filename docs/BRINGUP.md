@@ -49,10 +49,10 @@ hardware-validated.**
   nothing and authorizes a release (the record is in `CAMPAIGN-LOG.md`);
   **no release is cut yet.**
 
-Current bench state: dev image `20260903011655` on the SD card (eMMC slot 1 =
+Current bench state: dev image `20260903211413` on the SD card (eMMC slot 1 =
 factory 2024, slot 2 = a ForgeFIRM pin-file image, archives in
-`/data/forgefirm/archive`). The campaign's image is `20260903163543`, which is
-built and waiting to be flashed.
+`/data/forgefirm/archive`). The full campaign passed on it, 56 of 56, and the
+acceptance gate reports it authorized.
 
 ## The bench
 
@@ -1397,10 +1397,10 @@ feature requests, enhancements) will eventually be tracked as GitHub issues.
     kernel-module-glowforge at 0.0.3, python3-gfhardware), each pinned for the
     build through an overlay that is not committed; the kernel comes from the
     edited patches.
-    Owed now: flash the dev image, take a fresh-boot baseline, run the full
-    campaign on it, the campaign the release gate asks for; then the push
-    in CI order and the pin bumps for the batch. Nothing inherits from the
-    earlier campaign: three layer hashes moved.
+    That campaign is done: 56 of 56 on image 20260903211413, nothing
+    inherited and nothing hot-deployed, and the gate reports it authorized
+    (the dated record is in CAMPAIGN-LOG). Owed now: the push in CI order
+    and the pin bumps for the batch, then one build from the pushed pins.
     Decisions taken in the remediation that the operator confirms or reverses:
     the release image has no shell login (the install page now says so); the
     cloud client holds and resumes on the cooling verdict with a 30-minute

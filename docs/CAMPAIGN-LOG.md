@@ -7787,6 +7787,56 @@ covered the presses by hand until a power cycle brought it back, and it
 resumed taking the arm press immediately. Pinning its address in the config
 would keep a failed name query from hiding it.
 
+## 2026-09-03: the full campaign on 20260903211413, 56 of 56, authorized
+
+The campaign the release gate asks for, on the image as built: nothing
+inherited, nothing hot-deployed, both halves run on one flash.
+
+  campaign     c-20260903212054-4063
+  image        20260903211413 (dev)
+  manifest     c802d7639ac236f1fbf03fb7d65216f32aa395c0dcb04bce9a12d6274b0f0c61
+
+Forty-five unattended, then the attended eleven, all PASS. The inherited
+results were invalidated before the start: the earlier runs were taken on a
+harness whose press routing has since changed, and the catalog hash does not
+cover that, so carrying them forward would have been the very inheritance the
+campaign model exists to prevent.
+
+The arm-acknowledgment fix held under live fire again, and its witness is the
+line that says nothing happened: `idle_airflow_fire` empty, so no sample
+showed emission while the cooling engine was in a phase that runs the fans at
+idle duty. Emission peaked at 155.
+
+The pause test passed this time, and how it passed is the point. Its trail
+reads 90, 90, 90, 65, 65, 65, 65, then zero and zero for the rest of the four
+seconds: the latched sample window draining, and then real darkness. The run
+that failed earlier read 153, 12, 99, 152 - a second kernel run inside the
+pause, which the controller log confirmed. The difference between the two runs
+is who pressed the button. Here the actuator did, on the operator's behalf,
+after a single presence press: the evidence records `presence` by the operator
+at the gate and every press after it by the fixture. That does not prove the
+earlier failure was a double press rather than a machine fault; it does mean
+the press count is no longer a matter of anyone's memory, so a repeat would be
+answerable.
+
+Two harness faults were found and fixed along the way, neither of them the
+machine. The kill drill calls the shared arm-and-fire helper twice, and the
+helper holds the ready gate, so the new presence gate asked the operator for a
+second press mid-test while the actuator stood by holding the presses. That is
+fixed: presence is proved once per test, and the second gate returns at once
+with its setup line still shown in case the scrap wants moving. The kill drill
+is the only test in the catalog with two ready gates.
+
+The bench actuator dropped off the network twice during the earlier attended
+runs, and both times the harness fell back to asking the operator without
+saying so. That silence is what made the first pause failure unanswerable. A
+lost actuator is now said out loud, in the log and in the evidence. Its
+address is pinned in the bench config, so a failed name query can no longer
+hide a box that is present. And its wifi signal, which reads -82 to -83 dBm
+here, now goes into every run's record beside its uptime, so the next drop
+says whether the link faded or the box restarted rather than only that it was
+gone.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis
