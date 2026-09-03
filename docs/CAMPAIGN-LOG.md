@@ -7562,6 +7562,25 @@ the coolant-reading tests. Rare excursions of 10 to 20 counts appear in
 every regime at a few samples per hundred and are a separate matter the
 diagnostic's interquartile means already drop.
 
+## 2026-09-03: build p32, the campaign's image with item 10 redone
+
+Build p32 replaces p31 as the campaign's image: the same batch with the
+PIC settle in place of the sleep-based gap, the module from its local
+commit at 0.0.3 (pinned for this build only, its mirror primed), the
+kernel from the edited patches, everything else from the pushed pins.
+Fetch-verify green; the kernel and the module cleaned together; both
+images built clean, release and dev `20260903011655`. The checks: the kernel and
+the module both name `6.12.20-fslc-fslc-g649f0f50c451`; the dev manifest records the module at its
+commit and 0.0.3 and every other component at its pushed pin; the module
+in the dev image carries the inhibit, the mailbox and the `pic_settle_us`
+strings, with a vermagic that matches the kernel; the patched tree carries
+the dmaengine claim and the word_delay source; the suite in the image
+carries the new drills; `WATCHDOG_SYSFS`, `IMX2_WDT` and `STRICT_DEVMEM`
+are set; no gfui-client; `nofail` factory slots; no mmap or ctypes in the
+release image; no QA warnings. Owed: the operator flashes the dev image,
+takes a fresh-boot baseline, and runs the full campaign; then the push in
+CI order and the pin bumps.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis

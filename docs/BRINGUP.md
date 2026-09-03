@@ -1386,7 +1386,7 @@ feature requests, enhancements) will eventually be tracked as GitHub issues.
     change, and is not the image the campaign runs on: the campaign waits
     until every audit finding, the deferred ones included, is on one image
     (the operator's rule). That batch is done (items 10 and 11) and is on
-    the local image 20260903003213 (release and dev; the module built from
+    the local image 20260903011655 (release and dev; the module built from
     its local commit at 0.0.3, the kernel from the edited patches,
     everything else from the pushed pins), which is the campaign's image.
     Owed now: flash the dev image, take a fresh-boot baseline, run the full
