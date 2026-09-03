@@ -141,12 +141,23 @@ def wait_idle(sock, log):
     fail("controller never returned to Idle")
 
 
-def publish_verdicts(path, stop, fire_ok):
+def publish_verdicts(path, stop, fire_ok, armed_ack=True, ack_after_s=0.0):
+    """Stand in for the cooling engine. "armed" is the engine's
+    acknowledgment that it has taken the controller's armed window and
+    applied the run airflow; the controller refuses to fire on a verdict
+    that lacks it, so an engine that never acknowledges (armed_ack
+    False) must produce a refused arm and no emission. ack_after_s
+    withholds the acknowledgment for that long first, which is the real
+    engine's case: it answers on its next tick, and the controller has
+    to see the refreshed verdict to get past the arm."""
+    t0 = time.monotonic()
     while not stop.is_set():
+        acked = armed_ack and time.monotonic() - t0 >= ack_after_s
         body = ('{"ts_mono":%.3f,"fire_ok":%s,"hold":false,'
-                '"resume_ok":true,"reason":""}'
+                '"resume_ok":true,"armed":%s,"reason":""}'
                 % (time.clock_gettime(time.CLOCK_MONOTONIC),
-                   "true" if fire_ok else "false"))
+                   "true" if fire_ok else "false",
+                   "true" if acked else "false"))
         tmp = path + ".tmp"
         with open(tmp, "w") as f:
             f.write(body)
@@ -157,7 +168,8 @@ def publish_verdicts(path, stop, fire_ok):
 class Session:
     """One controller process with the lifecycle overrides applied."""
 
-    def __init__(self, name, fire_ok=True, disarm_s=2, switches=None, conf_extra=""):
+    def __init__(self, name, fire_ok=True, disarm_s=2, switches=None, conf_extra="",
+                 armed_ack=True, ack_after_s=0.0):
         self.name = name
         self.workdir = tempfile.mkdtemp(prefix="laser-lifecycle-")
         conf = os.path.join(self.workdir, "forgefirm.conf")
@@ -175,7 +187,7 @@ class Session:
             env["GF_SWITCH_FILE"] = self.switch_file
         self.stop = threading.Event()
         self.pub = threading.Thread(target=publish_verdicts,
-                                    args=(verdict, self.stop, fire_ok),
+                                    args=(verdict, self.stop, fire_ok, armed_ack, ack_after_s),
                                     daemon=True)
         self.pub.start()
         self.proc = subprocess.Popen([BIN, "-p", str(PORT)],
@@ -622,6 +634,66 @@ def test_verdict_blocks_arm():
         s.close()
 
 
+def test_arm_waits_for_engine_ack():
+    """Rule 5: the arm does not fire on a verdict computed before it.
+
+    The armed window is reported to the cooling engine when it opens,
+    and the engine answers by applying the cut airflow and the flow
+    interrogation for the job. The verdict standing on file until that
+    answer arrives is the one computed for the idle session that
+    preceded the arm, and at idle nothing is wrong, so it says fire is
+    fine. Firing on it puts the beam on the work with the fans still at
+    their idle duty - observed on the bench as a burn of a few
+    millimeters before the engine's first tick took the job into a hold.
+
+    Here the engine never acknowledges: fire_ok stays true throughout,
+    so the only thing that can refuse the job is the missing
+    acknowledgment. The arm must be refused and no window may open."""
+    s = Session("arm-ack", fire_ok=True, armed_ack=False)
+    try:
+        # The arm blocks in the acknowledgment wait, so the ok for these
+        # lines only arrives once it gives up: send without waiting.
+        s.send_raw("M4 S100")
+        s.send_raw("G1 X1 F600")
+        if not wait_for(s.log, BLOCKED, 15, s.sock):
+            fail("[arm-ack] a job whose cooling engine never took it was not "
+                 "refused (the arm fired on the pre-arm verdict)")
+        if ARMED in "".join(s.log):
+            fail("[arm-ack] the armed window opened without the engine's "
+                 "acknowledgment")
+        print("PASS [arm-ack]: the arm refused a verdict that predates it")
+    finally:
+        s.close()
+
+
+def test_arm_proceeds_on_a_late_ack():
+    """Rule 5: the acknowledgment arriving late is the ordinary case.
+
+    The real engine answers on its next tick, so the arm has to observe
+    a verdict refreshed under it and then go on to open the window. This
+    is the case that proves the wait is a wait and not a refusal: the
+    controller must keep polling the verdict file while it is blocked in
+    the arm, or every job on the machine would fail here."""
+    ack_s = 2.0
+    s = Session("arm-ack-late", fire_ok=True, ack_after_s=ack_s)
+    try:
+        t0 = time.time()
+        s.send_raw("M4 S100")
+        s.send_raw("G1 X1 F600")
+        if not wait_for(s.log, ARMED, 15, s.sock):
+            fail("[arm-ack-late] the arm never completed once the engine took "
+                 "the job (the verdict is not refreshed inside the wait)")
+        dt = time.time() - t0
+        if dt < ack_s - 0.5:
+            fail("[arm-ack-late] armed after %.1f s, before the engine took the "
+                 "job at %.1f s" % (dt, ack_s))
+        if BLOCKED in "".join(s.log):
+            fail("[arm-ack-late] a late acknowledgment was reported as a refusal")
+        print("PASS [arm-ack-late]: the arm waited %.1f s for the engine, then armed" % dt)
+    finally:
+        s.close()
+
+
 def test_sigterm_mid_job():
     """Rule 5: a termination signal during an armed job is a STOP, not a
     "finish the job first". The supervisor's expected-stop path (mode
@@ -931,6 +1003,8 @@ def main():
     test_pause_then_lid_cancel_returns_to_the_job_start()
     test_lid_policy_hold()
     test_verdict_blocks_arm()
+    test_arm_waits_for_engine_ack()
+    test_arm_proceeds_on_a_late_ack()
     test_sigterm_mid_job()
     print("PASS: the armed-window lifecycle holds")
 

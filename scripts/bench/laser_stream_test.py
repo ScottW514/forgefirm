@@ -375,10 +375,13 @@ def wait_state(sock, log, prefix, timeout=5.0):
 def publish_verdicts(path, stop):
     """Publish a fresh, clean cooling verdict every 0.5 s (the arm flow
     refuses without one; freshness window is 2 s). Same-host monotonic
-    clock, atomic rename so the reader never sees a torn file."""
+    clock, atomic rename so the reader never sees a torn file. "armed"
+    is the engine's acknowledgment that it has taken the controller's
+    armed window; the arm waits for it, so a stand-in engine that means
+    to let jobs run must assert it."""
     while not stop.is_set():
         body = ('{"ts_mono":%.3f,"fire_ok":true,"hold":false,'
-                '"resume_ok":true,"reason":""}'
+                '"resume_ok":true,"armed":true,"reason":""}'
                 % time.clock_gettime(time.CLOCK_MONOTONIC))
         tmp = path + ".tmp"
         with open(tmp, "w") as f:

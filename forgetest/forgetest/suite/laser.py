@@ -90,6 +90,7 @@ def sample(ctx):
         "ir": st.get("lid_ir"),
         "homed": st.get("homed"),
         "armed": cs.get("armed"),
+        "phase": cs.get("phase"),
         "fire_watch": cs.get("fire_watch"),
         "verdict": cs.get("verdict"),
         "beam": hw.sysfs_int("head/beam_detect_analog"),
@@ -110,8 +111,13 @@ def sample(ctx):
     }
 
 
-TRAIL_FIELDS = ("t", "gstate", "kstate", "emission", "armed", "il", "button_latch", "locked",
-                "lid", "button", "hv_enable", "beam", "hv", "msgs")
+TRAIL_FIELDS = ("t", "gstate", "kstate", "emission", "armed", "phase", "il", "button_latch",
+                "locked", "lid", "button", "hv_enable", "beam", "hv", "msgs")
+
+# The cooling phases that run the fans at their idle duty: the engine has
+# no run session, so no cut airflow and no flow interrogation. Emission
+# in one of these is the beam on the work with idle airflow.
+IDLE_AIRFLOW_PHASES = ("idle", "warm-up")
 
 
 def trail(samples):
@@ -465,9 +471,17 @@ def emission_witness(ctx):
                 for i in range(4):
                     ir_peak[i] = max(ir_peak[i], s["ir"][i])
         armed_seen = any(s["armed"] for s in samples)
+        # The beam may only come on inside a run session. Until the engine
+        # has taken the armed window it is still holding the fans at their
+        # idle duty, and the verdict standing on file is the one it
+        # computed for the idle session before the arm.
+        idle_fire = [s for s in samples
+                     if s["emission"] and s["phase"] in IDLE_AIRFLOW_PHASES]
         ev.update({"samples": len(samples), "emission_peak": peak, "emission_end": end,
                    "hv_min": min(hv) if hv else None, "hv_max": max(hv) if hv else None,
                    "lid_ir_peak": ir_peak, "armed_seen": armed_seen,
+                   "idle_airflow_fire": [(round(s["t"] - samples[0]["t"], 2),
+                                          s["phase"], s["emission"]) for s in idle_fire],
                    "pgood_peak": max((s["pgood"] for s in samples if s["pgood"] is not None), default=None)})
         ctx.log("emission_samples peak=%s end=%s; hv %s..%s; lid_ir peak %s; armed seen %s",
                 peak, end, ev["hv_min"], ev["hv_max"], ir_peak, armed_seen)
@@ -488,6 +502,11 @@ def emission_witness(ctx):
         ctx.log("time-to-disarm after Idle: %s s", ev["disarm_after_idle_s"])
     ctx.check(armed_seen, "the armed window was never observed (arm refused, or no button press)")
     ctx.check(peak > 0, "no emission witnessed (emission_samples stayed 0)")
+    first_idle_fire = ev["idle_airflow_fire"][0] if idle_fire else (None, None, None)
+    ctx.check(not idle_fire,
+              "the laser fired while the cooling engine had no run session, so the fans were at "
+              "their idle duty (phase %s at t=%s s, emission %s)",
+              first_idle_fire[1], first_idle_fire[0], first_idle_fire[2])
     ctx.check(end == 0, "emission_samples did not return to 0 at Idle (%s)", end)
     ctx.check(hv and max(hv) > min(hv), "HV current did not rise during the burn (%s..%s)",
               ev["hv_min"], ev["hv_max"])
