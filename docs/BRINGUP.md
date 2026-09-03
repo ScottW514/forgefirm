@@ -1005,18 +1005,17 @@ is committed.
   within seconds and inflates the instant reading by a degree; the warm-up
   release therefore judges a one-minute rolling minimum of that reading.
 - **Coolant-ADC readings depend on the read pattern.** What the PIC returns
-  for a thermistor depends on how soon the read follows the previous PIC read
-  (measured 2026-09-02 on the two coolant channels): the second of a pair
-  issued within 0.1 ms comes back 6 to 8 counts high with a wide spread,
-  either sensor, either order; a pair 0.5 to 10 ms apart reads tight and a
-  steady 3 counts (about 0.2 C) above sparse reads; and concurrent readers
-  land such pairs at random, so a fast reader sees excursions of 10 to 15
-  counts in a share of its samples that grows with the read rate (a third at
-  100 Hz). The `aa-offset-calibrate` diagnostic reads its two sensors 31 ms
-  apart and reduces each window to an interquartile mean; the cooling engine
-  and `/status` still read the PIC back to back (the bias is inside the
-  gates' margins). A pacing of PIC reads in the kernel would give every reader
-  the same value (Next work).
+  for a thermistor depends on how soon the read follows the previous PIC
+  transaction (measured 2026-09-02 on the two coolant channels): the second
+  of a pair issued within 0.1 ms comes back 6 to 8 counts high with a wide
+  spread, either sensor, either order; a pair 0.5 to 10 ms apart reads tight
+  and a steady 3 counts (about 0.2 C) above sparse reads. The module paces
+  every PIC transaction (`pic_gap_us`, 1000 by default, a runtime-writable
+  parameter), so no reader lands a disturbed pair whatever the others do;
+  the `aa-offset-calibrate` diagnostic still reads its two sensors 31 ms
+  apart and reduces each window to an interquartile mean, which takes the
+  steady bias out of its edges. `kernel.pic-pacing` measures the pairs with
+  the pacing off and on.
 - **Coolant-ADC offsets around a lit tube.** The air-assist fan's return
   current rides a ground path the thermistor reference shares, so both coolant
   sensors read about 1.2 C low at the run duty (proportional to the fan's
@@ -1388,14 +1387,16 @@ feature requests, enhancements) will eventually be tracked as GitHub issues.
     live-fire drill is gone; a coolant sensor unreadable for two ticks is the
     SENSOR verdict.
 
-10. **PIC read pacing.** A PIC read within a fraction of a millisecond of
-    the previous one returns a disturbed value (facts bank, "Coolant-ADC
-    readings depend on the read pattern"). Serialize the PIC transactions in
-    the kernel module with a minimum spacing (a millisecond is enough by the
-    measurement), so every reader, the engine, `/status`, the diagnostics and
-    a bench sampler, sees the same value whatever the others do. A module
-    change: it rides the next image flash, with the coolant-reading tests
-    (`cooling.aa-offset-calibrate`, `cooling.flow-verify`) as its proof.
+10. **PIC read pacing, done and waiting for the image.** The module paces
+    every PIC transaction at least `pic_gap_us` (1000, a runtime-writable
+    parameter) after the last one ended, so every reader, the engine,
+    `/status`, the diagnostics and a bench sampler, sees the same value
+    whatever the others do (facts bank, "Coolant-ADC readings depend on the
+    read pattern"). Host-proven by the module's -Werror cross-build; on the
+    bench, the new `kernel.pic-pacing` drill (300 back-to-back pairs with the
+    pacing off, then on) and the coolant-reading tests
+    (`cooling.aa-offset-calibrate`, `cooling.flow-verify`). Rides item 9's
+    image; the item closes with the campaign.
 
 11. **The audit's deferred findings, done and waiting for the image.** All six
     are fixed and host-proven, and ride the local image item 9's campaign

@@ -7428,6 +7428,23 @@ warnings. Owed: the operator flashes the dev image, takes a fresh-boot
 baseline, and runs the full campaign; then the push in CI order and the
 pin bumps.
 
+## 2026-09-02: PIC transaction pacing in the module, host-proven
+
+The operator put item 10 on the campaign's image. The module now paces every
+transaction with the sensor PIC: under the driver's lock, a transaction
+waits until `pic_gap_us` (a new module parameter, 1000 microseconds by
+default, writable at runtime) has passed since the last one ended, whoever
+the reader is, so the cooling engine, `/status`, a diagnostic and a bench
+sampler read the same value whatever the others do. The pacing wraps all
+five transaction paths (single and range reads and writes, and the raw
+write), the LED work and the dead-man safing included. Host proof: the
+-Werror cross-build against the pinned kernel. Bench proof: the new
+`kernel.pic-pacing` drill reads a coolant thermistor twice back to back, 300
+pairs, with the pacing off (the control, reported) and on (the claim: the
+second read agrees with the first, mean within 2 counts, interquartile
+within 3), and the coolant-reading tests. The diagnostic's spaced reads and
+interquartile means stay: they take the steady bias out of its edges.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis

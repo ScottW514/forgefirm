@@ -806,3 +806,82 @@ def resume_lead(ctx):
             except OSError:
                 pass
             ctx.log("safe state restored: state=%s latch=LOCKED", rd("cnc/state"))
+
+
+# ---------------------------------------------------------------- PIC pacing
+
+PIC_GAP_PARAM = "/sys/module/glowforge/parameters/pic_gap_us"
+
+
+def _param_read(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def _param_write(path, value):
+    with open(path, "w") as f:
+        f.write("%s\n" % value)
+
+
+def _pair_stats(diffs):
+    s = sorted(diffs)
+    n = len(s)
+    return {"n": n, "mean": round(sum(s) / float(n), 2), "iqr": s[(3 * n) // 4] - s[n // 4],
+            "min": s[0], "max": s[-1]}
+
+
+@test("kernel.pic-pacing", title="PIC transactions are paced a millisecond apart",
+      subsystem="kernel", kind="auto", est_min=1,
+      covers=_KERNEL_COVERS + [("forgectrl", "src/diag.c")],
+      description="What the PIC returns for a thermistor depends on how soon the read follows "
+                  "the previous transaction: the second of a pair issued within a fraction of a "
+                  "millisecond comes back high and wide. The module paces every transaction at "
+                  "least pic_gap_us after the last one ended, so every reader sees the same value "
+                  "whatever the others do. The drill reads a coolant thermistor twice back to back, "
+                  "300 pairs, with the pacing off (the control, reported) and on (the claim): "
+                  "paced, the second read agrees with the first.")
+def pic_pacing(ctx):
+    ev = ctx.evidence
+    saved = _param_read(PIC_GAP_PARAM)
+    ctx.check(saved is not None, "the module has no pic_gap_us parameter (%s)", PIC_GAP_PARAM)
+    ev["pic_gap_us_before"] = saved
+
+    def pairs(n):
+        diffs = []
+        for i in range(n):
+            a = int(rd("pic/water_temp_1"))
+            b = int(rd("pic/water_temp_1"))
+            diffs.append(b - a)
+            if i % 100 == 99:
+                ctx.checkpoint()
+        return diffs
+
+    try:
+        _param_write(PIC_GAP_PARAM, 0)
+        ctx.sleep(0.05)
+        control = _pair_stats(pairs(300))
+        _param_write(PIC_GAP_PARAM, 1000)
+        ctx.sleep(0.05)
+        paced = _pair_stats(pairs(300))
+    finally:
+        _param_write(PIC_GAP_PARAM, saved if saved not in (None, "0") else 1000)
+    ev["control"] = control
+    ev["paced"] = paced
+    ev["pic_gap_us_after"] = _param_read(PIC_GAP_PARAM)
+    ctx.log("control (no pacing): second minus first over %d pairs: mean %+.2f, interquartile %d, "
+            "range %+d..%+d", control["n"], control["mean"], control["iqr"], control["min"], control["max"])
+    ctx.log("paced (1000 us): second minus first over %d pairs: mean %+.2f, interquartile %d, "
+            "range %+d..%+d", paced["n"], paced["mean"], paced["iqr"], paced["min"], paced["max"])
+    ctx.check(abs(paced["mean"]) <= 2.0,
+              "paced pairs still differ by %+.2f counts on average", paced["mean"])
+    ctx.check(paced["iqr"] <= 3,
+              "paced pairs still spread %d counts (interquartile)", paced["iqr"])
+    ctx.check(paced["iqr"] <= control["iqr"] + 1 and abs(paced["mean"]) <= abs(control["mean"]) + 0.5,
+              "pacing did not tighten the pairs: control mean %+.2f iqr %d, paced mean %+.2f iqr %d",
+              control["mean"], control["iqr"], paced["mean"], paced["iqr"])
+    ctx.check(ev["pic_gap_us_after"] == "1000", "pic_gap_us left at %s", ev["pic_gap_us_after"])
+    ctx.log("PASS: paced pairs agree (mean %+.2f, interquartile %d); control mean %+.2f, interquartile %d",
+            paced["mean"], paced["iqr"], control["mean"], control["iqr"])
