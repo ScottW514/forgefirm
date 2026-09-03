@@ -536,6 +536,36 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(rec[0]["by"], "operator")
         self.assertTrue(any("press the button on the machine" in ln.lower() for ln in run.lines))
 
+    def test_presence_is_proved_once_per_test_not_once_per_gate(self):
+        """A test with two armed halves reaches the ready gate twice. The
+        second one must not ask for another press: the operator proved
+        presence a moment earlier and the actuator has the presses. The
+        setup line still goes up, because the second half may want the
+        scrap moved."""
+        run = Run("test", "r.live", "r.live")
+        ctx = Context(run, self.runner, self.reg["r.live"])
+        self.runner.probe_fixture(force=True)
+        asked = []
+        run.ask = lambda q, o: asked.append(q)
+        self.press_button(False)
+        threading.Timer(0.3, self.press_button, args=(True,)).start()
+        threading.Timer(0.8, self.press_button, args=(False,)).start()
+        ctx.ready("First half.")
+        self.assertTrue(run.fixture_takeover)
+        presses = [r for r in run.evidence["actions"] if r["state"] == "presence"]
+        self.assertEqual(len(presses), 1)
+
+        # the second gate: returns at once, no new press, notice still shown
+        seen = []
+        run.set_notice = lambda text: seen.append(text)
+        t0 = time.time()
+        ctx.ready("Second half. Move the scrap.")
+        self.assertLess(time.time() - t0, 1.0)
+        self.assertEqual(asked, [])
+        self.assertEqual(len([r for r in run.evidence["actions"] if r["state"] == "presence"]), 1)
+        self.assertIn("Second half. Move the scrap.", seen)
+        self.assertTrue(any("presence already proved" in ln for ln in run.lines))
+
     def test_the_presence_press_hands_the_arm_press_to_the_actuator(self):
         """The bench's standing opt-in is not needed once the operator has
         proved presence: that press is what the opt-in existed to

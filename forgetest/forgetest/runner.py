@@ -293,6 +293,17 @@ class Context:
             self.log("READY (fixture performs the step): %s", text)
             return
 
+        # Presence is proved once per test, not once per gate. A test with
+        # two armed halves (the kill drill stops the controller and does it
+        # again) reaches this twice, and asking a second time is friction
+        # with nothing behind it: the operator proved presence a moment ago
+        # and the actuator is already making the presses. The setup line
+        # still goes up, because the second half may want the scrap moved.
+        if self.run.fixture_takeover:
+            self.notice(text)
+            self.log("READY: presence already proved this test; the bench has the presses")
+            return
+
         fixture = getattr(self.runner, "fixture", None) if self.runner is not None else None
         if fixture is not None and fixture.covers("button"):
             self.notice(text + " Then press the button on the machine to start.")
