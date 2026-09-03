@@ -1,12 +1,31 @@
 """image.* - the post-flash health of the running image (always-required)."""
 import glob
 import gzip
+import mmap
 import os
+import struct
 import re
 import stat
 
 from ..catalog import test
 from .. import hw
+
+
+WDOG1_BASE = 0x020BC000     # i.MX6 WDOG1; WCR is the 16-bit word at offset 0
+
+
+def _wdog1_wcr():
+    """WDOG1's control register, read through /dev/mem (MMIO stays readable
+    under STRICT_DEVMEM), or None."""
+    try:
+        with open("/dev/mem", "r+b") as f:
+            m = mmap.mmap(f.fileno(), 4096, offset=WDOG1_BASE)
+            try:
+                return struct.unpack_from("<H", m, 0)[0]
+            finally:
+                m.close()
+    except (OSError, ValueError):
+        return None
 
 
 def _read(path, default=None):
@@ -107,17 +126,28 @@ def image_health(ctx):
         ev[opt] = val
         ctx.log("%s=%s", opt, val)
         ctx.check(val in want, "%s=%s, expected one of %s", opt, val, want)
-    # The boot-armed hardware watchdog, as the kernel's core sees it: U-Boot
-    # arms WDOG1 at 60 s and the core keeps it fed (no userspace opens it).
-    # The sysfs view needs CONFIG_WATCHDOG_SYSFS; bootstatus carries the
-    # last reset's cause (32 = the watchdog's timeout).
+    # The boot-armed hardware watchdog: U-Boot arms WDOG1 at 60 s and the
+    # kernel's core keeps it fed (no userspace opens it, so the sysfs state
+    # reads "inactive": that attribute says whether a process holds the
+    # device, not whether the hardware runs). The hardware's own word is
+    # WCR: WDE set, and WT giving the period. The sysfs view needs
+    # CONFIG_WATCHDOG_SYSFS; bootstatus carries the last reset's cause (32 =
+    # the watchdog's timeout).
     wd = {k: (_read("/sys/class/watchdog/watchdog0/" + k) or "").strip()
           for k in ("identity", "state", "timeout", "bootstatus")}
+    wcr = _wdog1_wcr()
+    wd["wcr"] = ("%#06x" % wcr) if wcr is not None else None
+    wd["wde"] = bool(wcr & 0x4) if wcr is not None else None
+    wd["period_s"] = ((wcr >> 8) + 1) / 2.0 if wcr is not None else None
     ev["watchdog"] = wd
     ctx.log("watchdog0: %s", wd)
-    ctx.check(wd["state"] == "active", "watchdog0 is %r, expected active (armed by the bootloader, "
-              "fed by the kernel core)", wd["state"] or None)
+    ctx.check(wd["identity"], "watchdog0 has no sysfs view (CONFIG_WATCHDOG_SYSFS)")
     ctx.check(wd["timeout"] == "60", "watchdog0 timeout %r, expected 60 s", wd["timeout"] or None)
+    ctx.check(wcr is not None, "WDOG1 WCR unreadable through /dev/mem")
+    ctx.check(wd["wde"], "WDOG1 is not enabled (WCR %s): nothing resets a hung kernel", wd["wcr"])
+    ctx.check(wd["period_s"] == 60.0, "WDOG1 period %s s (WCR %s), expected 60", wd["period_s"], wd["wcr"])
+    ctx.check(wd["state"] == "inactive", "watchdog0 is %r: a process holds the device, which the image "
+              "does not do", wd["state"] or None)
     rel = _read("/proc/sys/kernel/osrelease", "").strip()
     ev["kernel_release"] = rel
     mods = manifest.platform.get("kernel_modules") or []

@@ -1264,8 +1264,12 @@ is committed.
   115200, the strings present in the fielded binary); the same adapter on the
   SoC console pins shows U-Boot at every normal boot and a console in the
   recovery image after a button-hold recovery from power-off. An oddity of
-  the watchdog reboot, recorded, not an open item. The kernel config now
-  carries CONFIG_WATCHDOG_SYSFS so the state is readable without /dev/mem.
+  the watchdog reboot, recorded, not an open item. The kernel config carries
+  CONFIG_WATCHDOG_SYSFS (identity, timeout, bootstatus). The sysfs `state`
+  reads `inactive`: it says whether a process holds the device, which none
+  does, the kernel's core feeds the hardware. The proof that WDOG1 is armed
+  is its own WCR (WDE set, a 60 s period), which `image.health` reads through
+  /dev/mem.
 ## Next work
 
 Open items only. Anything closed is in `CAMPAIGN-LOG.md`. Open items (bugs,
