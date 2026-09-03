@@ -7408,6 +7408,26 @@ Owed: one local image with the batch (the module pinned from its local
 commit, the rest from the pushed pins), the flash, the fresh-boot baseline
 and the full campaign; then the push in CI order and the pin bumps.
 
+## 2026-09-02: build p30, the campaign's image
+
+Build p30 carries the deferred batch on top of the pushed pins: the module
+from its local commit (pinned for this build only through a kas overlay,
+its download mirror primed from the local repository, at version 0.0.3),
+the kernel from the edited patches, the distro conf, the suite with the new
+drill. Fetch-verify green; the kernel and the module cleaned together; both
+images built clean, release and dev `20260903000529`. The checks: the
+kernel and the module both name `6.12.20-fslc-fslc-gbe4aba1c1504`; the dev
+manifest records the module at its batch commit and 0.0.3 and every other
+component at its pushed pin; the module in the dev image carries the
+mailbox and inhibit strings and the 32-word script, with a vermagic that
+matches the kernel; the patched tree carries the dmaengine claim and the
+word_delay source; the suite in the image carries `kernel.resume-lead`;
+`WATCHDOG_SYSFS`, `IMX2_WDT` and `STRICT_DEVMEM` are set; no gfui-client;
+`nofail` factory slots; no mmap or ctypes in the release image; no QA
+warnings. Owed: the operator flashes the dev image, takes a fresh-boot
+baseline, and runs the full campaign; then the push in CI order and the
+pin bumps.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis
