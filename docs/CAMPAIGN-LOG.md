@@ -7581,6 +7581,52 @@ release image; no QA warnings. Owed: the operator flashes the dev image,
 takes a fresh-boot baseline, and runs the full campaign; then the push in
 CI order and the pin bumps.
 
+## 2026-09-03: the campaign on image 20260903011655, the unattended set
+
+The board booted p32 (kernel `6.12.20-fslc-fslc-g649f0f50c451`, the settle
+at 500 µs, the module's probe clean, forgectrl in GRBL mode with motion
+verified). `image.health` PASS with the watchdog read from WCR (0x771f) is
+the fresh-boot baseline; campaign c-20260903012535-f7be opened with the
+fixture up. The unattended queue ran all 44 tests to PASS, 01:25 to 01:48
+UTC, with these results worth their numbers:
+
+- `kernel.resume-lead` PASS (21 s): the end-of-data before the waypoint
+  ended the run on time, and the FIRE line stayed low through the 1 s lead
+  and drove from the waypoint on (K-4 and K-8 bench-proven, twice now).
+- `kernel.pic-soc-load` PASS (3 s): with the settle off, an idle reader
+  read 660 and a busy reader 666 (interquartile 2 each, the split +6); with
+  the settle on, 663 and 664 (the split +1). The third check, which had
+  compared the settled level with a Python spin's, is re-based on the move
+  off the idle regime (the kernel's spin is its own load level, a count or
+  two under a Python spin) and the re-run passed under the campaign.
+- `cooling.aa-offset-calibrate` PASS: the air-assist offset 15.5 counts
+  with a spread of 0.6 across six edges, where the same diagnostic spread
+  3.6 on 2026-09-02 after its interquartile-mean fix and 11 to 23 before
+  it. That is the settle's effect in the real diagnostic: every edge lands
+  within 0.6 of the same value.
+- `cloud.verdict-hold` PASS (129 s on its second start; see below).
+
+One incident, mine. With 43 results in and the 44th (`cloud.verdict-hold`,
+fixture-driven, a cloud print armed under the warm-up gate with the loop
+heater on) still running, a suite-file hot-deploy restarted forgetest,
+because the count of result lines had reached 44 with `image.health` among
+them. The orphaned test's cleanup never ran: the print proceeded when the
+warm-up verdict cleared (01:44:08), ran its 32 s laser-less job
+(`hold.puls`; `laser_on_sampled` 0, forgectrl's emission counter 0), the
+client relocked the latch at 01:44:40, and the machine was left in cloud
+mode. The latch was relocked again by hand, GRBL mode restored through
+forgectrl, and the test started again, which passed. The rule that keeps
+this from recurring: no forgetest restart, suite deploy, or test start
+while /state shows a test running or the batch unfinished; progress is
+counted from the batch's own done list.
+
+Owed: the attended eleven (live fire, the operator, one run per turn):
+`laser.emission-witness`, `cooling.flow-under-load`, `laser.m5-rapid-dark`,
+`laser.disarm-in-hold`, `laser.armed-kill`, `laser.pause-resume-lid-cancel`,
+`cloud.service-protocol`, `cloud.lid-interlock-abort`, `cloud.pause-resume`,
+`cloud.oversize-stream`, `cloud.paused-lid-cancel`; then the push in CI
+order and the pin bumps.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis
