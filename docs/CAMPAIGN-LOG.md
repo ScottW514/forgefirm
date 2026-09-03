@@ -7445,6 +7445,25 @@ second read agrees with the first, mean within 2 counts, interquartile
 within 3), and the coolant-reading tests. The diagnostic's spaced reads and
 interquartile means stay: they take the steady bias out of its edges.
 
+## 2026-09-02: build p31, the campaign's image with item 10
+
+Build p31 replaces p30 as the campaign's image: the same batch plus the
+PIC transaction pacing, the module from its local commit at 0.0.3 (pinned
+for this build only, its mirror primed), the kernel from the edited
+patches, everything else from the pushed pins. Fetch-verify green; the
+kernel and the module cleaned together; both images built clean, release
+and dev `20260903003213`. The checks: the kernel and the module both name
+`6.12.20-fslc-fslc-g08aa91b3b59f`; the dev manifest records the module at
+its commit and 0.0.3 and every other component at its pushed pin; the
+module in the dev image carries the inhibit, the mailbox and the
+`pic_gap_us` strings, with a vermagic that matches the kernel; the patched
+tree carries the dmaengine claim and the word_delay source; the suite in
+the image carries the two new drills; `WATCHDOG_SYSFS`, `IMX2_WDT` and
+`STRICT_DEVMEM` are set; no gfui-client; `nofail` factory slots; no mmap or
+ctypes in the release image; no QA warnings. Owed: the operator flashes the
+dev image, takes a fresh-boot baseline, and runs the full campaign; then
+the push in CI order and the pin bumps.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis

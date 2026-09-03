@@ -1372,13 +1372,13 @@ feature requests, enhancements) will eventually be tracked as GitHub issues.
     pins, the kernel and the module rebuilt together for the watchdog sysfs
     change, and is not the image the campaign runs on: the campaign waits
     until every audit finding, the deferred ones included, is on one image
-    (the operator's rule). That batch is done (item 11) and is on the local
-    image 20260903000529 (release and dev; the module built from its local
-    commit at 0.0.3, the kernel from the edited patches, everything else
-    from the pushed pins), which is the campaign's image. Owed now: flash
-    the dev image, take a fresh-boot baseline, run the full campaign on it,
-    the campaign the release gate asks for; then the push in CI order and
-    the pin bumps for the batch.
+    (the operator's rule). That batch is done (items 10 and 11) and is on
+    the local image 20260903003213 (release and dev; the module built from
+    its local commit at 0.0.3, the kernel from the edited patches,
+    everything else from the pushed pins), which is the campaign's image.
+    Owed now: flash the dev image, take a fresh-boot baseline, run the full
+    campaign on it, the campaign the release gate asks for; then the push
+    in CI order and the pin bumps for the batch.
     Decisions taken in the remediation that the operator confirms or reverses:
     the release image has no shell login (the install page now says so); the
     cloud client holds and resumes on the cooling verdict with a 30-minute
