@@ -7464,6 +7464,104 @@ ctypes in the release image; no QA warnings. Owed: the operator flashes the
 dev image, takes a fresh-boot baseline, and runs the full campaign; then
 the push in CI order and the pin bumps.
 
+## 2026-09-03: the campaign on image 20260903003213, first pass, and the PIC read regimes
+
+The board booted the image (kernel `6.12.20-fslc-fslc-g08aa91b3b59f`, the
+module's probe clean, the SDMA channel claimed through dmaengine, forgectrl
+in GRBL mode with motion verified). `image.health` found the first harness
+defect of the image: it asserted the watchdog's sysfs `state` reads
+`active`, but that attribute says whether a process holds the device, and
+none does; the kernel's core feeds the boot-armed hardware. The check now
+reads WDOG1's own control register through /dev/mem (WCR 0x771f: enabled,
+a 60 s period) and expects `inactive`; PASS, and the fresh-boot baseline
+with it. Campaign c-20260903004540-2ef4 opened with the fixture up.
+
+The unattended queue (44 tests) ran seven and stopped at the eighth:
+`kernel.latch-locked-idle`, `kernel.k1-k2`, `kernel.deadman-close`,
+`kernel.backtrack-bounds`, `kernel.fire-line` and `kernel.resume-lead` PASS,
+so the script's end-of-data mailbox and its laser inhibit (K-4, K-8) are
+bench-proven on the first try; `kernel.pic-pacing` FAIL: its paced pairs
+spread 5 counts (interquartile) where the drill allowed 3, and its control
+pairs were the tight ones (interquartile 2).
+
+The drill's model was wrong, and a study of the PIC's readings on the
+idle machine (the module's pacing switched at runtime, pairs read through
+pre-opened descriptors, 200 pairs per regime, both coolant sensors) says
+what the PIC does:
+
+- A read that follows the previous transaction within about 0.1 ms
+  returns the same held sample (a same-sensor pair differs by 0 with an
+  interquartile range of 0), so such a pair cannot show a disturbance.
+- A read issued at least a millisecond after the previous transaction
+  (the paced regime, whether the module or the caller spaces it) is the
+  tight one: interquartile 2 on 200 reads, at about 659 to 660 counts.
+- A read after 5 to 50 ms of quiet is wide (interquartile 11 to 13) at
+  about 661 to 664 counts, and the second of a 0.1 ms pair after such a
+  quiet reads 3.6 to 4.3 counts higher still, wider yet (this is the pair
+  bias the 2026-09-02 diagnostic saw).
+- The sparse reference (single reads 100 ms apart) reads about 668, so the
+  quiet-then-read regime and the sparse regime sit 5 to 8 counts (0.3 to
+  0.5 C) above the tight regime. Excursions of 10 to 25 counts appear in
+  every regime at a small share of samples.
+
+So a fixed gap between transactions does not give every reader the same
+value: a reader's first read after a quiet tick lands in the wide regime
+and its next read, a millisecond later, in the tight one, 5 counts lower,
+which splits the two coolant sensors by their position in the read order
+the way the 0.1 ms pair did, in the other direction. The value every reader
+would share needs the PIC kept in one regime for every read (a warm-up
+transaction ahead of a read after quiet, or a fixed-cadence sampler that
+every reader takes its values from), and that regime's level is 0.3 to
+0.5 C below the one the machine's gates and calibration were set under.
+That is a design decision, recorded here for item 10; the numbers are
+what the bench measured.
+
+## 2026-09-03: the PIC worked backward from its firmware; item 10 redone
+
+The operator's direction: understand the PIC's ADC from its code and its
+datasheet, then design from the mechanism, not from sampling. The PIC is a
+PIC16F1713 (the firmware read from the part, annotated). Its main loop
+converts the analog inputs one after another with no delay between them,
+about 25 µs a channel (the channel selected and the ADC enabled together,
+a 10 µs acquisition loop, an 11.5 µs conversion at FOSC/32, the ADC switched
+off after each), and stores each result in a slot with interrupts masked;
+the SPI interrupt handler answers a read with the slot's current contents
+and never touches the ADC. So a read returns the last conversion of that
+channel, at most one loop (about 0.35 ms) old, and no spacing of SPI
+transactions can change what it converts. The ADC references the PIC's own
+supply (ADPREF left at its reset value) while the sensor dividers hang on
+the board's reference net, so a conversion's count follows whatever moves
+the PIC's supply at that moment.
+
+The experiment that follows from that, on the idle machine with no kernel
+pacing: 200 reads of a coolant thermistor taken right after 3 ms of sleep
+(the value converted while the CPU idled) against 200 taken after 3 ms of
+spinning (converted under load), twice each, then 200 after a sleep
+followed by a 1 ms spin. Idle: median 659, interquartile 2. Busy: median
+665, interquartile 2. Sleep then spin: 665. The count depends on the SoC's
+load at conversion time, by 6 counts (about 0.35 C), and both regimes are
+tight; the wide spreads seen earlier were mixtures across the transition.
+The 2026-09-02 pair bias (the second read of a back-to-back pair 6 to 8
+counts high) is this: the first read comes right after the reader woke, the
+second after the ARM had been up for a fraction of a millisecond. The
+pacing as built (a kernel sleep before each transaction) forced the idle
+regime onto every second read, which is why its drill failed, and why the
+two coolant sensors would have split by read order.
+
+Item 10 redone from the mechanism: before every PIC transaction the module
+keeps the CPU busy for `pic_settle_us` (500 µs, a runtime-writable
+parameter, 0 to turn it off), longer than one PIC loop, so the value read
+was converted under the same load whoever reads and whatever it was doing;
+the sleep-based gap is gone. The drill is `kernel.pic-soc-load`: 200 reads
+after 3 ms of sleep and 200 after 3 ms of spinning, with the settle off
+(the control: the split, reported) and on (the claim: the two agree within
+2 counts, each tight, and the settled idle reader reads the busy regime's
+value). Host proof: the -Werror cross-build; the mechanism's proof is the
+measurement above. The bench proof is the drill, on the next image, with
+the coolant-reading tests. Rare excursions of 10 to 20 counts appear in
+every regime at a few samples per hundred and are a separate matter the
+diagnostic's interquartile means already drop.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis

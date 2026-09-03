@@ -808,9 +808,9 @@ def resume_lead(ctx):
             ctx.log("safe state restored: state=%s latch=LOCKED", rd("cnc/state"))
 
 
-# ---------------------------------------------------------------- PIC pacing
+# ---------------------------------------------------------------- PIC and the SoC's load
 
-PIC_GAP_PARAM = "/sys/module/glowforge/parameters/pic_gap_us"
+PIC_SETTLE_PARAM = "/sys/module/glowforge/parameters/pic_settle_us"
 
 
 def _param_read(path):
@@ -826,62 +826,79 @@ def _param_write(path, value):
         f.write("%s\n" % value)
 
 
-def _pair_stats(diffs):
-    s = sorted(diffs)
+def _level_stats(xs):
+    s = sorted(xs)
     n = len(s)
-    return {"n": n, "mean": round(sum(s) / float(n), 2), "iqr": s[(3 * n) // 4] - s[n // 4],
-            "min": s[0], "max": s[-1]}
+    return {"n": n, "mean": round(sum(s) / float(n), 2), "med": s[n // 2],
+            "iqr": s[(3 * n) // 4] - s[n // 4], "min": s[0], "max": s[-1]}
 
 
-@test("kernel.pic-pacing", title="PIC transactions are paced a millisecond apart",
+def _spin(sec):
+    t0 = time.perf_counter()
+    x = 1.0
+    while time.perf_counter() - t0 < sec:
+        x = x * 1.000001 + 0.5
+    return x
+
+
+@test("kernel.pic-soc-load", title="A PIC reading does not depend on what the reader was doing",
       subsystem="kernel", kind="auto", est_min=1,
       covers=_KERNEL_COVERS + [("forgectrl", "src/diag.c")],
-      description="What the PIC returns for a thermistor depends on how soon the read follows "
-                  "the previous transaction: the second of a pair issued within a fraction of a "
-                  "millisecond comes back high and wide. The module paces every transaction at "
-                  "least pic_gap_us after the last one ended, so every reader sees the same value "
-                  "whatever the others do. The drill reads a coolant thermistor twice back to back, "
-                  "300 pairs, with the pacing off (the control, reported) and on (the claim): "
-                  "paced, the second read agrees with the first.")
-def pic_pacing(ctx):
+      description="The PIC converts its sensors in a free-running loop and a read returns the "
+                  "last conversion of that channel; the count depends on the SoC's load when the "
+                  "conversion was made (the PIC converts against its own supply, the dividers hang "
+                  "on the board's reference), about 6 counts between an idle and a busy CPU on the "
+                  "coolant thermistors. The module keeps the CPU busy for pic_settle_us before every "
+                  "transaction, longer than one PIC loop, so the value read was converted under the "
+                  "same load whoever reads. The drill reads a coolant thermistor 200 times each after "
+                  "3 ms of sleep and after 3 ms of spinning, with the settle off (the control, "
+                  "reported) and on (the claim): settled, the two agree.")
+def pic_soc_load(ctx):
     ev = ctx.evidence
-    saved = _param_read(PIC_GAP_PARAM)
-    ctx.check(saved is not None, "the module has no pic_gap_us parameter (%s)", PIC_GAP_PARAM)
-    ev["pic_gap_us_before"] = saved
+    saved = _param_read(PIC_SETTLE_PARAM)
+    ctx.check(saved is not None, "the module has no pic_settle_us parameter (%s)", PIC_SETTLE_PARAM)
+    ev["pic_settle_us_before"] = saved
+    fd = os.open(hw.sysfs_root() + "pic/water_temp_1", os.O_RDONLY)
 
-    def pairs(n):
-        diffs = []
+    def reads(regime, n=200):
+        xs = []
         for i in range(n):
-            a = int(rd("pic/water_temp_1"))
-            b = int(rd("pic/water_temp_1"))
-            diffs.append(b - a)
+            if regime == "idle":
+                time.sleep(0.003)
+            else:
+                _spin(0.003)
+            xs.append(int(os.pread(fd, 32, 0).strip()))
             if i % 100 == 99:
                 ctx.checkpoint()
-        return diffs
+        return _level_stats(xs)
 
     try:
-        _param_write(PIC_GAP_PARAM, 0)
+        _param_write(PIC_SETTLE_PARAM, 0)
         ctx.sleep(0.05)
-        control = _pair_stats(pairs(300))
-        _param_write(PIC_GAP_PARAM, 1000)
+        control = {"idle": reads("idle"), "busy": reads("busy")}
+        _param_write(PIC_SETTLE_PARAM, 500)
         ctx.sleep(0.05)
-        paced = _pair_stats(pairs(300))
+        settled = {"idle": reads("idle"), "busy": reads("busy")}
     finally:
-        _param_write(PIC_GAP_PARAM, saved if saved not in (None, "0") else 1000)
+        os.close(fd)
+        _param_write(PIC_SETTLE_PARAM, saved if saved not in (None, "0") else 500)
     ev["control"] = control
-    ev["paced"] = paced
-    ev["pic_gap_us_after"] = _param_read(PIC_GAP_PARAM)
-    ctx.log("control (no pacing): second minus first over %d pairs: mean %+.2f, interquartile %d, "
-            "range %+d..%+d", control["n"], control["mean"], control["iqr"], control["min"], control["max"])
-    ctx.log("paced (1000 us): second minus first over %d pairs: mean %+.2f, interquartile %d, "
-            "range %+d..%+d", paced["n"], paced["mean"], paced["iqr"], paced["min"], paced["max"])
-    ctx.check(abs(paced["mean"]) <= 2.0,
-              "paced pairs still differ by %+.2f counts on average", paced["mean"])
-    ctx.check(paced["iqr"] <= 3,
-              "paced pairs still spread %d counts (interquartile)", paced["iqr"])
-    ctx.check(paced["iqr"] <= control["iqr"] + 1 and abs(paced["mean"]) <= abs(control["mean"]) + 0.5,
-              "pacing did not tighten the pairs: control mean %+.2f iqr %d, paced mean %+.2f iqr %d",
-              control["mean"], control["iqr"], paced["mean"], paced["iqr"])
-    ctx.check(ev["pic_gap_us_after"] == "1000", "pic_gap_us left at %s", ev["pic_gap_us_after"])
-    ctx.log("PASS: paced pairs agree (mean %+.2f, interquartile %d); control mean %+.2f, interquartile %d",
-            paced["mean"], paced["iqr"], control["mean"], control["iqr"])
+    ev["settled"] = settled
+    ev["pic_settle_us_after"] = _param_read(PIC_SETTLE_PARAM)
+    for name, r in (("control (settle off)", control), ("settled (500 us)", settled)):
+        ctx.log("%s: after sleep median %d (iqr %d, %d..%d); after spin median %d (iqr %d, %d..%d)",
+                name, r["idle"]["med"], r["idle"]["iqr"], r["idle"]["min"], r["idle"]["max"],
+                r["busy"]["med"], r["busy"]["iqr"], r["busy"]["min"], r["busy"]["max"])
+    ev["control_split"] = control["busy"]["med"] - control["idle"]["med"]
+    ev["settled_split"] = settled["busy"]["med"] - settled["idle"]["med"]
+    ctx.log("split busy minus idle: control %+d, settled %+d", ev["control_split"], ev["settled_split"])
+    ctx.check(abs(ev["settled_split"]) <= 2,
+              "settled reads still split by %+d counts between an idle and a busy reader", ev["settled_split"])
+    ctx.check(settled["idle"]["iqr"] <= 4 and settled["busy"]["iqr"] <= 4,
+              "settled reads spread %d / %d counts (interquartile)", settled["idle"]["iqr"], settled["busy"]["iqr"])
+    ctx.check(abs(settled["idle"]["med"] - control["busy"]["med"]) <= 3,
+              "a settled idle reader reads %d, the busy regime reads %d: the settle did not land the "
+              "conversion under load", settled["idle"]["med"], control["busy"]["med"])
+    ctx.check(ev["pic_settle_us_after"] == "500", "pic_settle_us left at %s", ev["pic_settle_us_after"])
+    ctx.log("PASS: settled, an idle reader and a busy reader read the same (split %+d); control split %+d",
+            ev["settled_split"], ev["control_split"])
