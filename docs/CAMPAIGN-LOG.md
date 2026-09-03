@@ -7627,6 +7627,33 @@ Owed: the attended eleven (live fire, the operator, one run per turn):
 `cloud.oversize-stream`, `cloud.paused-lid-cancel`; then the push in CI
 order and the pin bumps.
 
+## 2026-09-03: the attended set stopped at its first test
+
+The operator rebooted the machine before the attended set, because the
+interrupted cloud test had left the fans running, then started
+`laser.emission-witness`. The fixture pressed at 01:52:46; the job started
+and, one engine tick later, the engine declared a warm-up hold (coolant
+22.9 C under a 24 C start gate) with the heater on and idle airflow.
+grblHAL honored the hold and feed-held the job. So the laser fired and the
+head moved for about a second with the fans at idle duty, then the job sat
+in the hold; when the warm-up and the flow verification ended, the run
+airflow came up and the job waited for the button. The operator stopped the
+session there; the test was aborted, the latch relocked, the machine left
+idle, disarmed and locked.
+
+Two causes. The 24 C start gate was `cool_temp_start = 23.9`, a setting
+`cloud.verdict-hold` raises to force its hold and restores afterward: the
+run the forgetest restart killed never restored it, and the next run
+captured 23.9 as the original and restored it to 23.9. The setting is
+stored and survives a reboot, and it is still in force. The second cause
+is the engine's own: after an arm, a job can fire for up to one tick before
+the warm-up and flow gates are evaluated and the run airflow applied. The
+raised start gate exposed it. Both are owed: the setting reset to its
+default, and the engine evaluating fire and airflow at arm time, before
+the first fire, which is a change to forgectrl and another image before
+any further live fire. The attended eleven were not run; the campaign on
+20260903011655 stands at 45 of 56.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis
