@@ -1364,22 +1364,6 @@ feature requests, enhancements) will eventually be tracked as GitHub issues.
     shipped default of 2 is a starting point, not a truth), and the same
     shape fits any by-eye tunable the commissioning flow meets.
 
-9. **The request-body cap, waiting for a bench run.** The last open finding
-    of the 2026-09-01 audit (FB-2, FA-11). The web framework accumulated
-    every POST body in memory before any endpoint callback ran, so before
-    the token check, with no ceiling: an unauthenticated client on the
-    network could stream until the board ran out of memory and took the
-    daemon, and any job with it. The audit left it at "plausible"; the
-    pinned framework source settles it, its default is unlimited and the
-    ceiling was never set. `forgectrl` now sets 64 KiB, against the
-    64-connection and 16-per-IP limits already there. The firmware upload
-    is unaffected: the cap truncates only the framework's own copy, and
-    its post processor still receives every chunk, so the multipart file
-    parts reach the sink and stream to disk. `forgectrl.auth` gained the
-    case, an oversized unauthenticated body that must be refused with the
-    daemon still serving afterwards. Host-proven; it needs an image and a
-    campaign.
-
 **Deliberately not gated:** an armed GRBL job after an underrun cuts at the
 stale origin unless homing is required (GRBL mode permits unhomed cutting; the
 underrun itself alarms and unlinks the anchor). Not in the acceptance catalog

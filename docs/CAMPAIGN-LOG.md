@@ -7837,6 +7837,63 @@ here, now goes into every run's record beside its uptime, so the next drop
 says whether the link faded or the box restarted rather than only that it was
 gone.
 
+## 2026-09-04: the audit's last finding under test, 56 of 56, and the audit retired
+
+The 2026-09-01 audit had one finding left. The web framework collected every
+POST body in memory before an endpoint callback ran, so before the token check,
+and it had no ceiling. An unauthenticated client on the network could send data
+until the board had no memory left, and the daemon and its job would stop.
+`forgectrl` now sets the ceiling to 64 KiB. The fix was proven on the host on
+2026-09-03, but it had never run on the machine, so the audit stayed open.
+
+Build p37 put it on an image with every other current commit.
+
+    campaign     c-20260904132654-d731
+    image        20260904131106 (dev)
+    manifest     3e3f65e90022c107908a86cafb85c59eaa8df0196a59ca4c431a41389ef708c5
+
+The image carries forgectrl ff89288 and the forgefirm layer at 637fb67. The
+other three components came from their pushed pins, and the build made sure
+each pin was the local HEAD. forgectrl was not pushed when the image was built,
+so it came from a local commit through a kas overlay with its download mirror
+primed from the local repository.
+
+This change adds no new string to the forgectrl binary, so the build proved the
+source instead. The image manifest records a git blob hash for each file. The
+build compared the manifest's `src/main.c` and `src/update.h` against the blobs
+of the local commit and stopped if they disagreed. They agreed.
+
+Twenty results were inherited from the campaign on 20260903211413. The forgectrl
+revision and the changed suite file made the other thirty-six stale, which is
+the domain model at work: every test that covers `src/main.c` lost its result,
+`forgectrl.auth` among them. Nothing was hot-deployed.
+
+The unattended set ran 25 of 25 PASS in nine minutes. `forgectrl.auth` carried
+the new case, and its evidence is the answer the audit asked for:
+
+    13:28:26 POST /settings (no token, 4 MiB body) -> 403
+    13:28:26 GET /status after the oversized body -> 200
+
+The daemon refused the oversized body from a client with no token, and it was
+still serving in the same second. The firmware upload is not affected, because
+the ceiling truncates only the framework's own copy while its post processor
+still receives every chunk.
+
+The attended set ran one live test at a time. The emission witness marked its
+square with the fans behind the beam: emission peak 155 and 0 at the end, HV 0
+to 1004, beam detector idle 1839 and peak 2392, button latch 0 through the
+dwell, disarm and dark 0.0 s after Idle. The M5 rapids stayed dark: peak 152 on
+the cut, then 35 samples across 8.3 s with no emission and HV 0. The operator
+ran the remaining nine. All PASS.
+
+The result is 56 of 56, authorized, on one flash of one image.
+
+With that the audit is retired. Of its 221 findings, all are now fixed,
+note-only, or closed by decision (P-1 declined, P-2 observed, X-I3 rejected).
+The audit file is deleted, as the 2026-07-03 and 2026-08-13 audits were before
+it. forgefirm 637fb67 and forgectrl ff89288 are pushed, and the forgectrl pin
+moves to the revision this campaign ran.
+
 ## Reference notes
 
 ### Head-IRQ source validation — the beam-emission hypothesis
